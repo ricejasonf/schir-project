@@ -247,7 +247,6 @@
     ; %FnVal is a mlir.value.
     (define (%match-params-resolver Loc %FnVal)
       (lambda ParamsSpec_
-        (define Loc (source-loc name))
         (define (ToExpr Param)
           (%expr Loc
                  (lambda (Loc Fn) 
@@ -701,7 +700,6 @@
     variant
     store
     get
-    key-at
     match
     match-cond
     match-if
@@ -720,7 +718,6 @@
     set!
     quote
     quasiquote
-    unquote unquote-splicing
     source-loc
     dump
     )
