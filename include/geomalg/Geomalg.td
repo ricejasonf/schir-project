@@ -13,17 +13,23 @@ def Geomalg_Dialect : Dialect {
   let useDefaultTypePrinterParser = 1;
 }
 
+// Traits
+
+class Geomalg_Trait<string name> : NativeOpTrait<name> {
+  let cppNamespace = "::geomalg";
+}
+
+def Distributive : Geomalg_Trait<"Distributive">;
+
+// Types
+
 def Geomalg_Metric : TypeDef<Geomalg_Dialect, "Metric", []> {
   let mnemonic = "metric";
   let description = [{
     Define a metric tensor by specifying the dot product for pairs of basis
     vectors defaulting to e_i . e_i = 1 and e_i . e_j = 0 for i != j.
 
-    This forms a weighted graph with an adjacency matrix concpetually
-    equivalent to the block diagonal matrix described in Eric Lengyel's
-    "Geometric Algebra Illuminated". This means we can define more
-    useful "basis vectors" opaquely as linear combinations of more
-    fundamental orthonormal basis vectors. (e.g. ni and no)
+    TODO finish this
   }];
 
   //let parameters = (ins ArrayRefParameter<"geomalg::MetricEntry">:$entries);
@@ -113,7 +119,7 @@ class Geomalg_BladeOfGradeK<int K> :
   Type<
     CPred<
       "::llvm::cast<geomalg::BladeType>($_self).getGrade() == " # K>>;
-                      
+
 def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
   let mnemonic = "multivector";
   let description = [{
@@ -150,10 +156,20 @@ def Geomalg_SumOp : Geomalg_Op<"sum", []> {
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_OuterProductOp : Geomalg_Op<"outprod", []> {
+def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
+  let description = [{
+    Expand breaks out the operands of a multivector's
+    sum of basis blades representation.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Variadic<Geomalg_Blade>:$results);
+}
+
+def Geomalg_WedgeProductOp : Geomalg_Op<"wedge", [Distributive]> {
   let description = [{
     Map two multivectors to a multivector by their
-    exterior product (aka wedge product).
+    wedge product.
   }];
 
   let arguments = (ins Geomalg_Value:$arg1,
@@ -161,7 +177,7 @@ def Geomalg_OuterProductOp : Geomalg_Op<"outprod", []> {
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_InnerProductOp : Geomalg_Op<"inprod", []> {
+def Geomalg_LeftContractionOp : Geomalg_Op<"lcontract", [Distributive]> {
   let description = [{
     Map two multivectors to a scalar by their
     interior product.
@@ -172,7 +188,7 @@ def Geomalg_InnerProductOp : Geomalg_Op<"inprod", []> {
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 
-def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", []> {
+def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", [Distributive]> {
   let description = [{
     Map two multivectors to the sum of their interior
     and exterior products which produces a multivector.
@@ -183,7 +199,18 @@ def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", []> {
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_GeometricReverseOp : Geomalg_Op<"rev", []> {
+def Geomalg_GeometricInverseOp : Geomalg_Op<"inverse", []> {
+  let description = [{
+    Take the multiplicative inverse. For a single k-blade,
+    this is defined as applying the multiplicative inverse of
+    the norm squared to the reverse of the k-blade.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Value:$result);
+}
+
+def Geomalg_GeometricReverseOp : Geomalg_Op<"reverse", [Distributive]> {
   let description = [{
     Take the reverse of a k-blade that swaps vectors
     in the wedge product until the vectors are in reverse sorted
@@ -191,15 +218,17 @@ def Geomalg_GeometricReverseOp : Geomalg_Op<"rev", []> {
     change depending on the grade of the k-blade.
   }];
 
-  let arguments = (ins Geomalg_Blade:$arg);
-  let results   = (outs Geomalg_Blade:$result);
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_GeometricInvOp : Geomalg_Op<"inv", []> {
+def Geomalg_NegateOp : Geomalg_Op<"negate", [Distributive]> {
   let description = [{
-    Take the multiplicative inverse. For a single k-blade,
-    this is defined as applying the multiplicative inverse of
-    the scalar value to the reverse of the k-blade.
+    Apply scalar multiplication of -1 to a blade. This is used
+    explicitly in place of grade involution and also when folding
+    operations that can be reduced to a simple sign change or
+    wherever else there is a sign change which likely depends
+    on grade parity.
   }];
 
   let arguments = (ins Geomalg_Value:$arg);

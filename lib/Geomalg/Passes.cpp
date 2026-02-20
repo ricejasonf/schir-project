@@ -2,12 +2,16 @@
 #include <geomalg/Passes.h>
 #include <geomalg/Type.h>
 #include <llvm/ADT/STLExtras.h>
+#include <mlir/IR/IRMapping.h>
+#include <mlir/IR/PatternMatch.h>
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <cassert>
 
 // Generated stuff
 namespace geomalg {
 #define GEN_PASS_DEF_ARGUMENTDEDUCTIONPASS
 #define GEN_PASS_DEF_TYPEINFERENCEPASS
+#define GEN_PASS_DEF_EXPANDPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
@@ -22,6 +26,11 @@ struct TypeInferencePass
 
 struct ArgumentDeductionPass
   : public geomalg::impl::ArgumentDeductionPassBase<ArgumentDeductionPass> {
+  void runOnOperation() override;
+};
+
+struct ExpandPass
+  : public geomalg::impl::ExpandPassBase<ExpandPass> {
   void runOnOperation() override;
 };
 
@@ -70,8 +79,6 @@ void TypeInferencePass::runOnOperation() {
     return mlir::WalkResult::advance();
   });
 
-  // TODO infer results of inprod, outprod.
-
   // Finally infer the function return type by the operand
   // of the ReturnOp.
   mlir::Type OrigResultTy = FuncOp.getResultTypes().front();
@@ -88,4 +95,67 @@ void TypeInferencePass::runOnOperation() {
 void ArgumentDeductionPass::runOnOperation() {
   mlir::ModuleOp ModuleOp = getOperation();
   llvm::errs() << "\nTODO\n";
+}
+
+// Pattern rewriters
+namespace {
+struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
+  using Base = mlir::OpTraitRewritePattern<geomalg::Distributive>;
+  using Base::OpTraitRewritePattern;
+
+  void initialize() {
+    // We unwrap multivector operands until we cannot find any more.
+    setHasBoundedRewriteRecursion();
+  }
+
+  // The real meat and potatoes.
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override {
+    // Given an operation whose operator distributes over addition,
+    // match the first Multivector operand.
+    auto Itr = llvm::find_if(Op->getOperands(), [](mlir::Value Operand) {
+        return isa<geomalg::MultivectorType>(Operand.getType());
+      });
+
+    if (Itr == Op->getOperands().end())
+      return llvm::failure();
+
+    // The multivector we want to expand and distribute over.
+    mlir::Value MV = *Itr;
+    auto MVT = llvm::cast<geomalg::MultivectorType>(MV.getType());
+    llvm::SmallVector<mlir::Type, 8> BladeTypes(MVT.getBlades());
+    auto ExpandOp = geomalg::ExpandOp::create(Rewriter, Op->getLoc(),
+                                              BladeTypes, MV);
+    auto Blades = ExpandOp.getResults();
+
+    // Apply the operator to each blade summing the results.
+    llvm::SmallVector<mlir::Value, 8> Results;
+    for (auto Blade : Blades) {
+      // Clone the original operation mapping MV to Blade so
+      // it replaces it as an operand.
+      mlir::IRMapping Map;
+      Map.map(MV, Blade);
+      mlir::Operation* NewOp = Rewriter.cloneWithoutRegions(*Op, Map);
+      Results.push_back(NewOp->getResult(0));
+    }
+
+    // Replace the original op with a shiny, new SumOp.
+    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(Op,
+      geomalg::UnknownType(), Results);
+
+    return llvm::success();
+  }
+};
+} // namespace
+
+void ExpandPass::runOnOperation() {
+  mlir::MLIRContext* Ctx = &getContext();
+  mlir::func::FuncOp FuncOp = getOperation();
+
+  // Create pattern rewriter thingy.
+  mlir::RewritePatternSet PS(Ctx);
+  PS.add<Distribute>(Ctx);
+
+  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
+    return signalPassFailure();
 }

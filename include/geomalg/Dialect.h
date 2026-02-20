@@ -10,6 +10,12 @@
 #include <mlir/Interfaces/SideEffectInterfaces.h>
 #include <concepts>
 
+namespace geomalg {
+template <typename T>
+class Distributive : public mlir::OpTrait::TraitBase<T, Distributive>
+{ };
+}  // namespace
+
 // #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wunused-parameter"
 
