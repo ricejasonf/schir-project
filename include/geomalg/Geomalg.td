@@ -46,9 +46,9 @@ def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
   }];
 
   let extraClassDeclaration = [{
-    uint32_t getCanonicalTag() const { return 0; }
+    geomalg::BladeTag getCanonicalTag() const { return {}; }
     unsigned getGrade() const { return 0; }
-    bool isBasisVector() const { return false; }
+    bool isBasisVector() const { return true; }
     static constexpr bool isZero() { return true; }
     static constexpr bool isNonnegative() { return true; }
   }];
@@ -83,17 +83,14 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
   // Try to remember that the argument is a tag and not the grade.
   let assemblyFormat = "`<` $tag `>`";
 
+  // TODO Break this out into an interface.
   let extraClassDeclaration = [{
-    static constexpr unsigned tag_bit_width = 32;
-    static constexpr unsigned tag_sign_mask = 1 << (tag_bit_width - 1);
-
-    uint32_t getCanonicalTag() const {  // Strip the sign bit.
-      return ~tag_sign_mask & getTag();
+    geomalg::BladeTag getCanonicalTag() const {
+      return geomalg::BladeTag(getTag()).getCanonicalTag();
     }
 
     unsigned getGrade() const {
-      // Count all the bits except the sign bit.
-      return std::popcount(getCanonicalTag());
+      return geomalg::BladeTag(getTag()).getGrade();
     }
 
     // Basis vectors include 0-blades and 1-blades
@@ -104,11 +101,11 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
     }
 
     geomalg::BladeType getCanonicalType() const {
-      return get(getContext(), getCanonicalTag());
+      return get(getContext(), getCanonicalTag().getTag());
     }
 
     bool isNonnegative() const {
-      return !static_cast<bool>(tag_sign_mask & getTag());
+      return geomalg::BladeTag(getTag()).isNonnegative();
     }
 
     static constexpr bool isZero() { return false; }

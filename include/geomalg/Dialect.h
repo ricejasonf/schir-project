@@ -1,6 +1,7 @@
 #ifndef GEOMALG_DIALECT_H
 #define GEOMALG_DIALECT_H
 
+#include <geomalg/Metric.h>
 #include <llvm/ADT/Hashing.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/IR/BuiltinOps.h>

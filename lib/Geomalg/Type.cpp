@@ -3,6 +3,8 @@
 #include <heavy/Context.h>
 #include <heavy/MlirHelper.h>
 #include <heavy/Value.h>
+#include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/SmallVector.h>
 
 namespace geomalg {
 // Implement utilities for construction and
@@ -13,44 +15,13 @@ namespace geomalg {
 mlir::Type
 createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
-
-  // Manually sort by canonical tag (ie without regard to sign bit.)
-  // For each swap, we change the sign which may be incorrect if
-  // elements are not unique, but we check that after sorting.
-  uint32_t SignTag = 0;
-  auto Swap = [&SignTag](geomalg::BladeType& A, geomalg::BladeType& B) {
-      // We are expecting canonical basis vectors. (ie nonnegative)
-      assert(A.isBasisVector() && B.isBasisVector());
-      std::swap(A, B);
-      SignTag ^= geomalg::BladeType::tag_sign_mask;
-    };
-  auto LessThanEqual = [](auto& A, auto& B) {
-      return A.getTag() <= B.getTag();
-    };
-
-  for (unsigned I = 0; I < BladeTypes.size(); I++) {
-    for (unsigned J = I + 1; J < BladeTypes.size(); J++) {
-      if (!LessThanEqual(BladeTypes[I], BladeTypes[J]))
-        Swap(BladeTypes[I], BladeTypes[J]);
-    }
-  }
-
-  // If we have more than one of any basis
-  // element then the whole thing becomes zero.
-  size_t OrigSize = BladeTypes.size();
-  llvm::unique(BladeTypes);
-  if (OrigSize != BladeTypes.size())
-    return mlir::Type(geomalg::ZeroType());
-
-  uint32_t Tag = 0;
-  for (geomalg::BladeType BladeType : BladeTypes)
-    Tag |= BladeType.getTag();
-  
-  // Incorporate the sign bit.
-  Tag |= SignTag;
+  llvm::SmallVector<geomalg::BladeTag> BladeTags(BladeTypes.size());
+  for (unsigned I = 0; I < BladeTypes.size(); I++)
+    BladeTags[I] = BladeTypes[I].getTag();
+  BladeTag BT = BladeTag::create(BladeTags);
 
   mlir::MLIRContext* MLIRContext = BladeTypes.front().getContext();
-  return geomalg::BladeType::get(MLIRContext, Tag);
+  return geomalg::BladeType::get(MLIRContext, BT.getTag());
 }
 
 // Create a canonicalized type for a multivector.
