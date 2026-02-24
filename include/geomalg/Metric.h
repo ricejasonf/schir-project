@@ -1,5 +1,5 @@
 #ifndef GEOMALG_METRIC_H
-#undef GEOMALG_METRIC_H
+#define GEOMALG_METRIC_H
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/SmallVector.h>
@@ -7,6 +7,12 @@
 #include <bit>
 
 namespace geomalg {
+// List of supported metrics.
+enum class MetricKind {
+  unknown = 0,
+  cga = 1,
+};
+
 // Use a bitmask to represent a blade uniquely.
 // Each bit represents a dimension expcept the high bit
 // which represents sign. No bits set represents a scalar.
@@ -108,6 +114,7 @@ public:
   { }
 
   // Assume vectors are orthonormal unless specified otherwise.
+  // This is designed to return {-1, 0, 1}.
   int DotProduct(BladeTag A, BladeTag B) {
     if (A > B)
       std::swap(A, B);
@@ -121,6 +128,15 @@ public:
       return (A == B) ? 1 : 0;
 
     return std::get<2>(*Itr);
+  }
+
+  static Metric get(MetricKind Kind) {
+    switch (Kind) {
+    case MetricKind::unknown:
+      return Metric(0, {});
+    case MetricKind::cga:
+      return Metric(5, {{32, 32, 0}, {64, 64, 0}, {32, 64, -1}});
+    }
   }
 };
 }  // namespace geomalg

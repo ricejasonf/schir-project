@@ -1,3 +1,4 @@
+#include <geomalg/Metric.h>
 #include <geomalg/Dialect.h>
 #include <geomalg/Passes.h>
 #include <geomalg/Type.h>
@@ -19,8 +20,20 @@ namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
 
-struct TypeInferencePass
+class TypeInferencePass
   : public geomalg::impl::TypeInferencePassBase<TypeInferencePass> {
+
+  geomalg::Metric Metric;
+
+public:
+  TypeInferencePass()
+    : Metric(geomalg::Metric::get(geomalg::MetricKind::unknown))
+  { }
+
+  TypeInferencePass(geomalg::TypeInferencePassOptions Options)
+    : Metric(geomalg::Metric::get(Options.metric))
+  { }
+
   void runOnOperation() override;
 };
 
@@ -73,7 +86,7 @@ void TypeInferencePass::runOnOperation() {
         assert(isZero(Type) &&
             "expecting a valid operand type to geomalg.sum");
     }
-    
+
     mlir::Type NewType = createMultivectorType(BladeTypes);
     SumOp.getResult().setType(NewType);
     return mlir::WalkResult::advance();
