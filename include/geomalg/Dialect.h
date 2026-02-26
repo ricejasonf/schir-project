@@ -25,8 +25,10 @@ class Distributive : public mlir::OpTrait::TraitBase<T, Distributive>
 #define GET_TYPEDEF_CLASSES
 #include "geomalg/GeomalgTypes.h.inc"
 
+#if 0 // We do no actually have custom attributes.
 #define GET_ATTRDEF_CLASSES
 #include "geomalg/GeomalgAttrs.h.inc"
+#endif
 
 #define GET_OP_CLASSES
 #include "geomalg/GeomalgOps.h.inc"

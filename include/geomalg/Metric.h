@@ -51,6 +51,21 @@ public:
     return !static_cast<bool>(tag_sign_mask & getTag());
   }
 
+  // Peel off the highest dimension basis vector
+  // from the wedge product.
+  // Return the 1-blade and the (k - 1)-blade factors.
+  std::pair<BladeTag, BladeTag> factor() const {
+    uint32_t CTag = getCanonicalTag();
+    if (CTag == 0)
+      return {BladeTag(0), *this};
+
+    // TagB has all bits in Tag except the one set in TagA.
+    // This will include the original sign bit.
+    uint32_t TagA = 1 << (std::bit_width(CTag) - 1);
+    uint32_t TagB = Tag ^ TagA;
+    return {TagA, TagB};
+  }
+
   auto operator<=>(BladeTag const&) const = default;
   bool operator==(BladeTag const&) const = default;
 
@@ -112,6 +127,8 @@ public:
     : Dim(Dim),
       DotProducts(Entries)
   { }
+
+  operator bool() const { return Dim != 0; }
 
   // Assume vectors are orthonormal unless specified otherwise.
   // This is designed to return {-1, 0, 1}.

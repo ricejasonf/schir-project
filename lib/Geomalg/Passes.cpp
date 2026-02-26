@@ -68,7 +68,6 @@ void TypeInferencePass::runOnOperation() {
   // At this point Body and ReturnOp are valid.
 
   // SumOp
-
   FuncOp.walk([](geomalg::SumOp SumOp) {
     if (!isUnknown(SumOp.getResult()))
       return mlir::WalkResult::advance();
@@ -91,6 +90,10 @@ void TypeInferencePass::runOnOperation() {
     SumOp.getResult().setType(NewType);
     return mlir::WalkResult::advance();
   });
+
+  if (Metric) {
+    // Product
+  }
 
   // Finally infer the function return type by the operand
   // of the ReturnOp.
@@ -157,6 +160,109 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
       geomalg::UnknownType(), Results);
 
     return llvm::success();
+  }
+};
+
+// Expand the wedge product of blades.
+// This will result in Zero if any basis vectors are dependent.
+// Otherwise it will result in a blade represented by the bitwise AND
+// of the input BladeTags.
+struct ExpandWedge : mlir::OpRewritePattern<geomalg::WedgeOp> {
+  using Base = mlir::OpRewritePattern<geomalg::WedgeOp>;
+  using Base::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::WedgeOp Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    // TODO
+    return llvm::failure();
+  }
+};
+
+// Expand the left contraction to a multivector where appropriate
+// by the GA4CS definitions. That is,
+// 3.7, 3.8
+//      - Any operand that is scalar results in zero or scalar multiplication.
+//        So, here the operation remains unchanged.
+// 3.9  - Two 1-blades is the dot product and remains unchanged
+// 3.10 - A 1-blade and a (>1)-blade expands to a sum.
+//        (a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C)))
+// 3.11 - A (>1)-blade and a k-blade expand to a nested contraction
+//        (a ∧ B) ⌋ C = a ⌋ (B ⌋ C).
+// Note: Lower case vars in the above defs are 1-blades and
+//       we are decomposing the wedge products.
+
+// Any operation that does not expand implies multiplication of coefficients
+// via commutativity of multiplication across the contraction.
+// Result types are deferred to type inference when a metric is required.
+struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
+  using Base = mlir::OpRewritePattern<geomalg::LeftContractionOp>;
+  using Base::OpRewritePattern;
+
+  // TODO Make this require a metric and infer the result types for
+  //      the LCs we do not expand.
+
+  void initialize() {
+    // We unwrap multivector operands until we cannot find any more.
+    setHasBoundedRewriteRecursion();
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::LeftContractionOp LC,
+      mlir::PatternRewriter& Rewriter) const override {
+    mlir::Location Loc = LC.getLoc();
+    auto LHS = LC.getLHS();
+    auto RHS = LC.getRHS();
+    auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
+    auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
+    // TODO Infer result types of LCs we are not currently matching.
+    // Match iff both operands are nonscalar blades.
+    if (!(L && L.getGrade() > 0 && R && R.getGrade() > 0))
+      return llvm::failure();
+
+    // 3.10
+    // (a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C)))
+    if (L.getGrade() == 1 && R.getGrade() > 1) {
+      // Factor the RHS blade.
+      // a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
+      // Note we used the antisymmetric property for the second term
+      auto [Type_b, Type_C] = R.factor();
+      auto a = LHS;
+      auto b = geomalg::BladeOp::create(Rewriter, Loc, Type_b);
+      auto C = geomalg::CastOp::create(Rewriter, Loc, Type_C, RHS);
+      // (a ⌋ b)
+      auto ab = geomalg::LeftContractionOp::create(Rewriter, Loc, a, b);
+      // (a ⌋ C)
+      auto aC = geomalg::LeftContractionOp::create(Rewriter, Loc, a, C);
+      // ((a ⌋ b) ∧ C)
+      auto abC = geomalg::WedgeOp::create(Rewriter, Loc, ab, C);
+      // ((a ⌋ C) ∧ b)
+      auto aCb = geomalg::WedgeOp::create(Rewriter, Loc, aC, b);
+      // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
+      Rewriter.replaceOpWithNewOp<geomalg::SumOp>(RHS.getDefiningOp(),
+                                                  abC, aCb);
+
+      return llvm::success();
+    }
+
+    // 3.11
+    if (L.getGrade() > 1 && R.getGrade()) {
+      // Factor the LHS blade.
+      // (a ∧ B) ⌋ C = a ⌋ (B ⌋ C)
+      auto [Type_a, Type_B] = L.factor();
+      auto a = geomalg::BladeOp::create(Rewriter, Loc, Type_a);
+      auto B = geomalg::CastOp::create(Rewriter, Loc, Type_B, LHS);
+      auto C = RHS;
+      // (B ⌋ C)
+      auto BC = geomalg::LeftContractionOp::create(Rewriter, Loc, B, C);
+      // (a ⌋ (B ⌋ C))
+      Rewriter.replaceOpWithNewOp<geomalg::LeftContractionOp>(
+          LHS.getDefiningOp(), a, BC);
+
+      return llvm::success();
+    }
+
+    return llvm::failure();
   }
 };
 } // namespace

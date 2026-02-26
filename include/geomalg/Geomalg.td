@@ -5,6 +5,7 @@
 #define GEOMALG_DIALECT_TD
 
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 
@@ -108,6 +109,13 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
       return geomalg::BladeTag(getTag()).isNonnegative();
     }
 
+    // See BladeTag::factor().
+    std::pair<BladeType, BladeType> factor() {
+      auto [L, R] = geomalg::BladeTag(getTag()).factor();
+      return {get(getContext(), L.getTag()),
+              get(getContext(), R.getTag())};
+    }
+
     static constexpr bool isZero() { return false; }
   }];
 }
@@ -141,6 +149,7 @@ def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
 
 // Operations
 
+// TODO Add pure to all of the operations here.
 class Geomalg_Op<string mnemonic, list<Trait> traits = []> :
     Op<Geomalg_Dialect, mnemonic, traits>;
 
@@ -151,6 +160,17 @@ def Geomalg_SumOp : Geomalg_Op<"sum", []> {
 
   let arguments = (ins Variadic<Geomalg_Value>:$args);
   let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "llvm::ArrayRef<::mlir::Value>":$Terms), [{
+        $_state.addOperands(Terms);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>,
+    OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
+        $_state.addOperands(LHS);
+        $_state.addOperands(RHS);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
@@ -163,15 +183,22 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
   let results   = (outs Variadic<Geomalg_Blade>:$results);
 }
 
-def Geomalg_WedgeProductOp : Geomalg_Op<"wedge", [Distributive]> {
+def Geomalg_WedgeOp : Geomalg_Op<"wedge", [Distributive]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg1,
-                       Geomalg_Value:$arg2);
+  let arguments = (ins Geomalg_Value:$LHS,
+                       Geomalg_Value:$RHS);
   let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
+        $_state.addOperands(LHS);
+        $_state.addOperands(RHS);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_LeftContractionOp : Geomalg_Op<"lcontract", [Distributive]> {
@@ -180,9 +207,16 @@ def Geomalg_LeftContractionOp : Geomalg_Op<"lcontract", [Distributive]> {
     interior product.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg1,
-                       Geomalg_Value:$arg2);
+  let arguments = (ins Geomalg_Value:$LHS,
+                       Geomalg_Value:$RHS);
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
+        $_state.addOperands(LHS);
+        $_state.addOperands(RHS);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", [Distributive]> {
@@ -231,5 +265,32 @@ def Geomalg_NegateOp : Geomalg_Op<"negate", [Distributive]> {
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
 }
+
+def Geomalg_CastOp : Geomalg_Op<"cast"> {
+  let description = [{
+    Cast a blade to another blade type that is typically
+    used to factor out a basis vector from a k-blade.
+  }];
+
+  let arguments = (ins Geomalg_Blade:$arg);
+  let results   = (outs Geomalg_Blade:$result);
+}
+
+def Geomalg_BladeOp : Geomalg_Op<"blade"> {
+  let description = [{
+    Construct a basis blade with a constant coefficient.
+  }];
+
+  let arguments = (ins Builtin_FloatAttr:$coefficient);
+  let results   = (outs Geomalg_Blade:$result);
+
+  let builders = [
+    // Default to 1.0 for the coefficient.
+    OpBuilder<(ins "::mlir::Type":$resultType, CArg<"float", "1.0f">:$val), [{
+        $_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
+      }]>
+  ];
+}
+
 
 #endif // GEOMALG_DIALECT_TD
