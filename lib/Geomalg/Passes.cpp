@@ -10,6 +10,7 @@
 
 // Generated stuff
 namespace geomalg {
+#define GEN_PASS_DEF_APPLYMETRICPASS
 #define GEN_PASS_DEF_ARGUMENTDEDUCTIONPASS
 #define GEN_PASS_DEF_TYPEINFERENCEPASS
 #define GEN_PASS_DEF_EXPANDPASS
@@ -20,20 +21,27 @@ namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
 
-class TypeInferencePass
-  : public geomalg::impl::TypeInferencePassBase<TypeInferencePass> {
+class ApplyMetricPass
+  : public geomalg::impl::ApplyMetricPassBase<ApplyMetricPass> {
 
   geomalg::Metric Metric;
 
 public:
-  TypeInferencePass()
+  ApplyMetricPass()
     : Metric(geomalg::Metric::get(geomalg::MetricKind::unknown))
   { }
 
-  TypeInferencePass(geomalg::TypeInferencePassOptions Options)
+  ApplyMetricPass(geomalg::ApplyMetricPassOptions Options)
     : Metric(geomalg::Metric::get(Options.metric))
   { }
 
+  void runOnOperation() override;
+};
+
+class TypeInferencePass
+  : public geomalg::impl::TypeInferencePassBase<TypeInferencePass> {
+
+public:
   void runOnOperation() override;
 };
 
@@ -91,10 +99,6 @@ void TypeInferencePass::runOnOperation() {
     return mlir::WalkResult::advance();
   });
 
-  if (Metric) {
-    // Product
-  }
-
   // Finally infer the function return type by the operand
   // of the ReturnOp.
   mlir::Type OrigResultTy = FuncOp.getResultTypes().front();
@@ -105,7 +109,6 @@ void TypeInferencePass::runOnOperation() {
         FuncOp.getContext(), FuncOp.getArgumentTypes(), ReturnTy);
     FuncOp.setFunctionType(NewFT);
   }
-
 }
 
 void ArgumentDeductionPass::runOnOperation() {
@@ -320,7 +323,7 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
     return llvm::failure();
   }
 };
-} // namespace
+}  // namespace
 
 void ExpandPass::runOnOperation() {
   mlir::MLIRContext* Ctx = &getContext();
@@ -329,6 +332,53 @@ void ExpandPass::runOnOperation() {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
   PS.add<Distribute>(Ctx);
+
+  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
+    return signalPassFailure();
+}
+
+namespace {
+struct ApplyMetric : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
+  using Base = mlir::OpRewritePattern<geomalg::LeftContractionOp>;
+
+  geomalg::Metric Metric;
+
+  ApplyMetric(mlir::MLIRContext* Ctx, geomalg::Metric M)
+    : Base(Ctx)
+    , Metric(M)
+  { }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::LeftContractionOp LC,
+      mlir::PatternRewriter& Rewriter) const override {
+    if (!Metric)
+      return llvm::failure();
+
+    mlir::Location Loc = LC.getLoc();
+    mlir::Value LHS = LC.getLHS();
+    mlir::Value RHS = LC.getRHS();
+    auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
+    auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
+    if (!(L && L.getGrade() == 1 && R && R.getGrade() == 1))
+      return llvm::failure();
+
+    int DotResult = Metric.dotProduct(geomalg::BladeTag(L.getTag()),
+                                      geomalg::BladeTag(L.getTag()));
+
+    auto BT = geomalg::BladeType(0); // Scalar
+    Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
+    return llvm::success();
+  }
+};
+}  // namespace
+
+void ApplyMetricPass::runOnOperation() {
+  mlir::MLIRContext* Ctx = &getContext();
+  mlir::func::FuncOp FuncOp = getOperation();
+
+  // Create pattern rewriter thingy.
+  mlir::RewritePatternSet PS(Ctx);
+  PS.add<ApplyMetric>(Ctx, Metric);
 
   if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
     return signalPassFailure();

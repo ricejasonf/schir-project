@@ -143,7 +143,7 @@ public:
 
   // Assume vectors are orthonormal unless specified otherwise.
   // This is designed to return {-1, 0, 1}.
-  int dotProduct(BladeTag A, BladeTag B) {
+  int dotProduct(BladeTag A, BladeTag B) const {
     if (A > B)
       std::swap(A, B);
 

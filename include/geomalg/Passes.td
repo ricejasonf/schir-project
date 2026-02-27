@@ -13,18 +13,28 @@ class GeomalgPass<string name, string operation = "">
                            "mlir::func::FuncDialect"];
 }
 
-class MetricPass<string name, string operation = "">
-: GeomalgPass<name, operation> {
-  let options = [
+// Allow pass to optionally use one of the predefined metrics.
+def MetricOption : 
     Option<"metric", "metric", "geomalg::MetricKind",
            "geomalg::MetricKind::unknown",  // default
            "A metric determines the result of certain operations.",
-           [{geomalg::getMetricKindEnumValues()}]>
-  ];
+           [{geomalg::getMetricKindEnumValues()}]>;
+
+def ApplyMetricPass : GeomalgPass<"geomalg-apply-metric",
+                                  "mlir::func::FuncOp"> {
+  let summary = "Apply a metric to evaluate the inner product";
+  let description = [{
+    This pass uses one of a set of predfined metrics that specify
+    the result of the left contraction on 1-blades which is
+    equivalent to the dot product. This exists as its own pass
+    so users may specify their own pass to generate any code to
+    substitute for the inner product.
+  }];
+  let options = [MetricOption];
 }
 
-def TypeInferencePass : MetricPass<"geomalg-type-inference",
-                                   "mlir::func::FuncOp"> {
+def TypeInferencePass : GeomalgPass<"geomalg-type-inference",
+                                    "mlir::func::FuncOp"> {
   let summary = "Substitute unknown types with inferred types where possible";
   let description = [{
     The results of operations and functions are initially constructed with the
