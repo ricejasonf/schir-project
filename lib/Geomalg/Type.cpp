@@ -17,7 +17,7 @@ createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
   llvm::SmallVector<geomalg::BladeTag> BladeTags(BladeTypes.size());
   for (unsigned I = 0; I < BladeTypes.size(); I++)
-    BladeTags[I] = BladeTypes[I].getTag();
+    BladeTags[I] = geomalg::BladeTag(BladeTypes[I].getTag());
   BladeTag BT = BladeTag::create(BladeTags);
 
   mlir::MLIRContext* MLIRContext = BladeTypes.front().getContext();

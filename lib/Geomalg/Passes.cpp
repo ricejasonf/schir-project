@@ -163,62 +163,117 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
   }
 };
 
-// Expand the wedge product of blades.
-// This will result in Zero if any basis vectors are dependent.
-// Otherwise it will result in a blade represented by the bitwise AND
-// of the input BladeTags.
-struct ExpandWedge : mlir::OpRewritePattern<geomalg::WedgeOp> {
-  using Base = mlir::OpRewritePattern<geomalg::WedgeOp>;
+// Rewrite the geometric product of blades as terms of inner and outer products.
+struct ExpandGProd : mlir::OpRewritePattern<geomalg::GeometricProductOp> {
+  using Base = mlir::OpRewritePattern<geomalg::GeometricProductOp>;
   using Base::OpRewritePattern;
 
   llvm::LogicalResult matchAndRewrite(
-      geomalg::WedgeOp Op,
+      geomalg::GeometricProductOp GP,
       mlir::PatternRewriter& Rewriter) const override {
-    // TODO
+    mlir::Location Loc = GP->getLoc();
+    mlir::Value LHS = GP.getLHS();
+    mlir::Value RHS = GP.getRHS();
+    auto L = dyn_cast<geomalg::BladeType>(GP.getLHS().getType());
+    auto R = dyn_cast<geomalg::BladeType>(GP.getRHS().getType());
+    if (!L || !R)
+      return llvm::failure();
+
+    // Use the left contraction for scalar multiplication.
+    // α B = α ⌋ B
+    if (L.getGrade() == 0) {
+      Rewriter.replaceOpWithNewOp<geomalg::LeftContractionOp>(
+        GP, R, LHS, RHS);
+      return llvm::success();
+    }
+
+    // a B = a ⌋ B + a ∧ B
+    if (L.getGrade() == 1) {
+      mlir::Value NewLC = geomalg::LeftContractionOp::create(Rewriter, Loc,
+                                                             LHS, RHS);
+      mlir::Value NewWP = geomalg::WedgeOp::create(Rewriter, Loc, LHS, RHS);
+      Rewriter.replaceOpWithNewOp<geomalg::SumOp>(GP, NewLC, NewWP);
+      return llvm::success();
+    }
+
+    // Factor the LHS blade using
+    // a ∧ B = 1/2 (a B + B^ a)
+    auto [Type_a, Type_B] = L.factor();
+    mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a);
+    mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, LHS);
+    mlir::Value Half = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 0.5f);
+    mlir::Value B_invo = geomalg::NegateOp::create(Rewriter, Loc,
+                                                   Type_B.invo(), B);
+    mlir::Value GP1 = geomalg::GeometricProductOp::create(Rewriter, Loc, a, B);
+    mlir::Value GP2 = geomalg::GeometricProductOp::create(Rewriter, Loc,
+                                                          B_invo, a);
+    mlir::Value Sum = geomalg::SumOp::create(Rewriter, Loc, GP1, GP2);
+    // Use the left contraction for scalar multiplication.
+    mlir::Value NewLC = geomalg::LeftContractionOp::create(Rewriter, Loc,
+                                                           Half, Sum);
+    Rewriter.replaceOpWithNewOp<geomalg::GeometricProductOp>(GP, NewLC, RHS);
+    
     return llvm::failure();
   }
 };
 
 // Expand the left contraction to a multivector where appropriate
-// by the GA4CS definitions. That is,
-// 3.7, 3.8
-//      - Any operand that is scalar results in zero or scalar multiplication.
-//        So, here the operation remains unchanged.
-// 3.9  - Two 1-blades is the dot product and remains unchanged
-// 3.10 - A 1-blade and a (>1)-blade expands to a sum.
-//        (a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C)))
-// 3.11 - A (>1)-blade and a k-blade expand to a nested contraction
-//        (a ∧ B) ⌋ C = a ⌋ (B ⌋ C).
-// Note: Lower case vars in the above defs are 1-blades and
-//       we are decomposing the wedge products.
+// by the GA4CS definitions. Note that the conventions are greek
+// letters for scalars, lowercase letters for 1-blades and uppercase
+// letters for arbitrary k-blades where we sometimes specify constraints on k.
 
 // Any operation that does not expand implies multiplication of coefficients
 // via commutativity of multiplication across the contraction.
-// Result types are deferred to type inference when a metric is required.
+// Result types are !geomalg.unknown when a metric is required.
 struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
   using Base = mlir::OpRewritePattern<geomalg::LeftContractionOp>;
   using Base::OpRewritePattern;
 
-  // TODO Make this require a metric and infer the result types for
-  //      the LCs we do not expand.
-
   void initialize() {
-    // We unwrap multivector operands until we cannot find any more.
     setHasBoundedRewriteRecursion();
+  }
+
+  void setResultType(mlir::PatternRewriter& Rewriter,
+                     geomalg::LeftContractionOp LC, mlir::Type Type) const {
+    Rewriter.startOpModification(LC.getOperation());
+    LC.getResult().setType(Type);
+    Rewriter.finalizeOpModification(LC.getOperation());
   }
 
   llvm::LogicalResult matchAndRewrite(
       geomalg::LeftContractionOp LC,
       mlir::PatternRewriter& Rewriter) const override {
     mlir::Location Loc = LC.getLoc();
-    auto LHS = LC.getLHS();
-    auto RHS = LC.getRHS();
+    mlir::Value LHS = LC.getLHS();
+    mlir::Value RHS = LC.getRHS();
     auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
     auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
-    // TODO Infer result types of LCs we are not currently matching.
-    // Match iff both operands are nonscalar blades.
-    if (!(L && L.getGrade() > 0 && R && R.getGrade() > 0))
+    if (!L || !R)
       return llvm::failure();
+
+    // 3.8
+    // B ⌋ α = 0
+    if (R.getGrade() == 0 && L.getGrade() > 0) {
+      setResultType(Rewriter, LC, geomalg::ZeroType::get(LC->getContext()));
+      return llvm::success();
+    }
+
+    // 3.7
+    // α ⌋ B = α B
+    if (L.getGrade() == 0) {
+      if (!L.isNonnegative())
+        R = R.negate();
+      setResultType(Rewriter, LC, R);
+      return llvm::success();
+    }
+
+    if (L.getGrade() == 1 && R.getGrade() == 1) {
+      // 3.9
+      // a ⌋ b = a ⬝ b
+      // Requires a metric the application of
+      // which is deferred to its own pass.
+      return llvm::failure();
+    }
 
     // 3.10
     // (a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C)))
@@ -227,17 +282,17 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
       // a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
       // Note we used the antisymmetric property for the second term
       auto [Type_b, Type_C] = R.factor();
-      auto a = LHS;
-      auto b = geomalg::BladeOp::create(Rewriter, Loc, Type_b);
-      auto C = geomalg::CastOp::create(Rewriter, Loc, Type_C, RHS);
+      mlir::Value a = LHS;
+      mlir::Value b = geomalg::BladeOp::create(Rewriter, Loc, Type_b);
+      mlir::Value C = geomalg::CastOp::create(Rewriter, Loc, Type_C, RHS);
       // (a ⌋ b)
-      auto ab = geomalg::LeftContractionOp::create(Rewriter, Loc, a, b);
+      mlir::Value ab = geomalg::LeftContractionOp::create(Rewriter, Loc, a, b);
       // (a ⌋ C)
-      auto aC = geomalg::LeftContractionOp::create(Rewriter, Loc, a, C);
+      mlir::Value aC = geomalg::LeftContractionOp::create(Rewriter, Loc, a, C);
       // ((a ⌋ b) ∧ C)
-      auto abC = geomalg::WedgeOp::create(Rewriter, Loc, ab, C);
+      mlir::Value abC = geomalg::WedgeOp::create(Rewriter, Loc, ab, C);
       // ((a ⌋ C) ∧ b)
-      auto aCb = geomalg::WedgeOp::create(Rewriter, Loc, aC, b);
+      mlir::Value aCb = geomalg::WedgeOp::create(Rewriter, Loc, aC, b);
       // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
       Rewriter.replaceOpWithNewOp<geomalg::SumOp>(RHS.getDefiningOp(),
                                                   abC, aCb);

@@ -24,7 +24,7 @@ class BladeTag {
 
 public:
   BladeTag() = default;
-  BladeTag(uint32_t Tag) : Tag(Tag) { }
+  explicit BladeTag(uint32_t Tag) : Tag(Tag) { }
 
   uint32_t getTag() const {
     return Tag;
@@ -51,19 +51,30 @@ public:
     return !static_cast<bool>(tag_sign_mask & getTag());
   }
 
-  // Peel off the highest dimension basis vector
-  // from the wedge product.
+  BladeTag negate() const {
+    return BladeTag(tag_sign_mask ^ getTag());
+  }
+
+  // Grade involution. B^ = (-1)^{grade(B)} B
+  BladeTag invo() const {
+    return getGrade() % 2 == 0 ? negate() :*this;
+  }
+
+  // Peel off the leftmost basis vector from the wedge product.
   // Return the 1-blade and the (k - 1)-blade factors.
   std::pair<BladeTag, BladeTag> factor() const {
     uint32_t CTag = getCanonicalTag();
     if (CTag == 0)
       return {BladeTag(0), *this};
 
+    // We assume blades are in sorted order so we must take
+    // the vector specified by the least significant bit.
+
     // TagB has all bits in Tag except the one set in TagA.
     // This will include the original sign bit.
-    uint32_t TagA = 1 << (std::bit_width(CTag) - 1);
+    uint32_t TagA = 1 << std::countr_zero(CTag);
     uint32_t TagB = Tag ^ TagA;
-    return {TagA, TagB};
+    return {BladeTag(TagA), BladeTag(TagB)};
   }
 
   auto operator<=>(BladeTag const&) const = default;
@@ -132,7 +143,7 @@ public:
 
   // Assume vectors are orthonormal unless specified otherwise.
   // This is designed to return {-1, 0, 1}.
-  int DotProduct(BladeTag A, BladeTag B) {
+  int dotProduct(BladeTag A, BladeTag B) {
     if (A > B)
       std::swap(A, B);
 
@@ -152,7 +163,9 @@ public:
     case MetricKind::unknown:
       return Metric(0, {});
     case MetricKind::cga:
-      return Metric(5, {{32, 32, 0}, {64, 64, 0}, {32, 64, -1}});
+      return Metric(5, {Entry{32, 32, 0},
+                        Entry{64, 64, 0},
+                        Entry{32, 64, -1}});
     }
   }
 };

@@ -87,7 +87,7 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
   // TODO Break this out into an interface.
   let extraClassDeclaration = [{
     geomalg::BladeTag getCanonicalTag() const {
-      return geomalg::BladeTag(getTag()).getCanonicalTag();
+      return geomalg::BladeTag(geomalg::BladeTag(getTag()).getCanonicalTag());
     }
 
     unsigned getGrade() const {
@@ -107,6 +107,14 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
 
     bool isNonnegative() const {
       return geomalg::BladeTag(getTag()).isNonnegative();
+    }
+
+    BladeType negate() const {
+      return get(getContext(),geomalg::BladeTag(getTag()).negate().getTag());
+    }
+
+    BladeType invo() const {
+      return get(getContext(),geomalg::BladeTag(getTag()).invo().getTag());
     }
 
     // See BladeTag::factor().
@@ -225,9 +233,16 @@ def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", [Distributive]> {
     and exterior products which produces a multivector.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg1,
-                       Geomalg_Value:$arg2);
+  let arguments = (ins Geomalg_Value:$LHS,
+                       Geomalg_Value:$RHS);
   let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
+        $_state.addOperands(LHS);
+        $_state.addOperands(RHS);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_GeometricInverseOp : Geomalg_Op<"inverse", []> {
@@ -270,6 +285,7 @@ def Geomalg_CastOp : Geomalg_Op<"cast"> {
   let description = [{
     Cast a blade to another blade type that is typically
     used to factor out a basis vector from a k-blade.
+    To change the sign, see NegateOp.
   }];
 
   let arguments = (ins Geomalg_Blade:$arg);
