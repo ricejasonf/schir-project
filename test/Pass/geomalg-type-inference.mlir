@@ -4,11 +4,11 @@
 
 module {
 // CHECK: func.func @my_func1
-// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <3>>
+// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <3>, <2147483651>>
 // CHECK-NEXT: "geomalg.sum"
-// CHECK-SAME:  -> !geomalg.blade<3>
+// CHECK-SAME:  -> !geomalg.multivector<<3>, <2147483651>>
 // CHECK-NEXT: "geomalg.sum"
-// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <3>>
+// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <3>, <2147483651>>
   func.func @my_func1(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>,
                       %arg2: !geomalg.blade<3>, %arg3: !geomalg.blade<2147483651>)
                       -> !geomalg.unknown {
@@ -26,9 +26,9 @@ module {
 // CHECK-NEXT:  return
 // CHECK-SAME: : !geomalg.blade<7>
   func.func @my_func2(%arg0: !geomalg.blade<7>,
-                      %arg1: !geomalg.blade<2147483655>) -> !geomalg.unknown {
+                      %arg1: !geomalg.blade<7>) -> !geomalg.unknown {
     %0 = "geomalg.sum"(%arg0, %arg1)
-      : (!geomalg.blade<7>, !geomalg.blade<2147483655>) -> !geomalg.unknown
+      : (!geomalg.blade<7>, !geomalg.blade<7>) -> !geomalg.unknown
     return %0 : !geomalg.unknown
   }
 

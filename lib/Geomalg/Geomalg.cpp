@@ -42,12 +42,12 @@ void geomalg_blade_type(heavy::Context& C, heavy::ValueRefs Args) {
     return C.Cont(C.CreateAny<mlir::Type>(BladeType));
   }
 
-  // BladeTypes will consist only of basis vectors.
+  // BladeTypes will consist only of basis 1-blades.
   llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
   for (heavy::Value Arg : Args) {
     mlir::Type Type = any_cast<mlir::Type>(Arg);
     if (auto BladeType = dyn_cast_if_present<geomalg::BladeType>(Type);
-        BladeType && BladeType.isBasisVector())
+        BladeType && BladeType.getGrade() == 1 && BladeType.isCanonical())
       BladeTypes.push_back(BladeType);
     else
       return C.RaiseError(

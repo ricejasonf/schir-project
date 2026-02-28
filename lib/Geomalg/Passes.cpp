@@ -167,7 +167,7 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
 };
 
 // Rewrite the geometric product of blades as terms of inner and outer products.
-struct ExpandGProd : mlir::OpRewritePattern<geomalg::GeometricProductOp> {
+struct ExpandGP : mlir::OpRewritePattern<geomalg::GeometricProductOp> {
   using Base = mlir::OpRewritePattern<geomalg::GeometricProductOp>;
   using Base::OpRewritePattern;
 
@@ -205,8 +205,9 @@ struct ExpandGProd : mlir::OpRewritePattern<geomalg::GeometricProductOp> {
     mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a);
     mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, LHS);
     mlir::Value Half = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 0.5f);
-    mlir::Value B_invo = geomalg::NegateOp::create(Rewriter, Loc,
-                                                   Type_B.invo(), B);
+    mlir::Value B_invo;
+    if (Type_B.shouldInvoNegate())
+      B_invo = geomalg::NegateOp::create(Rewriter, Loc, Type_B, B);
     mlir::Value GP1 = geomalg::GeometricProductOp::create(Rewriter, Loc, a, B);
     mlir::Value GP2 = geomalg::GeometricProductOp::create(Rewriter, Loc,
                                                           B_invo, a);
@@ -264,8 +265,6 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
     // 3.7
     // α ⌋ B = α B
     if (L.getGrade() == 0) {
-      if (!L.isNonnegative())
-        R = R.negate();
       setResultType(Rewriter, LC, R);
       return llvm::success();
     }
@@ -323,6 +322,72 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::LeftContractionOp> {
     return llvm::failure();
   }
 };
+
+struct ExpandInverse : mlir::OpRewritePattern<geomalg::InverseOp> {
+  using Base = mlir::OpRewritePattern<geomalg::InverseOp>;
+  using Base::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::InverseOp InvOp,
+      mlir::PatternRewriter& Rewriter) const override {
+    mlir::MLIRContext* Ctx = getContext();
+    mlir::Location Loc = InvOp.getLoc();
+    mlir::Value Arg = InvOp.getArg();
+
+    auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
+
+    // Scalars will be lowered to 1/Arg. (ie division.)
+    if (BT && BT.getGrade() == 0)
+      return llvm::failure();
+
+    // For blades we can simplify to a Negate since we know the grade.
+    // For multivectors, Reverse will be distributed to each blade.
+
+    mlir::Value Reverse;
+    if (BT)
+      Reverse = BT.shouldReverseNegate()
+        ? geomalg::NegateOp::create(Rewriter, Loc, BT, Arg)
+        : Arg;
+    else
+      Reverse = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
+
+    // The result is either scalar or unknown.
+    mlir::Type LCResultType = BT ? mlir::Type(geomalg::BladeType::get(Ctx, 0))
+                                 : mlir::Type(geomalg::UnknownType::get(Ctx));
+    mlir::Value Squared = geomalg::LeftContractionOp
+      ::create(Rewriter, Loc, LCResultType, Arg, Arg);
+    mlir::Value SquareInverse = geomalg::InverseOp
+      ::create(Rewriter, Loc, LCResultType, Squared);
+    // Multiply the inverse of norm squared and reverse blade.
+    Rewriter.replaceOpWithNewOp<geomalg::LeftContractionOp>(
+        InvOp, SquareInverse, Reverse);
+    return llvm::success();
+  }
+};
+
+struct ExpandReverse : mlir::OpRewritePattern<geomalg::ReverseOp> {
+  using Base = mlir::OpRewritePattern<geomalg::ReverseOp>;
+  using Base::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::ReverseOp RevOp,
+      mlir::PatternRewriter& Rewriter) const override {
+    mlir::MLIRContext* Ctx = getContext();
+    mlir::Location Loc = RevOp.getLoc();
+    mlir::Value Arg = RevOp.getArg();
+
+    auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
+
+    // Scalars will be lowered to 1/Arg. (ie division.)
+    if (BT && BT.getGrade() == 0)
+      return llvm::failure();
+
+    // TODO FINISH and fix the notion of negative blade types
+    //      (ie by removing said notion)
+
+    return llvm::success();
+  }
+};
 }  // namespace
 
 void ExpandPass::runOnOperation() {
@@ -331,7 +396,11 @@ void ExpandPass::runOnOperation() {
 
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-  PS.add<Distribute>(Ctx);
+  PS.add<Distribute,
+         ExpandLC,
+         ExpandGP,
+         ExpandInverse,
+         ExpandReverse>(Ctx);
 
   if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
     return signalPassFailure();

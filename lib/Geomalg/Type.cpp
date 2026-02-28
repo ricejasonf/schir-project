@@ -10,8 +10,8 @@ namespace geomalg {
 // Implement utilities for construction and
 // introspection of geomalg dialect types.
 
-// Create a BladeType from a wedge product of nonnegative basis vectors
-// which may yield the ZeroType. The input array will be sorted in place.
+// Create a BladeType from a wedge product of basis 1-blades.
+// The input array will be sorted in place.
 mlir::Type
 createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
@@ -24,21 +24,19 @@ createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   return geomalg::BladeType::get(MLIRContext, BT.getTag());
 }
 
-// Create a canonicalized type for a multivector.
+// Create a type for a multivector.
 // The result may be a BladeType for a single term.
+// Do not combine blades equivalent by antisymmetric property
+// as we will expand these in passes that may prefer one ordering
+// over another. (ie because (e2^e1)(e2^e1) == 1)
 mlir::Type
 createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   if (BladeTypes.empty())
     return geomalg::ZeroType();
 
-  // Transform all negative blades to positive.
-  llvm::transform(BladeTypes, BladeTypes.begin(),
-      [](auto BT) { return BT.getCanonicalType(); });
-
-  // Sort by canonical tag and sign.
+  // Sort by tag.
   llvm::sort(BladeTypes, [](auto& A, auto& B) {
-      return (A.getCanonicalTag() < B.getCanonicalTag()) ||
-             (A.isNonnegative() && !B.isNonnegative());
+      return A.getTag() < B.getTag();
     });
 
   // Unique by pointer-like equality. (mlir::Types are uniqued)

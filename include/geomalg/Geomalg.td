@@ -51,7 +51,7 @@ def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
     unsigned getGrade() const { return 0; }
     bool isBasisVector() const { return true; }
     static constexpr bool isZero() { return true; }
-    static constexpr bool isNonnegative() { return true; }
+    static constexpr bool isCanonical() { return true; }
   }];
 }
 
@@ -98,23 +98,27 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
     bool isBasisVector() const {
       // Include scalar as a basis vector.
       // Exclude negative blades.
-      return getGrade() < 2 && isNonnegative();
+      return getGrade() < 2 && isCanonical();
     }
 
     geomalg::BladeType getCanonicalType() const {
       return get(getContext(), getCanonicalTag().getTag());
     }
 
-    bool isNonnegative() const {
-      return geomalg::BladeTag(getTag()).isNonnegative();
+    bool isCanonical() const {
+      return geomalg::BladeTag(getTag()).isCanonical();
     }
 
     BladeType negate() const {
       return get(getContext(),geomalg::BladeTag(getTag()).negate().getTag());
     }
 
-    BladeType invo() const {
-      return get(getContext(),geomalg::BladeTag(getTag()).invo().getTag());
+    bool shouldInvoNegate() const {
+      return geomalg::BladeTag(getTag()).shouldInvoNegate();
+    }
+
+    bool shouldReverseNegate() const {
+      return geomalg::BladeTag(getTag()).shouldReverseNegate();
     }
 
     // See BladeTag::factor().
@@ -245,7 +249,7 @@ def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", [Distributive]> {
   ];
 }
 
-def Geomalg_GeometricInverseOp : Geomalg_Op<"inverse", []> {
+def Geomalg_InverseOp : Geomalg_Op<"inverse", []> {
   let description = [{
     Take the multiplicative inverse. For a single k-blade,
     this is defined as applying the multiplicative inverse of
@@ -254,9 +258,15 @@ def Geomalg_GeometricInverseOp : Geomalg_Op<"inverse", []> {
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$arg), [{
+        $_state.addOperands(arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
-def Geomalg_GeometricReverseOp : Geomalg_Op<"reverse", [Distributive]> {
+def Geomalg_ReverseOp : Geomalg_Op<"reverse", [Distributive]> {
   let description = [{
     Take the reverse of a k-blade that swaps vectors
     in the wedge product until the vectors are in reverse sorted
@@ -266,6 +276,12 @@ def Geomalg_GeometricReverseOp : Geomalg_Op<"reverse", [Distributive]> {
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$arg), [{
+        $_state.addOperands(arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate", [Distributive]> {

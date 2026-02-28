@@ -8,7 +8,9 @@
 namespace geomalg {
 // Use a bitmask to represent a blade uniquely.
 // Each bit represents a dimension expcept the high bit
-// which represents sign. No bits set represents a scalar.
+// which represents sign with regard to canonical ordering
+// of basis vectors which is sorted by tag value of basis
+// vector tags. No bits set represents a scalar.
 class BladeTag {
   uint32_t Tag = 0;
 
@@ -17,7 +19,11 @@ class BladeTag {
 
 public:
   BladeTag() = default;
-  explicit BladeTag(uint32_t Tag) : Tag(Tag) { }
+  explicit BladeTag(uint32_t Tag) : Tag(Tag) {
+    // If the blade cannot have an noncanonical ordering
+    assert((getGrade() > 1 || Tag == getCanonicalTag()) &&
+        "0-blades and 1-blades cannot have noncanonical ordering");
+  }
 
   uint32_t getTag() const {
     return Tag;
@@ -32,25 +38,37 @@ public:
     return std::popcount(getCanonicalTag());
   }
 
+  // FIXME This is unused.
   // Basis vectors include 0-blades and 1-blades
   bool isBasisVector() const {
     // Include scalar as a basis vector.
     // Exclude negative blades.
-    return getGrade() < 2 && isNonnegative();
+    return getGrade() < 2 && isCanonical();
   }
 
-
-  bool isNonnegative() const {
+  bool isCanonical() const {
     return !static_cast<bool>(tag_sign_mask & getTag());
   }
 
+  // Change the to or from the set of canonical orderings
+  // of basis vectors.
+  // Note that "sign" only indicates the canonical ordering
+  // without regard to the sign of the coefficient.
   BladeTag negate() const {
-    return BladeTag(tag_sign_mask ^ getTag());
+    return getGrade() > 1 ? BladeTag(tag_sign_mask ^ getTag())
+                          : *this;
   }
 
   // Grade involution. B^ = (-1)^{grade(B)} B
-  BladeTag invo() const {
-    return getGrade() % 2 == 0 ? negate() :*this;
+  bool shouldInvoNegate() const {
+    return getGrade() % 2 == 0;
+  }
+
+  bool shouldReverseNegate() const {
+    unsigned G = getGrade();
+    // Negate if reversing G basis elements performs an odd number of swaps
+    // (because of the antisymmetric property of the wedge product.)
+    return G % 2 == 0 || G % 3 == 0;
   }
 
   // Peel off the leftmost basis vector from the wedge product.
@@ -67,12 +85,20 @@ public:
     // This will include the original sign bit.
     uint32_t TagA = 1 << std::countr_zero(CTag);
     uint32_t TagB = Tag ^ TagA;
+    if (!isCanonical()) {
+      // Get the second "leftmost" basis element.
+      // Note that TagB will now be canonically ordered.
+      assert(getGrade() > 1);
+      TagA = 1 << std::countr_zero(TagB);
+      TagB = CTag ^ TagA;
+    }
     return {BladeTag(TagA), BladeTag(TagB)};
   }
 
   auto operator<=>(BladeTag const&) const = default;
   bool operator==(BladeTag const&) const = default;
 
+  // This behaves like the wedge product of 1-blades.
   static BladeTag create(llvm::MutableArrayRef<BladeTag> BladeTags) {
     if (BladeTags.empty())
       return BladeTag();
@@ -82,8 +108,8 @@ public:
     // elements are not unique, but we check that after sorting.
     uint32_t SignTag = 0;
     auto Swap = [&SignTag](geomalg::BladeTag& A, geomalg::BladeTag& B) {
-        // We are expecting canonical basis vectors. (ie nonnegative)
-        assert(A.isBasisVector() && B.isBasisVector());
+        // We are expecting basis 1-blades.
+        assert(A.getGrade() == 1 && B.getGrade() == 1);
         std::swap(A, B);
         SignTag ^= geomalg::BladeTag::tag_sign_mask;
       };
