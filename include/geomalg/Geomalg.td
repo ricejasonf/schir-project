@@ -8,6 +8,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
@@ -266,7 +267,8 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", []> {
   ];
 }
 
-def Geomalg_ReverseOp : Geomalg_Op<"reverse", [Distributive]> {
+def Geomalg_ReverseOp : Geomalg_Op<"reverse",
+      [Distributive, SameOperandsAndResultType]> {
   let description = [{
     Take the reverse of a k-blade that swaps vectors
     in the wedge product until the vectors are in reverse sorted
@@ -276,15 +278,10 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse", [Distributive]> {
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
-  let builders = [
-    OpBuilder<(ins "::mlir::Value":$arg), [{
-        $_state.addOperands(arg);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
-      }]>
-  ];
 }
 
-def Geomalg_NegateOp : Geomalg_Op<"negate", [Distributive]> {
+def Geomalg_NegateOp : Geomalg_Op<"negate",
+      [Distributive, SameOperandsAndResultType]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding

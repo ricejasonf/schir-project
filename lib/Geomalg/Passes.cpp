@@ -130,6 +130,8 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
   // The real meat and potatoes.
   llvm::LogicalResult matchAndRewrite(
       mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override {
+    mlir::MLIRContext* Ctx = getContext();
+
     // Given an operation whose operator distributes over addition,
     // match the first Multivector operand.
     auto Itr = llvm::find_if(Op->getOperands(), [](mlir::Value Operand) {
@@ -155,7 +157,16 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
       mlir::IRMapping Map;
       Map.map(MV, Blade);
       mlir::Operation* NewOp = Rewriter.cloneWithoutRegions(*Op, Map);
-      Results.push_back(NewOp->getResult(0));
+      // The NewOp result type is the same as its operand or it must
+      // be inferred via !geomalg.unknown.
+      mlir::Value Result = NewOp->getResult(0);
+      mlir::Type ResultT;
+      if (NewOp->hasTrait<mlir::OpTrait::SameOperandsAndResultType>())
+        ResultT = NewOp->getOperand(0).getType();
+      else
+        ResultT = geomalg::UnknownType::get(Ctx);
+      Result.setType(ResultT);
+      Results.push_back(Result);
     }
 
     // Replace the original op with a shiny, new SumOp.
@@ -216,7 +227,7 @@ struct ExpandGP : mlir::OpRewritePattern<geomalg::GeometricProductOp> {
     mlir::Value NewLC = geomalg::LeftContractionOp::create(Rewriter, Loc,
                                                            Half, Sum);
     Rewriter.replaceOpWithNewOp<geomalg::GeometricProductOp>(GP, NewLC, RHS);
-    
+
     return llvm::failure();
   }
 };
@@ -378,12 +389,14 @@ struct ExpandReverse : mlir::OpRewritePattern<geomalg::ReverseOp> {
 
     auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
 
-    // Scalars will be lowered to 1/Arg. (ie division.)
-    if (BT && BT.getGrade() == 0)
+    // Multivectors are handled by the Distribute rewriter.
+    if (!BT)
       return llvm::failure();
 
-    // TODO FINISH and fix the notion of negative blade types
-    //      (ie by removing said notion)
+    if (BT.shouldReverseNegate())
+      Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(RevOp, RevOp.getArg());
+    else
+      Rewriter.replaceOp(RevOp, RevOp.getArg());
 
     return llvm::success();
   }
