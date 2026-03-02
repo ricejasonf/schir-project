@@ -3,6 +3,7 @@
 
 #include <geomalg/Metric.h>
 #include <geomalg/Dialect.h>
+#include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 #include <llvm/Support/CommandLine.h>  // For ValuesClass
 
@@ -19,6 +20,7 @@ inline llvm::cl::ValuesClass getMetricKindEnumValues() {
       clEnumValN(0, "unknown", "Unknown metric"),
       clEnumValN(1, "cga", "Conformal model"));
 }
+
 }  // namespace geomalg
 
 #endif  // GEOMALG_PASSES_H

@@ -196,7 +196,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
   let results   = (outs Variadic<Geomalg_Blade>:$results);
 }
 
-def Geomalg_WedgeOp : Geomalg_Op<"wedge", [Distributive]> {
+def Geomalg_OuterProdOp : Geomalg_Op<"oprod", [Distributive]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -214,15 +214,14 @@ def Geomalg_WedgeOp : Geomalg_Op<"wedge", [Distributive]> {
   ];
 }
 
-def Geomalg_LeftContractionOp : Geomalg_Op<"lcontract", [Distributive]> {
+def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {
   let description = [{
-    Map two multivectors to a scalar by their
-    interior product.
+    Map two multivectors to a scalar by their interior product.
   }];
 
   let arguments = (ins Geomalg_Value:$LHS,
                        Geomalg_Value:$RHS);
-  let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
+  let results   = (outs Geomalg_Value:$result);
   let builders = [
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
         $_state.addOperands(LHS);
@@ -232,7 +231,7 @@ def Geomalg_LeftContractionOp : Geomalg_Op<"lcontract", [Distributive]> {
   ];
 }
 
-def Geomalg_GeometricProductOp : Geomalg_Op<"gprod", [Distributive]> {
+def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Distributive]> {
   let description = [{
     Map two multivectors to the sum of their interior
     and exterior products which produces a multivector.
