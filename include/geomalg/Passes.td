@@ -6,6 +6,7 @@
 #define GEOMALG_DIALECT_PASSES_TD
 
 include "mlir/Pass/PassBase.td"
+include "mlir/Rewrite/PassUtil.td"
 
 class GeomalgPass<string name, string operation = "">
 : Pass<name, operation> {
@@ -63,6 +64,8 @@ def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::func::FuncOp"> {
     The resulting sum terms should be combined such that every term has a distinct
     type in sorted order.
   }];
+
+  let options =  [MetricOption] # RewritePassUtils.options;
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD

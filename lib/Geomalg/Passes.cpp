@@ -50,8 +50,18 @@ struct ArgumentDeductionPass
   void runOnOperation() override;
 };
 
-struct ExpandPass
-  : public geomalg::impl::ExpandPassBase<ExpandPass> {
+class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
+  geomalg::Metric Metric;
+
+public:
+  ExpandPass()
+    : Metric(geomalg::Metric::get(geomalg::MetricKind::unknown))
+  { }
+
+  ExpandPass(geomalg::ExpandPassOptions Options)
+    : Metric(geomalg::Metric::get(Options.metric))
+  { }
+
   void runOnOperation() override;
 };
 
@@ -66,8 +76,9 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
   using Base::OpTraitRewritePattern;
 
   void initialize() {
-    // We unwrap multivector operands until we cannot find any more.
-    setHasBoundedRewriteRecursion();
+    // TODO Do we want recursion here?
+    //setHasBoundedRewriteRecursion();
+    setDebugName("Distribute");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -78,6 +89,10 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
 struct ExpandGP : mlir::OpRewritePattern<geomalg::GeomProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::GeomProdOp>;
   using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandGP");
+  }
 
   llvm::LogicalResult matchAndRewrite(
       geomalg::GeomProdOp GP,
@@ -90,7 +105,9 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::InnerProdOp> {
   using Base::OpRewritePattern;
 
   void initialize() {
-    setHasBoundedRewriteRecursion();
+    // TODO Do we want recursion here?
+    //setHasBoundedRewriteRecursion();
+    setDebugName("ExpandGP");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -104,6 +121,10 @@ struct ExpandInverse : mlir::OpRewritePattern<geomalg::InverseOp> {
   using Base = mlir::OpRewritePattern<geomalg::InverseOp>;
   using Base::OpRewritePattern;
 
+  void initialize() {
+    setDebugName("ExpandInverse");
+  }
+
   llvm::LogicalResult matchAndRewrite(
       geomalg::InverseOp InvOp,
       mlir::PatternRewriter& Rewriter) const override;
@@ -115,11 +136,35 @@ struct ExpandReverse : mlir::OpRewritePattern<geomalg::ReverseOp> {
   using Base = mlir::OpRewritePattern<geomalg::ReverseOp>;
   using Base::OpRewritePattern;
 
+  void initialize() {
+    setDebugName("ExpandReverse");
+  }
+
   llvm::LogicalResult matchAndRewrite(
       geomalg::ReverseOp RevOp,
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+// Expand inner product of basis 1-blades.
+// If the metric is unspecified (unknown) this does nothing.
+struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
+  using Base = mlir::OpRewritePattern<geomalg::InnerProdOp>;
+
+  geomalg::Metric Metric;
+
+  ApplyMetric(mlir::MLIRContext* Ctx, geomalg::Metric M)
+    : Base(Ctx)
+    , Metric(M)
+  { }
+
+  void initialize() {
+    setDebugName("ApplyMetric");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::InnerProdOp LC,
+      mlir::PatternRewriter& Rewriter) const override;
+};
 
 }  // namespace
 
@@ -440,45 +485,33 @@ void ExpandPass::runOnOperation() {
          ExpandGP,
          ExpandInverse,
          ExpandReverse>(Ctx);
+  PS.add<ApplyMetric>(Ctx, Metric);
 
   if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
     return signalPassFailure();
 }
 
-namespace {
-struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
-  using Base = mlir::OpRewritePattern<geomalg::InnerProdOp>;
+llvm::LogicalResult ApplyMetric::matchAndRewrite(
+    geomalg::InnerProdOp LC,
+    mlir::PatternRewriter& Rewriter) const {
+  if (!Metric)
+    return llvm::failure();
 
-  geomalg::Metric Metric;
+  mlir::Location Loc = LC.getLoc();
+  mlir::Value LHS = LC.getLHS();
+  mlir::Value RHS = LC.getRHS();
+  auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
+  auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
+  if (!(L && L.getGrade() == 1 && R && R.getGrade() == 1))
+    return llvm::failure();
 
-  ApplyMetric(mlir::MLIRContext* Ctx, geomalg::Metric M)
-    : Base(Ctx)
-    , Metric(M)
-  { }
+  int DotResult = Metric.dotProduct(geomalg::BladeTag(L.getTag()),
+                                    geomalg::BladeTag(L.getTag()));
 
-  llvm::LogicalResult matchAndRewrite(
-      geomalg::InnerProdOp LC,
-      mlir::PatternRewriter& Rewriter) const override {
-    if (!Metric)
-      return llvm::failure();
-
-    mlir::Location Loc = LC.getLoc();
-    mlir::Value LHS = LC.getLHS();
-    mlir::Value RHS = LC.getRHS();
-    auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
-    auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
-    if (!(L && L.getGrade() == 1 && R && R.getGrade() == 1))
-      return llvm::failure();
-
-    int DotResult = Metric.dotProduct(geomalg::BladeTag(L.getTag()),
-                                      geomalg::BladeTag(L.getTag()));
-
-    auto BT = geomalg::BladeType(0); // Scalar
-    Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
-    return llvm::success();
-  }
-};
-}  // namespace
+  auto BT = geomalg::BladeType(0); // Scalar
+  Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
+  return llvm::success();
+}
 
 void ApplyMetricPass::runOnOperation() {
   mlir::MLIRContext* Ctx = &getContext();
