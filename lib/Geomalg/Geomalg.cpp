@@ -84,4 +84,38 @@ void geomalg_multivector_type(heavy::Context& C, heavy::ValueRefs Args) {
   heavy::Value AnyVal = C.CreateAny<mlir::Type>(Result);
   return C.Cont(AnyVal);
 }
+
+// TODO This function is a workaround because we do not have a way
+//      to create an operation that implements `inferReturnTypes`.
+//      Implement creating operations without result-types when they
+//      are not needed (in HeavyScheme.)
+// (%sum-impl Loc OpVal1 ... OpValN)
+void geomalg_sum_impl(heavy::Context& C, heavy::ValueRefs Args) {
+  if (Args.size() < 1)
+    return C.RaiseError("invalid arity");
+
+  mlir::MLIRContext* MLIRContext = heavy::mlir_helper::getCurrentContext(C);
+
+  // Loc
+  heavy::SourceLocation Loc = Args[0].getSourceLocation();
+  // TODO Converting locations should be a function in HeavyScheme.
+  mlir::Location MLoc = mlir::OpaqueLoc::get(Loc.getOpaqueEncoding(),
+                                             MLIRContext);
+
+  heavy::ValueRefs Operands = Args.drop_front();
+  llvm::SmallVector<mlir::Value, 8> Vals;
+  for (heavy::Value Operand : Operands) {
+    if (mlir::Value V = any_cast<mlir::Value>(Operand))
+      Vals.push_back(V);
+    else
+      return C.RaiseError("expecting mlir.value: {}", Operand);
+  }
+  mlir::OpBuilder* OpBuilder = heavy::mlir_helper::getCurrentBuilder(C);
+  if (!OpBuilder)
+    return C.RaiseError("current mlir.builder not set");
+
+  auto SumOp = geomalg::SumOp::create(*OpBuilder, MLoc, Vals);
+  heavy::Value Result = C.CreateAny<mlir::Value>(SumOp.getResult());
+  C.Cont(Result);
 }
+}  // extern "C"

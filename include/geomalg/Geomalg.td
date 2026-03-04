@@ -8,7 +8,10 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
@@ -158,15 +161,17 @@ def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown", []> {
 
 def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
                                Geomalg_Multivector,
+                               Geomalg_Zero,
                                Geomalg_Unknown]>;
 
 // Operations
 
 // TODO Add pure to all of the operations here.
 class Geomalg_Op<string mnemonic, list<Trait> traits = []> :
-    Op<Geomalg_Dialect, mnemonic, traits>;
+    Op<Geomalg_Dialect, mnemonic, traits # [Pure]>;
 
-def Geomalg_SumOp : Geomalg_Op<"sum", []> {
+def Geomalg_SumOp : Geomalg_Op<"sum",
+      [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let description = [{
     Take a sum of k-blades to produce a multivector.
   }];
@@ -174,14 +179,14 @@ def Geomalg_SumOp : Geomalg_Op<"sum", []> {
   let arguments = (ins Variadic<Geomalg_Value>:$args);
   let results   = (outs Geomalg_Value:$result);
   let builders = [
-    OpBuilder<(ins "llvm::ArrayRef<::mlir::Value>":$Terms), [{
-        $_state.addOperands(Terms);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+    OpBuilder<(ins), [{
+        $_state.addTypes(geomalg::ZeroType::get($_builder.getContext()));
       }]>,
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
         $_state.addOperands(LHS);
         $_state.addOperands(RHS);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+        // FIXME inferResultType should replace this
+        //$_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
 }
@@ -320,5 +325,70 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   ];
 }
 
+def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return", [ReturnLike,
+                                                      Terminator]> {
+  let description = [{
+    Provide a return-like operation that does not verify types
+    so we can deduce return types in a subsequent pass.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$operands);
+
+  let builders = [
+    OpBuilder<(ins), [{ build($_builder, $_state, {}); }]>
+  ];
+
+  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+}
+
+def CallOp : Op<Geomalg_Dialect, "call", []> {
+  let description = [{
+    Provide a call operation that does not verify matching types
+    so we can deduce argument and return types and possibly instantiate
+    functions based on call expressions.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$callee,
+    Variadic<AnyType>:$operands
+  );
+
+  let results = (outs Variadic<AnyType>);
+
+  let builders = [
+    OpBuilder<(ins "mlir::SymbolRefAttr":$callee, "mlir::TypeRange":$results,
+      CArg<"mlir::ValueRange", "{}">:$operands), [{
+      $_state.addOperands(operands);
+      $_state.addAttribute("callee", callee);
+      $_state.addTypes(results);
+    }]>
+  ];
+
+  let extraClassDeclaration = [{
+    mlir::FunctionType getCalleeType();
+
+    /// Get the argument operands to the called function.
+    operand_range getArgOperands() {
+      return {arg_operand_begin(), arg_operand_end()};
+    }
+
+    mlir::MutableOperandRange getArgOperandsMutable() {
+      return getOperandsMutable();
+    }
+
+    operand_iterator arg_operand_begin() { return operand_begin(); }
+    operand_iterator arg_operand_end() { return operand_end(); }
+
+    /// Return the callee of this operation.
+    mlir::CallInterfaceCallable getCallableForCallee() {
+      return (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
+    }
+
+    /// Set the callee for this operation.
+    void setCalleeFromCallable(mlir::CallInterfaceCallable callee) {
+      (*this)->setAttr("callee", cast<mlir::SymbolRefAttr>(callee));
+    }
+  }];
+}
 
 #endif // GEOMALG_DIALECT_TD

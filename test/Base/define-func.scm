@@ -4,10 +4,15 @@
         (heavy mlir)
         (geomalg base))
 
-; CHECK: func.func @my_func1([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>, [[ARG1:%arg[0-9]+]]: !geomalg.blade<2>, [[ARG2:%arg[0-9]+]]: !geomalg.blade<3>, [[ARG3:%arg[0-9]+]]: !geomalg.blade<2147483651>) -> !geomalg.unknown {
+; CHECK-LABEL: func.func @my_func1(
+; CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.blade<1>,
+; CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<2>,
+; CHECK-SAME: [[ARG2:%arg[0-9]+]]: !geomalg.blade<3>,
+; CHECK-SAME: [[ARG3:%arg[0-9]+]]: !geomalg.blade<2147483651>)
+; CHECK-SAME: -> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG2]], [[ARG3]])
 ; CHECK-NEXT: [[SUM1:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]], [[SUM0]])
-; CHECK-NEXT: return [[SUM1]] : !geomalg.unknown
+; CHECK-NEXT: geomalg.return [[SUM1]]
 (define-func my_func1 ((arg0 : e1)
                        (arg1 : e2)
                        (arg2 : (blade-type e1 e2))
@@ -19,9 +24,12 @@
 (write (module-lookup geomalg-current-module "my_func1"))
 (newline)
 
-; CHECK: func.func @my_func2([[ARG0:%arg[0-9]+]]: !geomalg.blade<7>, [[ARG1:%arg[0-9]+]]: !geomalg.blade<2147483655>) -> !geomalg.unknown {
+; CHECK-LABEL: func.func @my_func2(
+; CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.blade<7>,
+; CHECK-SAME:[[ARG1:%arg[0-9]+]]: !geomalg.blade<2147483655>)
+; CHECK-SAME:-> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]])
-; CHECK-NEXT: return [[SUM0]] : !geomalg.unknown
+; CHECK-NEXT: geomalg.return [[SUM0]]
 (define-func my_func2 ((arg0 : (blade-type e1 e2 e3))
                        (arg1 : (blade-type e3 e2 e1)))
   (sum arg0
@@ -30,9 +38,12 @@
 (write (module-lookup geomalg-current-module "my_func2"))
 (newline)
 
-; CHECK: func.func @my_func3([[ARG0:%arg[0-9]+]]: !geomalg.blade<15>, [[ARG1:%arg[0-9]+]]: !geomalg.blade<15>) -> !geomalg.unknown {
+; CHECK-LABEL: func.func @my_func3(
+; CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.blade<15>,
+; CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<15>)
+; CHECK-SAME: -> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]])
-; CHECK-NEXT: return [[SUM0]] : !geomalg.unknown
+; CHECK-NEXT: geomalg.return [[SUM0]]
 (define-func my_func3 ((arg0 : (blade-type e1 e2 e3 ni))
                        (arg1 : (blade-type ni e3 e2 e1)))
   (sum arg0

@@ -21,51 +21,30 @@ def MetricOption :
            "A metric determines the result of certain operations.",
            [{geomalg::getMetricKindEnumValues()}]>;
 
-def ApplyMetricPass : GeomalgPass<"geomalg-apply-metric",
-                                  "mlir::func::FuncOp"> {
-  let summary = "Apply a metric to evaluate the inner product";
-  let description = [{
-    This pass uses one of a set of predfined metrics that specify
-    the result of the left contraction on 1-blades which is
-    equivalent to the dot product. This exists as its own pass
-    so users may specify their own pass to generate any code to
-    substitute for the inner product.
-  }];
-  let options = [MetricOption];
-}
-
-def TypeInferencePass : GeomalgPass<"geomalg-type-inference",
-                                    "mlir::func::FuncOp"> {
-  let summary = "Substitute unknown types with inferred types where possible";
-  let description = [{
-    The results of operations and functions are initially constructed with the
-    !geomalg.unknown type or some other more constrained placeholder type.
-    We replace these with inferred types within this pass.
-  }];
-}
-
-// TODO
-def ArgumentDeductionPass : GeomalgPass<"geomalg-argument-deduction",
-                                        "mlir::ModuleOp"> {
-  let summary = "Inline or instantiate functions with placeholder types";
-  let description = [{
-    For any call to a function with placeholder types, inline the function or
-    instantiate a new function with the placeholder types for the arguments
-    substituted.
-  }];
-}
-
 def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::func::FuncOp"> {
-  let summary = "distribute over sums and combine like terms";
+  let summary = "expand and simplify operations for geometric algebra";
   let description = [{
-    Given a multilinear operation with any operand of a Multivector type,
-    distribute the operation across the terms by either expanding the
-    multivector or modifying the sum operands that construct the multivector.
-    The resulting sum terms should be combined such that every term has a distinct
-    type in sorted order.
+    Expand and simplify Geomalg operations by distribution of multilinear
+    operations over multivectors and expansion of k-blades until they are
+    all operations on 1-blades or scalars. If a metric is specified then
+    it will resolve the inner product for specified entries or by assuming
+    orthonormal 1-blades.
   }];
 
   let options =  [MetricOption] # RewritePassUtils.options;
+}
+
+def FuncInstPass : GeomalgPass<"geomalg-func-inst", "mlir::ModuleOp"> {
+  let summary = "Deduce function return types and argument types";
+  let description = [{
+    Some operations use placeholder types until certain configurations
+    are known (e.g. a metric). This propagates to function return types
+    so we must alter the function type in a module pass. This will also
+    replace geomalg.return with func.return.
+
+    NOTE: We are not currently using placeholder types as arguments,
+          but should that be necessary, this is the place to put that.
+  }];
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD

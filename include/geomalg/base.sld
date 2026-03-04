@@ -35,6 +35,8 @@
     ;; Register the geomalg dialect and such.
     (define geomalg-init
       (load-builtin "geomalg_init"))
+    (define sum-impl
+      (load-builtin "geomalg_sum_impl"))
     (geomalg-init)
     (load-dialect "geomalg")
 
@@ -89,7 +91,7 @@
           (map AddArg ArgTypes ArgLocs))
         (at-block-begin Block)
         (let ((Result (apply BodyFn BlockArgs)))
-          (create-op "func.return"
+          (create-op "geomalg.return"
                      (loc: ReturnLoc)
                      (operands: Result)
                      (attributes:)
@@ -110,13 +112,6 @@
                              BodyExprI
                              ...
                              BodyExprN)))))
-
-    (define (sum-impl Loc . VN)
-      (result (create-op "geomalg.sum"
-                         (loc: Loc)
-                         (operands: VN)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
 
     (define-syntax sum
       (syntax-rules ()

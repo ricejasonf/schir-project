@@ -31,8 +31,7 @@ createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
 // over another. (ie because (e2^e1)(e2^e1) == 1)
 mlir::Type
 createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
-  if (BladeTypes.empty())
-    return geomalg::ZeroType();
+  assert(!BladeTypes.empty());
 
   // Sort by tag.
   llvm::sort(BladeTypes, [](auto& A, auto& B) {
