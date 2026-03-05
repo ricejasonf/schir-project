@@ -5,6 +5,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/Parser/Parser.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <cassert>
 
@@ -13,6 +14,10 @@ namespace geomalg {
 #define GEN_PASS_DEF_FUNCINSTPASS
 #define GEN_PASS_DEF_EXPANDPASS
 #include "geomalg/GeomalgPasses.h.inc"
+}
+
+namespace geomalg::transforms {
+#include "geomalg/Transforms/Expand.h.inc"
 }
 
 namespace {
@@ -470,12 +475,15 @@ void ExpandPass::runOnOperation() {
 
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
+#if 0
   PS.add<Distribute,
          ExpandLC,
          ExpandGP,
          ExpandInverse,
          ExpandReverse>(Ctx);
   PS.add<ApplyMetric>(Ctx, Metric);
+#endif
+  geomalg::transforms::populateGeneratedPDLLPatterns(PS);
 
   if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
     return signalPassFailure();

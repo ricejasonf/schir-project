@@ -4,6 +4,8 @@
 #include <geomalg/Metric.h>
 #include <geomalg/Dialect.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/Dialect/PDL/IR/PDL.h>
+#include <mlir/Dialect/PDLInterp/IR/PDLInterp.h>
 #include <mlir/Pass/Pass.h>
 #include <llvm/Support/CommandLine.h>  // For ValuesClass
 

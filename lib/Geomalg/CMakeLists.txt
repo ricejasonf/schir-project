@@ -7,9 +7,15 @@ target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(GeomalgDialect GeomalgOpsIncGen GeomalgPassesIncGen)
 
 add_library(Geomalg MODULE Type.cpp Geomalg.cpp Dialect.cpp Passes.cpp)
-target_link_libraries(Geomalg MLIRPass)
+target_link_libraries(Geomalg
+  MLIRPass
+  MLIRRegisterAllDialects
+  MLIRRegisterAllExtensions
+  MLIRRegisterAllPasses)
 target_compile_options(Geomalg PRIVATE -fno-rtti -fno-exceptions)
-add_dependencies(Geomalg GeomalgOpsIncGen GeomalgPassesIncGen)
+add_dependencies(Geomalg GeomalgOpsIncGen
+                         GeomalgPassesIncGen
+                         GeomalgTransformsExpand)
 
 install(TARGETS Geomalg
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

@@ -1,0 +1,3 @@
+#include "geomalg/Geomalg.td"
+
+Pattern => replace op<geomalg.sum>(SingleArg: Value) with SingleArg;

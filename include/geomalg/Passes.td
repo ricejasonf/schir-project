@@ -11,7 +11,9 @@ include "mlir/Rewrite/PassUtil.td"
 class GeomalgPass<string name, string operation = "">
 : Pass<name, operation> {
   let dependentDialects = ["geomalg::GeomalgDialect",
-                           "mlir::func::FuncDialect"];
+                           "mlir::func::FuncDialect",
+                           "mlir::pdl::PDLDialect",
+                           "mlir::pdl_interp::PDLInterpDialect"];
 }
 
 // Allow pass to optionally use one of the predefined metrics.
