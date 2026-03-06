@@ -4,7 +4,9 @@ cmake_minimum_required(VERSION 3.13.4)
 
 add_library(GeomalgDialect Type.cpp Dialect.cpp Passes.cpp)
 target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)
-add_dependencies(GeomalgDialect GeomalgOpsIncGen GeomalgPassesIncGen)
+add_dependencies(GeomalgDialect GeomalgOpsIncGen
+                                GeomalgPassesIncGen
+                                GeomalgTransformsExpand)
 
 add_library(Geomalg MODULE Type.cpp Geomalg.cpp Dialect.cpp Passes.cpp)
 target_link_libraries(Geomalg

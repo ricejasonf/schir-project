@@ -166,7 +166,6 @@ def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
 
 // Operations
 
-// TODO Add pure to all of the operations here.
 class Geomalg_Op<string mnemonic, list<Trait> traits = []> :
     Op<Geomalg_Dialect, mnemonic, traits # [Pure]>;
 

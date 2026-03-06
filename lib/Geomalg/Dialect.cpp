@@ -1,10 +1,10 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Type.h>
+#include <mlir/IR/DialectImplementation.h>
+#include <mlir/IR/OpImplementation.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/TypeSwitch.h>
-#include <mlir/IR/DialectImplementation.h>
-#include <mlir/IR/OpImplementation.h>
 
 // Include generated source files (from the build dir.)
 #include "geomalg/GeomalgDialect.cpp.inc"

@@ -21,6 +21,41 @@ namespace geomalg::transforms {
 }
 
 namespace {
+  // Expand a multivector for the purpose of expanding
+  // via distribution or unnesting of sums.
+  mlir::ValueRange
+  expandMultivector(mlir::PatternRewriter& Rewriter, mlir::Value MV) {
+    assert(isa<geomalg::MultivectorType>(MV.getType()) &&
+        "expecting multivector type or unknown defined by sum");
+    // Check if we can hijack the operands of the defining sum if any.
+    if (geomalg::SumOp OrigSumOp = MV.getDefiningOp<geomalg::SumOp>()) {
+      if (MV.hasOneUse())
+        return OrigSumOp.getArgs();
+    }
+
+    // Prevent duplicate ExpandOps.
+    geomalg::ExpandOp ExpandOp;
+    auto ExpandOpItr = llvm::find_if(MV.getUsers(),
+        [](mlir::Operation* Op) {
+          return llvm::isa<geomalg::ExpandOp>(Op);
+        });
+    if (ExpandOpItr != MV.getUsers().end()) {
+      ExpandOp = llvm::cast<geomalg::ExpandOp>(*ExpandOpItr);
+    } else {
+      auto MVT = llvm::cast<geomalg::MultivectorType>(MV.getType());
+      llvm::SmallVector<mlir::Type, 8> BladeTypes(MVT.getBlades());
+      ExpandOp = geomalg::ExpandOp::create(Rewriter, MV.getLoc(),
+                                           BladeTypes, MV);
+    }
+    return ExpandOp.getResults();
+  }
+} // namespace
+
+namespace geomalg {
+
+} // namespace geomalg
+
+namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
 
@@ -57,8 +92,20 @@ class InferFuncType
       mlir::func::FuncOp, mlir::PatternRewriter&) const override;
 };
 
-
 // Rewriters for expansion.
+
+struct ExpandSum : mlir::OpRewritePattern<geomalg::SumOp> {
+  using Base = mlir::OpRewritePattern<geomalg::SumOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setHasBoundedRewriteRecursion();
+    setDebugName("ExpandSum");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::SumOp Op, mlir::PatternRewriter& Rewriter) const override;
+};
 
 // Distribute multilinear operations across the elements of a multivector
 // where SumOp is the base case.
@@ -199,9 +246,48 @@ llvm::LogicalResult InferFuncType::matchAndRewrite(
   return llvm::success();
 }
 
+llvm::LogicalResult
+ExpandSum::matchAndRewrite(geomalg::SumOp Op,
+                           mlir::PatternRewriter& Rewriter) const {
+  using SumOp = geomalg::SumOp;
+  using BladeType = geomalg::BladeType;
+  using MultivectorType = geomalg::MultivectorType;
+  using UnknownType = geomalg::UnknownType;
+  using ZeroType = geomalg::ZeroType;
+
+  // Collect Values unnesting (directly nested) sums and discarding Zeros.
+  // Note some of these maybe still be multivectors.
+  llvm::SmallVector<mlir::Value, 8> Values;
+  for (mlir::Value V : Op.getOperands()) {
+    if (auto S = V.getDefiningOp<SumOp>())
+      llvm::append_range(Values, S.getOperands());
+    else if (isa<MultivectorType>(V.getType()))
+      llvm::append_range(Values, expandMultivector(Rewriter, V));
+    else if (isa<BladeType, UnknownType>(V.getType()))
+      Values.push_back(V);
+    else
+      assert(isa<ZeroType>(V.getType()));
+  };
+
+  // Sort by BladeTag putting all non-blades at the front.
+  llvm::stable_sort(Values, [](mlir::Value Aval, mlir::Value Bval) {
+    geomalg::BladeType A = dyn_cast<BladeType>(Aval.getType());
+    geomalg::BladeType B = dyn_cast<BladeType>(Bval.getType());
+    if (!A || !B)
+      return B && !A;
+    return A.getTag() < B.getTag();
+  });
+  if (llvm::equal(Values, Op.getOperands()))
+    return llvm::failure();
+
+  Rewriter.replaceOpWithNewOp<SumOp>(Op, Values);
+  return llvm::success();
+}
+
 // The real meat and potatoes.
-llvm::LogicalResult Distribute::matchAndRewrite(
-    mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const {
+llvm::LogicalResult
+Distribute::matchAndRewrite(mlir::Operation* Op,
+                            mlir::PatternRewriter& Rewriter) const {
   mlir::MLIRContext* Ctx = getContext();
 
   // Match any Zero operand.
@@ -215,29 +301,26 @@ llvm::LogicalResult Distribute::matchAndRewrite(
   }
 
   // Match the first Multivector operand.
-  auto Itr = llvm::find_if(Op->getOperands(), [](mlir::Value Operand) {
-      return isa<geomalg::MultivectorType>(Operand.getType());
+  auto Itr = llvm::find_if(Op->getOpOperands(), [](mlir::OpOperand& Operand) {
+      return isa<geomalg::MultivectorType>(Operand.get().getType());
     });
 
-  if (Itr == Op->getOperands().end())
+  if (Itr == Op->getOpOperands().end())
     return llvm::failure();
 
   // The multivector we want to expand and distribute over.
-  mlir::Value MV = *Itr;
-  auto MVT = llvm::cast<geomalg::MultivectorType>(MV.getType());
-  llvm::SmallVector<mlir::Type, 8> BladeTypes(MVT.getBlades());
-  auto ExpandOp = geomalg::ExpandOp::create(Rewriter, Op->getLoc(),
-                                            BladeTypes, MV);
-  auto Blades = ExpandOp.getResults();
+  mlir::OpOperand& OpOperand = *Itr;
+  mlir::Value MV = OpOperand.get();
+  mlir::ValueRange Blades = expandMultivector(Rewriter, MV);
 
   // Apply the operator to each blade summing the results.
   llvm::SmallVector<mlir::Value, 8> Results;
   for (auto Blade : Blades) {
-    // Clone the original operation mapping MV to Blade so
-    // it replaces it as an operand.
+    // Since operand values can appear multiple times,
+    // IRMapping cannot be used.
     mlir::IRMapping Map;
-    Map.map(MV, Blade);
     mlir::Operation* NewOp = Rewriter.cloneWithoutRegions(*Op, Map);
+    NewOp->setOperand(OpOperand.getOperandNumber(), Blade);
     // The NewOp result type is the same as its operand or it must
     // be inferred via !geomalg.unknown.
     mlir::Value Result = NewOp->getResult(0);
@@ -475,14 +558,13 @@ void ExpandPass::runOnOperation() {
 
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-#if 0
-  PS.add<Distribute,
+  PS.add<ExpandSum,
+         Distribute,
          ExpandLC,
          ExpandGP,
          ExpandInverse,
          ExpandReverse>(Ctx);
   PS.add<ApplyMetric>(Ctx, Metric);
-#endif
   geomalg::transforms::populateGeneratedPDLLPatterns(PS);
 
   if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))

@@ -1,3 +1,27 @@
 #include "geomalg/Geomalg.td"
 
+// The sum of a single value is just that value.
 Pattern => replace op<geomalg.sum>(SingleArg: Value) with SingleArg;
+
+Constraint HasOneUse(value: Value) [{
+  return llvm::success(value.hasOneUse());
+}];
+
+Constraint Zero(value: Value) [{
+  return llvm::success(llvm::isa<geomalg::ZeroType>(value.getType()));
+}];
+
+Constraint Distributive(operation: Op<>) [{
+  return llvm::success(operation->hasTrait<geomalg::Distributive>());
+}];
+
+// Collapse unnecessary sum expansions.
+Pattern {
+  let root = op<geomalg.sum>(values: ValueRange);
+  let result = root.result;
+  HasOneUse(result);
+  replace op<geomalg.expand>(result) with values;
+}
+
+// Collapse sum of sums to a single sum.
+// TODO
