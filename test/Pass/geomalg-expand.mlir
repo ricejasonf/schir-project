@@ -33,8 +33,8 @@ func.func @sum_2(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
 }
 // CHECK-LABEL: func.func @sum_3
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>)
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]])
-// CHECK-NEXT: geomalg.return [[ARG0]] : !geomalg.blade<1>
+// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG0]])
+// CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.blade<1>
 func.func @sum_3(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.sum"(%arg0, %0, %arg0)

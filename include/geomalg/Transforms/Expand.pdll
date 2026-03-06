@@ -22,6 +22,3 @@ Pattern {
   HasOneUse(result);
   replace op<geomalg.expand>(result) with values;
 }
-
-// Collapse sum of sums to a single sum.
-// TODO
