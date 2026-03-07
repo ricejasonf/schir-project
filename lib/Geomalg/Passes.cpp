@@ -296,7 +296,7 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
     });
   if (HasZero) {
     // Replace entire operation with zero sum.
-    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(Op);
+    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(Op, mlir::ValueRange());
     return llvm::success();
   }
 
@@ -405,17 +405,17 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   if (!L || !R)
     return llvm::failure();
 
-  // 3.8
-  // B ⌋ α = 0
-  if (R.getGrade() == 0 && L.getGrade() > 0) {
-    setResultType(Rewriter, LC, geomalg::ZeroType::get(LC->getContext()));
-    return llvm::success();
-  }
-
   // 3.7
   // α ⌋ B = α B
   if (L.getGrade() == 0) {
     setResultType(Rewriter, LC, R);
+    return llvm::success();
+  }
+
+  // 3.8
+  // B ⌋ α = 0
+  if (L.getGrade() > 0 && R.getGrade() == 0) {
+    setResultType(Rewriter, LC, geomalg::ZeroType::get(LC->getContext()));
     return llvm::success();
   }
 
@@ -446,14 +446,13 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     // ((a ⌋ C) ∧ b)
     mlir::Value aCb = geomalg::OuterProdOp::create(Rewriter, Loc, aC, b);
     // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
-    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(RHS.getDefiningOp(),
-                                                abC, aCb);
+    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(LC, abC, aCb);
 
     return llvm::success();
   }
 
   // 3.11
-  if (L.getGrade() > 1 && R.getGrade()) {
+  if (L.getGrade() > 1 && R.getGrade() > 0) {
     // Factor the LHS blade.
     // (a ∧ B) ⌋ C = a ⌋ (B ⌋ C)
     auto [Type_a, Type_B] = L.factor();
@@ -463,8 +462,7 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     // (B ⌋ C)
     auto BC = geomalg::InnerProdOp::create(Rewriter, Loc, B, C);
     // (a ⌋ (B ⌋ C))
-    Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(
-        LHS.getDefiningOp(), a, BC);
+    Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(LC, a, BC);
 
     return llvm::success();
   }

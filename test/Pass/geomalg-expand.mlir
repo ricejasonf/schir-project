@@ -145,12 +145,12 @@ func.func @distribute_b_3(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
 // CHECK-LABEL: func.func @distribute_b_4
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>,
 // CHECK-SAME:  [[ARG1:%arg[0-9]+]]: !geomalg.blade<2>)
-// CHECK-NEXT: [[IPR0:%[0-9]+]] = "geomalg.iprod"([[ARG0]], [[ARG0]])
-// CHECK-NEXT: [[IPR1:%[0-9]+]] = "geomalg.iprod"([[ARG0]], [[ARG1]])
-// CHECK-NEXT: [[IPR2:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[ARG0]])
-// CHECK-NEXT: [[IPR3:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[ARG1]])
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[IPR0]], [[IPR1]],
-// CHECK-SAME:                                  [[IPR2]], [[IPR3]])
+// CHECK: [[IPR0:%[0-9]+]] = "geomalg.iprod"([[ARG0]], [[ARG0]])
+// CHECK: [[IPR1:%[0-9]+]] = "geomalg.iprod"([[ARG0]], [[ARG1]])
+// CHECK: [[IPR2:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[ARG0]])
+// CHECK: [[IPR3:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[ARG1]])
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[IPR0]], [[IPR1]],
+// CHECK-SAME:                             [[IPR2]], [[IPR3]])
 // CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.unknown
 func.func @distribute_b_4(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
                           -> !geomalg.unknown {
@@ -163,4 +163,46 @@ func.func @distribute_b_4(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
   geomalg.return %1 : !geomalg.unknown
 }
 
+// 3.10
+// a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
+// Note we used the antisymmetric property for the second term
+// CHECK-LABEL: func.func @iprod_3_10
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<1>,
+// CHECK-SAME:  [[bC:%arg[0-9]+]]: !geomalg.blade<3>)
+// CHECK: [[b:%[0-9]+]] = "geomalg.blade"()
+// CHECK-SAME:   coefficient = 1
+// CHECK: [[C:%[0-9]+]] = "geomalg.cast"([[bC]])
+// CHECK-SAME: : (!geomalg.blade<3>) -> !geomalg.blade<2>
+// CHECK: [[ab:%[0-9]+]] = "geomalg.iprod"([[a]], [[b]])
+// CHECK: [[aC:%[0-9]+]] = "geomalg.iprod"([[a]], [[C]])
+// CHECK: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
+// CHECK: [[aC_b:%[0-9]+]] = "geomalg.oprod"([[aC]], [[b]])
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ab_C]], [[aC_b]])
+// CHECK-NEXT: geomalg.return [[SUM0]]
+func.func @iprod_3_10(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<3>)
+                          -> !geomalg.unknown {
+  %0 = "geomalg.iprod"(%arg0, %arg1)
+    : (!geomalg.blade<1>, !geomalg.blade<3>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// 3.11
+// (a ∧ B) ⌋ C = a ⌋ (B ⌋ C)
+// Note we can use a 1-blade for C since we do not have a metric.
+// CHECK-LABEL: func.func @iprod_3_11
+// CHECK-SAME: ([[aB:%arg[0-9]+]]: !geomalg.blade<6>,
+// CHECK-SAME:  [[C:%arg[0-9]+]]: !geomalg.blade<1>)
+// CHECK: [[a:%[0-9]+]] = "geomalg.blade"()
+// CHECK-SAME:   coefficient = 1
+// CHECK: [[B:%[0-9]+]] = "geomalg.cast"([[aB]])
+// CHECK-SAME: : (!geomalg.blade<6>) -> !geomalg.blade<4>
+// CHECK: [[BC:%[0-9]+]] = "geomalg.iprod"([[B]], [[C]])
+// CHECK: [[aBC:%[0-9]+]] = "geomalg.iprod"([[a]], [[BC]])
+// CHECK-NEXT: geomalg.return [[aBC]]
+func.func @iprod_3_11(%arg0: !geomalg.blade<6>, %arg1: !geomalg.blade<1>)
+                          -> !geomalg.unknown {
+  %0 = "geomalg.iprod"(%arg0, %arg1)
+    : (!geomalg.blade<6>, !geomalg.blade<1>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
 }  // module

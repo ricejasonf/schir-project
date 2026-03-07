@@ -178,14 +178,9 @@ def Geomalg_SumOp : Geomalg_Op<"sum",
   let arguments = (ins Variadic<Geomalg_Value>:$args);
   let results   = (outs Geomalg_Value:$result);
   let builders = [
-    OpBuilder<(ins), [{
-        $_state.addTypes(geomalg::ZeroType::get($_builder.getContext()));
-      }]>,
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
-        $_state.addOperands(LHS);
-        $_state.addOperands(RHS);
-        // FIXME inferResultType should replace this
-        //$_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+        std::array<mlir::Value, 2> Operands{{LHS, RHS}};
+        build($_builder, $_state, Operands);
       }]>
   ];
 }
@@ -319,7 +314,9 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   let builders = [
     // Default to 1.0 for the coefficient.
     OpBuilder<(ins "::mlir::Type":$resultType, CArg<"float", "1.0f">:$val), [{
-        $_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
+        //$_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
+        build($_builder, $_state, resultType,
+              $_builder.getF32FloatAttr(val));
       }]>
   ];
 }
