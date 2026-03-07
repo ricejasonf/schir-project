@@ -398,6 +398,10 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     geomalg::InnerProdOp LC,
     mlir::PatternRewriter& Rewriter) const {
   mlir::Location Loc = LC.getLoc();
+
+  if (!isa<geomalg::UnknownType>(LC.getResult().getType()))
+    return llvm::failure();
+
   mlir::Value LHS = LC.getLHS();
   mlir::Value RHS = LC.getRHS();
   auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());

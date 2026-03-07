@@ -163,6 +163,36 @@ func.func @distribute_b_4(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
   geomalg.return %1 : !geomalg.unknown
 }
 
+// 3.7
+// α ⌋ B = α B
+// CHECK-LABEL: func.func @iprod_3_7
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<0>,
+// CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<3>)
+// CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[a]], [[B]])
+// CHECK-SAME: -> !geomalg.blade<3>
+// CHECK-NEXT: geomalg.return [[aB]]
+func.func @iprod_3_7(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
+                          -> !geomalg.unknown {
+  %0 = "geomalg.iprod"(%arg0, %arg1)
+    : (!geomalg.blade<0>, !geomalg.blade<3>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// 3.8
+// B ⌋ α = 0
+// CHECK-LABEL: func.func @iprod_3_8
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<0>,
+// CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<3>)
+// CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[B]], [[a]])
+// CHECK-SAME: -> !geomalg.zero
+// CHECK-NEXT: geomalg.return [[aB]]
+func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
+                          -> !geomalg.unknown {
+  %0 = "geomalg.iprod"(%arg1, %arg0)
+    : (!geomalg.blade<3>, !geomalg.blade<0>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
 // 3.10
 // a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
 // Note we used the antisymmetric property for the second term
