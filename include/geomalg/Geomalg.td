@@ -88,14 +88,21 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
   // Try to remember that the argument is a tag and not the grade.
   let assemblyFormat = "`<` $tag `>`";
 
-  // TODO Break this out into an interface.
   let extraClassDeclaration = [{
+    geomalg::BladeTag getBladeTag() const {
+      return geomalg::BladeTag(getTag());
+    }
+
+    std::strong_ordering operator<=>(BladeType B) const {
+      return getBladeTag().operator<=>(B.getBladeTag());
+    }
+
     geomalg::BladeTag getCanonicalTag() const {
-      return geomalg::BladeTag(geomalg::BladeTag(getTag()).getCanonicalTag());
+      return getBladeTag().getCanonical();
     }
 
     unsigned getGrade() const {
-      return geomalg::BladeTag(getTag()).getGrade();
+      return getBladeTag().getGrade();
     }
 
     // Basis vectors include 0-blades and 1-blades
@@ -110,24 +117,20 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
     }
 
     bool isCanonical() const {
-      return geomalg::BladeTag(getTag()).isCanonical();
-    }
-
-    BladeType negate() const {
-      return get(getContext(),geomalg::BladeTag(getTag()).negate().getTag());
+      return getBladeTag().isCanonical();
     }
 
     bool shouldInvoNegate() const {
-      return geomalg::BladeTag(getTag()).shouldInvoNegate();
+      return getBladeTag().shouldInvoNegate();
     }
 
     bool shouldReverseNegate() const {
-      return geomalg::BladeTag(getTag()).shouldReverseNegate();
+      return getBladeTag().shouldReverseNegate();
     }
 
     // See BladeTag::factor().
     std::pair<BladeType, BladeType> factor() {
-      auto [L, R] = geomalg::BladeTag(getTag()).factor();
+      auto [L, R] = getBladeTag().factor();
       return {get(getContext(), L.getTag()),
               get(getContext(), R.getTag())};
     }
@@ -195,7 +198,9 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
   let results   = (outs Variadic<Geomalg_Blade>:$results);
 }
 
-def Geomalg_OuterProdOp : Geomalg_Op<"oprod", [Distributive]> {
+def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
+      [Distributive,
+       DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -204,13 +209,6 @@ def Geomalg_OuterProdOp : Geomalg_Op<"oprod", [Distributive]> {
   let arguments = (ins Geomalg_Value:$LHS,
                        Geomalg_Value:$RHS);
   let results   = (outs Geomalg_Value:$result);
-  let builders = [
-    OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
-        $_state.addOperands(LHS);
-        $_state.addOperands(RHS);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
-      }]>
-  ];
 }
 
 def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {

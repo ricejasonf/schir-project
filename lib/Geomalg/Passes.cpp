@@ -351,6 +351,11 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   if (!L || !R)
     return llvm::failure();
 
+  if (R < L) {
+    std::swap(LHS, RHS);
+    std::swap(L, R);
+  }
+
   // Use the left contraction for scalar multiplication.
   // α B = α ⌋ B
   if (L.getGrade() == 0) {

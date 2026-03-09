@@ -77,3 +77,30 @@ geomalg::SumOp::inferReturnTypes(mlir::MLIRContext* Ctx,
   InferredTypes.push_back(ResultType);
   return llvm::success();
 }
+
+llvm::LogicalResult
+geomalg::OuterProdOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr Attrs,
+                  mlir::OpaqueProperties Props,
+                  mlir::RegionRange Regions,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  if (Operands.size() != 2)
+    return llvm::failure();
+
+  auto A = dyn_cast<geomalg::BladeType>(Operands[0].getType());
+  auto B = dyn_cast<geomalg::BladeType>(Operands[1].getType());
+  if (A && B) {
+    // This can return a "noncanonical" blade (ie not sorted order basis blades.)
+    std::array<geomalg::BladeTag, 2> Tags{{A.getBladeTag(), B.getBladeTag()}};
+    auto Tag = geomalg::BladeTag::create(Tags);
+    mlir::Type ResultType = geomalg::BladeType::get(Ctx, Tag.getTag());
+    InferredTypes.push_back(ResultType);
+  } else {
+    InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
+  }
+
+  return llvm::success();
+}

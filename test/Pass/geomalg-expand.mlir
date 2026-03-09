@@ -235,4 +235,46 @@ func.func @iprod_3_11(%arg0: !geomalg.blade<6>, %arg1: !geomalg.blade<1>)
     : (!geomalg.blade<6>, !geomalg.blade<1>) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
 }
+
+// α a = α ⌋ a
+// CHECK-LABEL: @gprod_0
+// CHECK-SAME: ([[alpha:%arg[0-9]+]]: !geomalg.blade<0>,
+// CHECK-SAME:  [[a:%arg[0-9]+]]: !geomalg.blade<1>)
+// CHECK: [[RESULT:%[0-9]+]] = "geomalg.iprod"([[alpha]], [[a]])
+// CHECK: geomalg.return [[RESULT]]
+func.func @gprod_0(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<1>)
+            -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%arg0, %arg1)
+    : (!geomalg.blade<0>, !geomalg.blade<1>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+// a α = a ⌋ α
+// CHECK-LABEL: @gprod_1
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<1>,
+// CHECK-SAME:  [[alpha:%arg[0-9]+]]: !geomalg.blade<0>)
+// CHECK: [[RESULT:%[0-9]+]] = "geomalg.iprod"([[alpha]], [[a]])
+// CHECK: geomalg.return [[RESULT]]
+func.func @gprod_1(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<0>)
+            -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%arg0, %arg1)
+    : (!geomalg.blade<1>, !geomalg.blade<0>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// a B = a ⌋ B + a ∧ B
+// CHECK-LABEL: @gprod_2
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<1>,
+// CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<2>)
+// CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[a]], [[B]])
+// CHECK: [[a_B:%[0-9]+]] = "geomalg.oprod"([[a]], [[B]])
+// CHECK-SAME: -> !geomalg.blade<3>
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aB]], [[a_B]])
+// CHECK: geomalg.return [[SUM0]]
+func.func @gprod_2(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
+            -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%arg0, %arg1)
+    : (!geomalg.blade<1>, !geomalg.blade<2>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
 }  // module

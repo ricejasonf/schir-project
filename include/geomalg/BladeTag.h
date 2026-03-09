@@ -33,6 +33,10 @@ public:
     return ~tag_sign_mask & getTag();
   }
 
+  BladeTag getCanonical() const {
+    return BladeTag(getCanonicalTag());
+  }
+
   unsigned getGrade() const {
     // Count all the bits except the sign bit.
     return std::popcount(getCanonicalTag());
@@ -95,7 +99,15 @@ public:
     return {BladeTag(TagA), BladeTag(TagB)};
   }
 
-  auto operator<=>(BladeTag const&) const = default;
+  std::strong_ordering operator<=>(BladeTag const& B) const {
+    // Order by grade and then by the tag value.
+    return Tag == B.Tag
+              ? std::strong_ordering::equal :
+           getGrade() < B.getGrade() || Tag < B.Tag
+              ? std::strong_ordering::less
+              : std::strong_ordering::greater;
+  }
+
   bool operator==(BladeTag const&) const = default;
 
   // This behaves like the wedge product of 1-blades.
