@@ -5,6 +5,7 @@
 #include <mlir/Dialect/PDLInterp/IR/PDLInterp.h>
 #include <mlir/Pass/PassOptions.h>
 #include <mlir/Tools/mlir-opt/MlirOptMain.h>
+#include <mlir/Transforms/Passes.h>
 #include <string>
 
 namespace {
@@ -24,6 +25,9 @@ int main(int argc, char ** argv) {
   DialectRegistry.insert<mlir::pdl_interp::PDLInterpDialect>();
 
   geomalg::registerGeomalgPasses();
+  mlir::registerCSEPass();
+  mlir::registerCanonicalizerPass();
+
   mlir::PassPipelineRegistration<GeomalgFullExpandOptions>(
     "full-expand",
     "Full expand and optimize using a metric",

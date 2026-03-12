@@ -11,6 +11,7 @@ add_dependencies(GeomalgDialect GeomalgOpsIncGen
 add_library(Geomalg MODULE Type.cpp Geomalg.cpp Dialect.cpp Passes.cpp)
 target_link_libraries(Geomalg
   MLIRPass
+  MLIRIR # for debugging
   MLIRRegisterAllDialects
   MLIRRegisterAllExtensions
   MLIRRegisterAllPasses)

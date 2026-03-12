@@ -26,6 +26,8 @@ class Geomalg_Trait<string name> : NativeOpTrait<name> {
 
 def Distributive : Geomalg_Trait<"Distributive">;
 
+def InferredResult : DeclareOpInterfaceMethods<InferTypeOpInterface>;
+
 // Types
 
 def Geomalg_Metric : TypeDef<Geomalg_Dialect, "Metric", []> {
@@ -153,6 +155,15 @@ def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
   let parameters = (ins ArrayRefParameter<"geomalg::BladeType">:$blades);
 
   let assemblyFormat = "`<` $blades `>`";
+  let extraClassDeclaration = [{
+    bool isGrade(unsigned K) const {
+      for (auto BT : getBlades()) {
+        if (BT.getGrade() != K)
+          return false;
+      }
+      return true;
+    }
+  }];
 }
 
 def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown", []> {
@@ -172,8 +183,7 @@ def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
 class Geomalg_Op<string mnemonic, list<Trait> traits = []> :
     Op<Geomalg_Dialect, mnemonic, traits # [Pure]>;
 
-def Geomalg_SumOp : Geomalg_Op<"sum",
-      [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+def Geomalg_SumOp : Geomalg_Op<"sum", [InferredResult]> {
   let description = [{
     Take a sum of k-blades to produce a multivector.
   }];
@@ -199,8 +209,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
 }
 
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
-      [Distributive,
-       DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+      [Distributive, InferredResult]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -219,11 +228,20 @@ def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {
   let arguments = (ins Geomalg_Value:$LHS,
                        Geomalg_Value:$RHS);
   let results   = (outs Geomalg_Value:$result);
+
+  let extraClassDeclaration = [{
+    static mlir::Type maybeInferType(mlir::Type, mlir::Type);
+  }];
+
   let builders = [
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
+        // Detect the type for known cases.
         $_state.addOperands(LHS);
         $_state.addOperands(RHS);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+
+        mlir::Type T = maybeInferType(LHS.getType(), RHS.getType());
+        $_state.addTypes(T);
+        //$_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
 }
@@ -246,7 +264,7 @@ def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Distributive]> {
   ];
 }
 
-def Geomalg_InverseOp : Geomalg_Op<"inverse", []> {
+def Geomalg_InverseOp : Geomalg_Op<"inverse", [InferredResult]> {
   let description = [{
     Take the multiplicative inverse. For a single k-blade,
     this is defined as applying the multiplicative inverse of
@@ -255,12 +273,6 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", []> {
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
-  let builders = [
-    OpBuilder<(ins "::mlir::Value":$arg), [{
-        $_state.addOperands(arg);
-        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
-      }]>
-  ];
 }
 
 def Geomalg_ReverseOp : Geomalg_Op<"reverse",

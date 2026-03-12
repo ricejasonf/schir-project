@@ -40,12 +40,13 @@ void geomalg::GeomalgDialect::initialize() {
 }
 
 llvm::LogicalResult
-geomalg::SumOp::inferReturnTypes(mlir::MLIRContext* Ctx,
-                                 std::optional<mlir::Location> LocOpt,
-                                 mlir::ValueRange Operands,
-                                 mlir::DictionaryAttr Attrs,
-                                 mlir::OpaqueProperties Props,
-                                 mlir::RegionRange Regions,
+geomalg::SumOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
   mlir::Type ResultType;
@@ -83,9 +84,9 @@ geomalg::OuterProdOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
-                  mlir::DictionaryAttr Attrs,
-                  mlir::OpaqueProperties Props,
-                  mlir::RegionRange Regions,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   if (Operands.size() != 2)
     return llvm::failure();
@@ -103,4 +104,47 @@ geomalg::OuterProdOp::inferReturnTypes(
   }
 
   return llvm::success();
+}
+
+llvm::LogicalResult
+geomalg::InverseOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  if (Operands.size() != 1)
+    return llvm::failure();
+
+  mlir::Type T = Operands.front().getType();
+  auto BT = dyn_cast<geomalg::BladeType>(T);
+  auto MV = dyn_cast<geomalg::MultivectorType>(T);
+
+  // The purpose of leaving a type unknown is that someone can
+  // make their own fancy pass to use some method to find an
+  // inverse of specific or arbitrary sets of elements.
+  if (BT || (MV && MV.isGrade(1)))
+    InferredTypes.push_back(T);
+  else
+    InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
+
+  return llvm::success();
+}
+
+mlir::Type
+geomalg::InnerProdOp::maybeInferType(mlir::Type LHS, mlir::Type RHS) {
+  mlir::MLIRContext* Ctx = LHS.getContext();
+  auto A = dyn_cast<geomalg::BladeType>(LHS);
+  auto B = dyn_cast<geomalg::BladeType>(RHS);
+  if (A && B) {
+    if (A.getGrade() == 0)
+      return B;
+    else if (B.getGrade() == 0)
+      return geomalg::ZeroType::get(Ctx);
+    else if (A.getGrade() == 1 && B.getGrade() == 1)
+      return geomalg::BladeType::get(Ctx, 0);
+  }
+  return geomalg::UnknownType::get(Ctx);
 }
