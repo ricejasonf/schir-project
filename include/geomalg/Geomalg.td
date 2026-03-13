@@ -229,7 +229,6 @@ def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {
 
         mlir::Type T = maybeInferType(LHS.getType(), RHS.getType());
         $_state.addTypes(T);
-        //$_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
 }
@@ -315,6 +314,29 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
         //$_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
         build($_builder, $_state, resultType,
               $_builder.getF32FloatAttr(val));
+      }]>
+  ];
+}
+
+def Geomalg_VersorProdOp : Geomalg_Op<"vprod"> {
+  let description = [{
+    A versor is a product of invertible vectors and is,
+    therefore invertible. However, not all versors are k-blades
+    so we keep things in factored form to construct the inverse.
+
+    Given an ordered set of invertible blades, construct a versor
+    and its inverse applying it to an operand using the
+    sandwich product. Think of each blade being applied as
+    transformations ordered from left to right.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg, Variadic<Geomalg_Value>:$blades);
+  let results   = (outs Geomalg_Value:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$Arg, "::mlir::ValueRange":$Blades), [{
+        $_state.addOperands(Arg);
+        $_state.addOperands(Blades);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
 }

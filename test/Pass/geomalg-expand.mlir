@@ -1,5 +1,5 @@
 // RUN: geomalg-opt \
-// RUN:   --pass-pipeline="builtin.module(func.func(geomalg-expand))" %s \
+// RUN:   --geomalg-expand %s \
 // RUN:   | FileCheck %s
 
 module {

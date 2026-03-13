@@ -8,6 +8,7 @@
 #include <mlir/Parser/Parser.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <cassert>
+#include <string>
 
 // Generated stuff
 namespace geomalg {
@@ -68,18 +69,13 @@ using geomalg::isUnknown;
 using geomalg::isZero;
 
 class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
-  geomalg::Metric Metric;
+  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
+  mlir::FrozenRewritePatternSet Patterns;
 
 public:
-  ExpandPass()
-    : Metric(geomalg::Metric::get(geomalg::MetricKind::unknown))
-  { }
-
-  ExpandPass(geomalg::ExpandPassOptions Options)
-    : Metric(geomalg::Metric::get(Options.metric))
-  { }
-
+  using Base::Base;
   void runOnOperation() override;
+  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
 };
 
 struct FuncInstPass : public geomalg::impl::FuncInstPassBase<FuncInstPass> {
@@ -158,6 +154,19 @@ struct ExpandGP : mlir::OpRewritePattern<geomalg::GeomProdOp> {
 
   llvm::LogicalResult matchAndRewrite(
       geomalg::GeomProdOp GP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+struct ExpandVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
+  using Base = mlir::OpRewritePattern<geomalg::VersorProdOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandVP");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::VersorProdOp VP,
       mlir::PatternRewriter& Rewriter) const override;
 };
 
@@ -439,6 +448,38 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   return llvm::success();
 }
 
+// Expand a versor product to the geometric product.
+llvm::LogicalResult ExpandVP::matchAndRewrite(
+      geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = VP.getLoc();
+  mlir::ValueRange Blades = VP.getBlades();
+  if (Blades.empty()) {
+    Rewriter.replaceOp(VP, VP.getArg());
+    return llvm::success();
+  }
+
+  auto Mult = [&](mlir::Value LHS, mlir::Value RHS) {
+    return geomalg::GeomProdOp::create(Rewriter, Loc, LHS, RHS);
+  };
+  auto Inverse = [&](mlir::Value V) {
+    return geomalg::InverseOp::create(Rewriter, Loc, V);
+  };
+
+  // Multiply left to right.
+  // v₂ v₁ A v₁⁻¹ v₂⁻¹
+  mlir::Value Result = Blades.back();
+  for (auto Blade : llvm::reverse(Blades.drop_back()))
+    Result = Mult(Result, Blade);
+  Result = Mult(Result, VP.getArg());
+  for (auto Blade : Blades)
+    Result = Mult(Result, Inverse(Blade));
+
+  Rewriter.replaceOp(VP, Result);
+  
+  return llvm::success();
+}
+
 // Expand the left contraction to a multivector where appropriate
 // by the GA4CS definitions. Note that the conventions are greek
 // letters for scalars, lowercase letters for 1-blades and uppercase
@@ -609,23 +650,31 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   return llvm::success();
 }
 
-void ExpandPass::runOnOperation() {
-  mlir::MLIRContext* Ctx = &getContext();
-  mlir::func::FuncOp FuncOp = getOperation();
-
+llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
   PS.add<ExpandSum,
          Distribute,
          ExpandLC,
          ExpandGP,
+         ExpandVP,
          ExpandInverse,
          ExpandReverse,
          UpdateInferredTypes>(Ctx);
-  PS.add<ApplyMetric>(Ctx, Metric);
+  if (metric != geomalg::MetricKind::unknown)
+    PS.add<ApplyMetric>(Ctx, geomalg::Metric::get(metric));
   geomalg::transforms::populateGeneratedPDLLPatterns(PS);
+  Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                        disabledPatterns,
+                        enabledPatterns);
+  return llvm::success();
+}
 
-  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS))))
+void ExpandPass::runOnOperation() {
+  mlir::MLIRContext* Ctx = &getContext();
+  mlir::func::FuncOp FuncOp = getOperation();
+
+  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
     return signalPassFailure();
 }
 
