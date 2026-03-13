@@ -64,7 +64,7 @@ def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
 def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
   let mnemonic = "blade";
   let description = [{
-    A k-blade is a wedge product of standard basis vectors
+    A basis k-blade is a wedge product of standard basis vectors
     where k is the number of vectors in the product.
 
     The type is parameterized by a bitmap tag to indicate what elements are
@@ -107,13 +107,6 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
       return getBladeTag().getGrade();
     }
 
-    // Basis vectors include 0-blades and 1-blades
-    bool isBasisVector() const {
-      // Include scalar as a basis vector.
-      // Exclude negative blades.
-      return getGrade() < 2 && isCanonical();
-    }
-
     geomalg::BladeType getCanonicalType() const {
       return get(getContext(), getCanonicalTag().getTag());
     }
@@ -149,20 +142,15 @@ class Geomalg_BladeOfGradeK<int K> :
 def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
   let mnemonic = "multivector";
   let description = [{
-    A multivector is a sum of k-blades.
+    A multivector is a sum of basis blades. It is itself a k-blade if
+    it can be factored as the outer product of k vectors.
   }];
 
   let parameters = (ins ArrayRefParameter<"geomalg::BladeType">:$blades);
 
   let assemblyFormat = "`<` $blades `>`";
   let extraClassDeclaration = [{
-    bool isGrade(unsigned K) const {
-      for (auto BT : getBlades()) {
-        if (BT.getGrade() != K)
-          return false;
-      }
-      return true;
-    }
+    bool isBlade(unsigned K) const;
   }];
 }
 

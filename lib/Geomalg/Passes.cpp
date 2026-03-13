@@ -537,26 +537,22 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
   auto MV = dyn_cast<geomalg::MultivectorType>(Arg.getType());
 
-  // Support only k-blades and 1-vectors where scalars
-  // are lowered to division in the dialect conversion.
-  // Others are unsupported by this pass.
+  // Support only k-blades.
+  // Scalars are lowered to division in the dialect conversion.
+  // Arbitrary multivectors are unsupported by this pass.
   if ((!BT && !MV) ||
       (BT && BT.getGrade() == 0) ||
-      (MV && !MV.isGrade(1)))
+      (MV && !MV.isBlade(1)))
     return llvm::failure();
 
-  // For blades we can simplify to a Negate since we know the grade.
+  // For basis blades we can simplify to a Negate since we know the grade.
   mlir::Value Reverse;
   if (BT) {
     Reverse = BT.shouldReverseNegate()
       ? geomalg::NegateOp::create(Rewriter, Loc, BT, Arg)
       : Arg;
   } else {
-    // Oof! We do not need to reverse 1-vectors.
-    // This is possibly the only place ReverseOp is being used,
-    // but we leave it as a comment for posterity.
-    // Reverse = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
-    Reverse = Arg;
+    Reverse = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
   }
 
   mlir::Value Squared = geomalg::InnerProdOp

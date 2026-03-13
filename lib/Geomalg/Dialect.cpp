@@ -125,7 +125,7 @@ geomalg::InverseOp::inferReturnTypes(
   // The purpose of leaving a type unknown is that someone can
   // make their own fancy pass to use some method to find an
   // inverse of specific or arbitrary sets of elements.
-  if (BT || (MV && MV.isGrade(1)))
+  if (BT || (MV && MV.isBlade(1)))
     InferredTypes.push_back(T);
   else
     InferredTypes.push_back(geomalg::UnknownType::get(Ctx));

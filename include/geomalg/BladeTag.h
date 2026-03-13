@@ -42,14 +42,6 @@ public:
     return std::popcount(getCanonicalTag());
   }
 
-  // FIXME This is unused.
-  // Basis vectors include 0-blades and 1-blades
-  bool isBasisVector() const {
-    // Include scalar as a basis vector.
-    // Exclude negative blades.
-    return getGrade() < 2 && isCanonical();
-  }
-
   bool isCanonical() const {
     return !static_cast<bool>(tag_sign_mask & getTag());
   }

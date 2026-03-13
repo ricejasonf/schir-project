@@ -52,4 +52,19 @@ createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   return geomalg::MultivectorType::get(MLIRContext, BladeTypes);
 }
 
+// K is the grade of the blade.
+bool MultivectorType::isBlade(unsigned K) const {
+  uint32_t Sum = 0;
+  for (auto BT : getBlades()) {
+    Sum &= BT.getCanonicalTag().getTag();
+    if (BT.getGrade() != K)
+      return false;
+  }
+
+  // If this is not a vector there must be
+  // a common basis vector or it cannot be
+  // factored as an outer product of vectors.
+  return K == 1 || Sum != 0;
+}
+
 }  // namespace geomalg
