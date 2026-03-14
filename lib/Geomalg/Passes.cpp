@@ -645,7 +645,7 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   int DotResult = Metric.dotProduct(geomalg::BladeTag(L.getTag()),
                                     geomalg::BladeTag(L.getTag()));
 
-  auto BT = geomalg::BladeType(0); // Scalar
+  auto BT = geomalg::BladeType::get(getContext(), 0); // Scalar
   Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
   return llvm::success();
 }
