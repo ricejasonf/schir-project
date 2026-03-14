@@ -124,13 +124,18 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
     }
 
     // See BladeTag::factor().
-    std::pair<BladeType, BladeType> factor() {
+    std::pair<BladeType, BladeType> factor() const {
       auto [L, R] = getBladeTag().factor();
       return {get(getContext(), L.getTag()),
               get(getContext(), R.getTag())};
     }
 
-    static constexpr bool isZero() { return false; }
+    bool isZero() const { 
+      // Instead of adding a bunch of run-time verification,
+      // we will support zero but assert against it here.
+      assert(!getBladeTag().isZero());
+      return getBladeTag().isZero();
+    }
   }];
 }
 

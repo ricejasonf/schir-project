@@ -2,6 +2,8 @@
 // RUN:--geomalg-expand="enable-patterns=ExpandVP" %s \
 // RUN:| FileCheck %s
 
+// RUN: geomalg-opt --geomalg-expand %s
+
 // CHECK-LABEL: func.func @versor_prod_0
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK: return [[ARG0]]

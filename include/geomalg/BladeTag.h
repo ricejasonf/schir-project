@@ -46,6 +46,11 @@ public:
     return !static_cast<bool>(tag_sign_mask & getTag());
   }
 
+  // Denote noncanonical scalar as zero.
+  bool isZero() {
+    return getGrade() == 0 && !isCanonical();
+  }
+
   // Change the to or from the set of canonical orderings
   // of basis vectors.
   // Note that "sign" only indicates the canonical ordering
@@ -67,12 +72,13 @@ public:
     return G % 2 == 0 || G % 3 == 0;
   }
 
-  // Peel off the leftmost basis vector from the wedge product.
+  // Peel off the leftmost basis vector from the basis blade.
   // Return the 1-blade and the (k - 1)-blade factors.
   std::pair<BladeTag, BladeTag> factor() const {
-    uint32_t CTag = getCanonicalTag();
-    if (CTag == 0)
+    if (getGrade() < 2)
       return {BladeTag(0), *this};
+
+    uint32_t CTag = getCanonicalTag();
 
     // We assume blades are in sorted order so we must take
     // the vector specified by the least significant bit.
@@ -88,6 +94,7 @@ public:
       TagA = 1 << std::countr_zero(TagB);
       TagB = CTag ^ TagA;
     }
+    assert(BladeTag(TagA).getGrade() == 1);
     return {BladeTag(TagA), BladeTag(TagB)};
   }
 

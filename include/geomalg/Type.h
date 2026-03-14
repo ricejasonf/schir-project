@@ -40,7 +40,7 @@ bool isLikeBlades(mlir::Type A, mlir::Type B) {
 mlir::Type getTypeFromSum(mlir::Type A, mlir::Type B);
 
 mlir::Type
-createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes);
+createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes);
 
 // Create a canonicalized type for a multivector.
 // The result may be a BladeType for a single term.

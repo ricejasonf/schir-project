@@ -10,18 +10,30 @@ namespace geomalg {
 // Implement utilities for construction and
 // introspection of geomalg dialect types.
 
-// Create a BladeType from a wedge product of basis 1-blades.
-// The input array will be sorted in place.
-mlir::Type
-createBladeType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
+// Create a BladeType from a wedge product of basis blades (nonempty).
+mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
-  llvm::SmallVector<geomalg::BladeTag> BladeTags(BladeTypes.size());
-  for (unsigned I = 0; I < BladeTypes.size(); I++)
-    BladeTags[I] = geomalg::BladeTag(BladeTypes[I].getTag());
-  BladeTag BT = BladeTag::create(BladeTags);
 
+  llvm::SmallVector<geomalg::BladeTag> BladeTags;
+  auto PushTag = [&](this auto& PushTag, geomalg::BladeTag BT) -> void {
+    if (BT.getGrade() > 1) {
+      auto [BT1, BT2] = BT.factor();
+      PushTag(BT1);
+      PushTag(BT2);
+    } else if (BT.getGrade() == 1) {
+      BladeTags.push_back(BT);
+    }
+    // Ignore scalars (ie grade == 0.)
+  };
+
+  for (geomalg::BladeType BT : BladeTypes)
+    PushTag(BT.getBladeTag());
+
+  BladeTag Tag = BladeTag::create(BladeTags);
   mlir::MLIRContext* MLIRContext = BladeTypes.front().getContext();
-  return geomalg::BladeType::get(MLIRContext, BT.getTag());
+  return Tag.isZero()
+    ? mlir::Type(geomalg::ZeroType::get(MLIRContext))
+    : mlir::Type(geomalg::BladeType::get(MLIRContext, Tag.getTag()));
 }
 
 // Create a type for a multivector.

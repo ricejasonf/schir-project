@@ -95,9 +95,8 @@ geomalg::OuterProdOp::inferReturnTypes(
   auto B = dyn_cast<geomalg::BladeType>(Operands[1].getType());
   if (A && B) {
     // This can return a "noncanonical" blade (ie not sorted order basis blades.)
-    std::array<geomalg::BladeTag, 2> Tags{{A.getBladeTag(), B.getBladeTag()}};
-    auto Tag = geomalg::BladeTag::create(Tags);
-    mlir::Type ResultType = geomalg::BladeType::get(Ctx, Tag.getTag());
+    std::array<geomalg::BladeType, 2> BladeTypes{{A, B}};
+    mlir::Type ResultType = geomalg::createBladeType(BladeTypes);
     InferredTypes.push_back(ResultType);
   } else {
     InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
