@@ -297,18 +297,26 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
   using UnknownType = geomalg::UnknownType;
   using ZeroType = geomalg::ZeroType;
 
-  // Collect Values unnesting (directly nested) sums and discarding Zeros.
+  mlir::Location Loc = Op.getLoc();
+
+  // Collect Values unnesting (directly nested) sums,
+  // negating noncanical blades, and discarding Zeros.
   // Note some of these maybe still be multivectors.
   llvm::SmallVector<mlir::Value, 8> Values;
   for (mlir::Value V : Op.getOperands()) {
-    if (auto S = V.getDefiningOp<SumOp>())
+    if (auto S = V.getDefiningOp<SumOp>()) {
       llvm::append_range(Values, S.getOperands());
-    else if (isa<MultivectorType>(V.getType()))
+    } else if (isa<MultivectorType>(V.getType())) {
       llvm::append_range(Values, expandMultivector(Rewriter, V));
-    else if (isa<BladeType, UnknownType>(V.getType()))
+    } else if (auto BT = dyn_cast<BladeType>(V.getType())) {
+      if (!BT.isCanonical())
+        V = geomalg::NegateOp::create(Rewriter, Loc, BT.getCanonicalType(), V);
       Values.push_back(V);
-    else
+    } else if (isa<UnknownType>(V.getType())) {
+      Values.push_back(V);
+    } else {
       assert(isa<ZeroType>(V.getType()));
+    }
   };
 
   // Sort by BladeTag putting all non-blades at the front.
@@ -357,7 +365,7 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
 
   // Apply the operator to each blade summing the results.
   llvm::SmallVector<mlir::Value, 8> Results;
-  for (auto Blade : Blades) {
+  for (mlir::Value Blade : Blades) {
     // Since operand values can appear multiple times,
     // IRMapping cannot be used.
     mlir::IRMapping Map;
@@ -372,6 +380,8 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
     else if (isa<geomalg::InnerProdOp>(NewOp))
       ResultT = geomalg::InnerProdOp::maybeInferType(
           NewOp->getOperand(0).getType(), NewOp->getOperand(1).getType());
+    else if (isa<geomalg::NegateOp>(NewOp))
+      ResultT = Blade.getType();
     else
       ResultT = geomalg::UnknownType::get(Ctx);
     Result.setType(ResultT);  // ok because we are modifying a new result.
@@ -687,7 +697,7 @@ llvm::LogicalResult ExpandReverse::matchAndRewrite(
     return llvm::failure();
 
   if (BT.shouldReverseNegate())
-    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(RevOp, RevOp.getArg());
+    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(RevOp, BT, RevOp.getArg());
   else
     Rewriter.replaceOp(RevOp, RevOp.getArg());
 
