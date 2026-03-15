@@ -23,6 +23,15 @@ inline llvm::cl::ValuesClass getMetricKindEnumValues() {
       clEnumValN(1, "cga", "Conformal model"));
 }
 
+// Check if a value is a unit basis blade.
+inline bool isUnit(mlir::Value V) {
+  if (isa<BladeType>(V.getType())) {
+    if (auto B = V.getDefiningOp<BladeOp>())
+      return B.isOne();
+  }
+  return false;
+}
+
 }  // namespace geomalg
 
 #endif  // GEOMALG_PASSES_H

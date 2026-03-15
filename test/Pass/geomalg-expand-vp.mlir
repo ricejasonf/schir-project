@@ -2,7 +2,7 @@
 // RUN:--geomalg-expand="enable-patterns=ExpandVP" %s \
 // RUN:| FileCheck %s
 
-// RUN: geomalg-opt --geomalg-expand %s
+// RUN: geomalg-opt --geomalg-expand="metric=cga" --cse %s
 
 // CHECK-LABEL: func.func @versor_prod_0
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)

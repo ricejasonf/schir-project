@@ -422,14 +422,11 @@ llvm::LogicalResult SimplifyOP::matchAndRewrite(
   // α ∧ B = B ∧ α = α ⌋ B
   // Outer product with a scalar can be written as
   // the inner product with the scalar on the left hand side.
-  mlir::Value Scalar =
-    L.getGrade() == 0 ? LHS :
-    R.getGrade() == 0 ? RHS : mlir::Value();
-
-  mlir::Value Other = Scalar == LHS ? RHS : LHS;
-
-  if (Scalar) {
-    if (auto B = Scalar.getDefiningOp<geomalg::BladeOp>(); B && B.isOne()) {
+  if (mlir::Value Scalar =
+        L.getGrade() == 0 ? LHS :
+        R.getGrade() == 0 ? RHS : mlir::Value()) {
+    mlir::Value Other = Scalar == LHS ? RHS : LHS;
+    if (geomalg::isUnit(Scalar)) {
       Rewriter.replaceOp(OP, Other);
     } else {
       assert(OP.getResult().getType() == Other.getType()); // Sanity check
@@ -549,11 +546,10 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   if (L.getGrade() == 0) {
     // Simplify if multiplying by constant 1 as is
     // common when factoring higher dimensional blades.
-    if (auto B = LHS.getDefiningOp<geomalg::BladeOp>(); B && B.isOne()) {
+    if (geomalg::isUnit(LHS)) {
       Rewriter.replaceOp(LC, RHS);
       return llvm::success();
-    } else if (auto B = RHS.getDefiningOp<geomalg::BladeOp>();
-               R.getGrade() == 0 && B && B.isOne()) {
+    } else if (R.getGrade() == 0 && geomalg::isUnit(RHS)) {
       llvm_unreachable("FIXME Does this happen in practice?");
       Rewriter.replaceOp(LC, LHS);
       return llvm::success();
@@ -639,6 +635,14 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
   auto MV = dyn_cast<geomalg::MultivectorType>(Arg.getType());
 
+  // The inverse of scalar 1 is just 1.
+  if (BT && BT.getGrade() == 0) {
+    if (geomalg::isUnit(Arg)) {
+      Rewriter.replaceOp(InvOp, Arg);
+      return llvm::success();
+    }
+  }
+
   // Support only k-blades.
   // Scalars are lowered to division in the dialect conversion.
   // Arbitrary multivectors are unsupported by this pass.
@@ -646,6 +650,7 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
       (BT && BT.getGrade() == 0) ||
       (MV && !MV.isBlade(1)))
     return llvm::failure();
+
 
   // For basis blades we can simplify to a Negate since we know the grade.
   mlir::Value Reverse;
