@@ -321,6 +321,13 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
               $_builder.getF32FloatAttr(val));
       }]>
   ];
+
+  let extraClassDeclaration = [{
+    bool isOne() {
+      llvm::APFloat C = getCoefficient().getValue();
+      return C.bitwiseIsEqual(llvm::APFloat::getOne(C.getSemantics()));
+    }
+  }];
 }
 
 def Geomalg_VersorProdOp : Geomalg_Op<"vprod"> {

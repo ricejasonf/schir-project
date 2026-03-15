@@ -143,6 +143,19 @@ struct UpdateInferredTypes
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyOP : mlir::OpRewritePattern<geomalg::OuterProdOp> {
+  using Base = mlir::OpRewritePattern<geomalg::OuterProdOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyOP");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::OuterProdOp OP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 // Rewrite the geometric product of blades as terms of inner and outer products.
 struct ExpandGP : mlir::OpRewritePattern<geomalg::GeomProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::GeomProdOp>;
@@ -396,6 +409,38 @@ UpdateInferredTypes::matchAndRewrite(mlir::InferTypeOpInterface Op,
   return llvm::success();
 }
 
+llvm::LogicalResult SimplifyOP::matchAndRewrite(
+    geomalg::OuterProdOp OP,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Value LHS = OP.getLHS();
+  mlir::Value RHS = OP.getRHS();
+  auto L = dyn_cast<geomalg::BladeType>(OP.getLHS().getType());
+  auto R = dyn_cast<geomalg::BladeType>(OP.getRHS().getType());
+  if (!L || !R)
+    return llvm::failure();
+
+  // α ∧ B = B ∧ α = α ⌋ B
+  // Outer product with a scalar can be written as
+  // the inner product with the scalar on the left hand side.
+  mlir::Value Scalar =
+    L.getGrade() == 0 ? LHS :
+    R.getGrade() == 0 ? RHS : mlir::Value();
+
+  mlir::Value Other = Scalar == LHS ? RHS : LHS;
+
+  if (Scalar) {
+    if (auto B = Scalar.getDefiningOp<geomalg::BladeOp>(); B && B.isOne()) {
+      Rewriter.replaceOp(OP, Other);
+    } else {
+      assert(OP.getResult().getType() == Other.getType()); // Sanity check
+      Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(OP, Scalar, Other);
+    }
+    return llvm::success();
+  }
+
+  return llvm::failure();
+}
+
 // Rewrite the geometric product of blades as terms of inner and outer products.
 llvm::LogicalResult ExpandGP::matchAndRewrite(
     geomalg::GeomProdOp GP,
@@ -476,7 +521,7 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
     Result = Mult(Result, Inverse(Blade));
 
   Rewriter.replaceOp(VP, Result);
-  
+
   return llvm::success();
 }
 
@@ -493,9 +538,6 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     mlir::PatternRewriter& Rewriter) const {
   mlir::Location Loc = LC.getLoc();
 
-  if (!isa<geomalg::UnknownType>(LC.getResult().getType()))
-    return llvm::failure();
-
   mlir::Value LHS = LC.getLHS();
   mlir::Value RHS = LC.getRHS();
   auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
@@ -503,10 +545,29 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   if (!L || !R)
     return llvm::failure();
 
+  // Simplify even if we know the result type.
+  if (L.getGrade() == 0) {
+    // Simplify if multiplying by constant 1 as is
+    // common when factoring higher dimensional blades.
+    if (auto B = LHS.getDefiningOp<geomalg::BladeOp>(); B && B.isOne()) {
+      Rewriter.replaceOp(LC, RHS);
+      return llvm::success();
+    } else if (auto B = RHS.getDefiningOp<geomalg::BladeOp>();
+               R.getGrade() == 0 && B && B.isOne()) {
+      llvm_unreachable("FIXME Does this happen in practice?");
+      Rewriter.replaceOp(LC, LHS);
+      return llvm::success();
+    }
+  }
+
+  // At this point only transform when the result type is not yet known.
+  if (!isa<geomalg::UnknownType>(LC.getResult().getType()))
+    return llvm::failure();
+
   // 3.7
   // α ⌋ B = α B
   if (L.getGrade() == 0) {
-     setResultType(Rewriter, LC, R);
+    setResultType(Rewriter, LC, R);
     return llvm::success();
   }
 
@@ -653,11 +714,12 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
 llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-  PS.add<ExpandSum,
+  PS.add<ExpandVP,
+         ExpandSum,
          Distribute,
          ExpandLC,
          ExpandGP,
-         ExpandVP,
+         SimplifyOP,
          ExpandInverse,
          ExpandReverse,
          UpdateInferredTypes>(Ctx);

@@ -164,6 +164,58 @@ func.func @distribute_b_4(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
   geomalg.return %1 : !geomalg.unknown
 }
 
+// CHECK-LABEL: func.func @oprod_0
+func.func @oprod_0(%arg0: !geomalg.blade<0>,
+                   %arg1: !geomalg.blade<1>,
+                   %arg2: !geomalg.blade<2>,
+                   %arg3: !geomalg.blade<3>)
+                          -> !geomalg.multivector<<0>, <1>, <3>> {
+  %0 = "geomalg.oprod"(%arg0, %arg0)
+    : (!geomalg.blade<0>, !geomalg.blade<0>) -> !geomalg.blade<0>
+  %1 = "geomalg.oprod"(%arg0, %arg1)
+    : (!geomalg.blade<0>, !geomalg.blade<1>) -> !geomalg.blade<1>
+  %2 = "geomalg.oprod"(%arg1, %arg0)
+    : (!geomalg.blade<1>, !geomalg.blade<0>) -> !geomalg.blade<1>
+  %3 = "geomalg.oprod"(%arg0, %arg3)
+    : (!geomalg.blade<0>, !geomalg.blade<3>) -> !geomalg.blade<3>
+  %4 = "geomalg.oprod"(%arg3, %arg0)
+    : (!geomalg.blade<3>, !geomalg.blade<0>) -> !geomalg.blade<3>
+  %5 = "geomalg.oprod"(%arg1, %arg2)
+    : (!geomalg.blade<1>, !geomalg.blade<2>) -> !geomalg.blade<3>
+  %6 = "geomalg.oprod"(%arg2, %arg1)
+    : (!geomalg.blade<2>, !geomalg.blade<1>) -> !geomalg.blade<2147483651>
+  // Just testing inference for the cases yielding zero.
+  %7 = "geomalg.oprod"(%arg1, %arg1)
+    : (!geomalg.blade<1>, !geomalg.blade<1>) -> !geomalg.zero
+  %8 = "geomalg.oprod"(%arg2, %arg2)
+    : (!geomalg.blade<2>, !geomalg.blade<2>) -> !geomalg.zero
+  %9 = "geomalg.oprod"(%arg3, %arg3)
+    : (!geomalg.blade<3>, !geomalg.blade<3>) -> !geomalg.zero
+  %10 = "geomalg.oprod"(%arg1, %arg3)
+    : (!geomalg.blade<1>, !geomalg.blade<3>) -> !geomalg.zero
+  %11 = "geomalg.oprod"(%arg3, %arg1)
+    : (!geomalg.blade<3>, !geomalg.blade<1>) -> !geomalg.zero
+  %12 = "geomalg.oprod"(%arg2, %arg3)
+    : (!geomalg.blade<2>, !geomalg.blade<3>) -> !geomalg.zero
+  %13 = "geomalg.oprod"(%arg3, %arg2)
+    : (!geomalg.blade<3>, !geomalg.blade<2>) -> !geomalg.zero
+  %14 = "geomalg.oprod"(%13, %arg2)
+    : (!geomalg.zero, !geomalg.blade<2>) -> !geomalg.zero
+  %15 = "geomalg.oprod"(%arg3, %13)
+    : (!geomalg.blade<3>, !geomalg.zero) -> !geomalg.zero
+  %16 = "geomalg.sum"(%0, %1, %2, %3, %4, %5, %6)
+    : (!geomalg.blade<0>,
+       !geomalg.blade<1>,
+       !geomalg.blade<1>,
+       !geomalg.blade<3>,
+       !geomalg.blade<3>,
+       !geomalg.blade<3>,
+       !geomalg.blade<2147483651>)
+       -> !geomalg.multivector<<0>, <1>, <3>, !geomalg.blade<2147483651>>
+  geomalg.return %16
+    : !geomalg.multivector<<0>, <1>, <3>, !geomalg.blade<2147483651>>
+}
+
 // 3.7
 // α ⌋ B = α B
 // CHECK-LABEL: func.func @iprod_3_7
@@ -206,8 +258,11 @@ func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
 // CHECK-SAME: : (!geomalg.blade<3>) -> !geomalg.blade<2>
 // CHECK: [[ab:%[0-9]+]] = "geomalg.iprod"([[a]], [[b]])
 // CHECK: [[aC:%[0-9]+]] = "geomalg.iprod"([[a]], [[C]])
-// CHECK: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
-// CHECK: [[aC_b:%[0-9]+]] = "geomalg.oprod"([[aC]], [[b]])
+// Note the oprod simplifies to iprod because of the scalar.
+// CHECK-NOT: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
+// CHECK-NOT: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
+// CHECK: [[ab_C:%[0-9]+]] = "geomalg.iprod"([[ab]], [[C]])
+// CHECK: [[aC_b:%[0-9]+]] = "geomalg.iprod"([[aC]], [[b]])
 // CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aC_b]], [[ab_C]])
 // CHECK-NEXT: geomalg.return [[SUM0]]
 func.func @iprod_3_10(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<3>)

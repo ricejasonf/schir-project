@@ -10,7 +10,9 @@ namespace geomalg {
 // Each bit represents a dimension expcept the high bit
 // which represents sign with regard to canonical ordering
 // of basis vectors which is sorted by tag value of basis
-// vector tags. No bits set represents a scalar.
+// vector tags.
+// No bits set represents a scalar.
+// Only the sign bit being set represents zero.
 class BladeTag {
   uint32_t Tag = 0;
 
@@ -21,8 +23,8 @@ public:
   BladeTag() = default;
   explicit BladeTag(uint32_t Tag) : Tag(Tag) {
     // If the blade cannot have an noncanonical ordering
-    assert((getGrade() > 1 || Tag == getCanonicalTag()) &&
-        "0-blades and 1-blades cannot have noncanonical ordering");
+    assert((getGrade() != 1 || Tag == getCanonicalTag()) &&
+        "1-blades cannot have noncanonical ordering");
   }
 
   uint32_t getTag() const {
@@ -48,7 +50,7 @@ public:
 
   // Denote noncanonical scalar as zero.
   bool isZero() {
-    return getGrade() == 0 && !isCanonical();
+    return Tag == tag_sign_mask;
   }
 
   // Change the to or from the set of canonical orderings
@@ -109,10 +111,26 @@ public:
 
   bool operator==(BladeTag const&) const = default;
 
-  // This behaves like the wedge product of 1-blades.
+  static BladeTag createZero() {
+    return BladeTag(geomalg::BladeTag::tag_sign_mask);
+  }
+
+  // This behaves like the wedge product of basis 1-blades.
   static BladeTag create(llvm::MutableArrayRef<BladeTag> BladeTags) {
     if (BladeTags.empty())
       return BladeTag();
+
+    assert(llvm::all_of(BladeTags,
+            [](auto B) { return B.getGrade() == 1; }));
+
+    // First check for duplicate elements which results in zero.
+    if (BladeTags.size() > 1) {
+      uint32_t Sum = BladeTags.front().getCanonicalTag();
+      for (BladeTag BT : BladeTags.drop_front())
+        Sum |= BT.getCanonicalTag();
+      if (std::popcount(Sum) < BladeTags.size())
+        return BladeTag::createZero();
+    }
 
     // Manually sort by canonical tag (ie without regard to sign bit.)
     // For each swap, we change the sign which may be incorrect if
@@ -134,14 +152,6 @@ public:
           Swap(BladeTags[I], BladeTags[J]);
       }
     }
-
-    // If we have more than one of any basis
-    // element then the whole thing becomes zero
-    // (which we would should be checking in a Pass.)
-    size_t OrigSize = BladeTags.size();
-    llvm::unique(BladeTags);
-    if (OrigSize != BladeTags.size())
-      return BladeTag();
 
     uint32_t Tag = 0;
     for (geomalg::BladeTag BladeTag : BladeTags)

@@ -14,16 +14,20 @@ namespace geomalg {
 mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
 
+  bool IsZero = false;
+
   llvm::SmallVector<geomalg::BladeTag> BladeTags;
   auto PushTag = [&](this auto& PushTag, geomalg::BladeTag BT) -> void {
-    if (BT.getGrade() > 1) {
+    if (BT.isZero()) {
+      IsZero = true;
+    } else if (BT.getGrade() > 1) {
       auto [BT1, BT2] = BT.factor();
       PushTag(BT1);
       PushTag(BT2);
     } else if (BT.getGrade() == 1) {
       BladeTags.push_back(BT);
     }
-    // Ignore scalars (ie grade == 0.)
+    // Ignore nonzero scalars (ie grade == 0.)
   };
 
   for (geomalg::BladeType BT : BladeTypes)
@@ -31,7 +35,7 @@ mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {
 
   BladeTag Tag = BladeTag::create(BladeTags);
   mlir::MLIRContext* MLIRContext = BladeTypes.front().getContext();
-  return Tag.isZero()
+  return IsZero || Tag.isZero()
     ? mlir::Type(geomalg::ZeroType::get(MLIRContext))
     : mlir::Type(geomalg::BladeType::get(MLIRContext, Tag.getTag()));
 }
@@ -67,7 +71,7 @@ createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
 // K is the grade of the blade.
 bool MultivectorType::isBlade(unsigned K) const {
   uint32_t Sum = 0;
-  for (auto BT : getBlades()) {
+  for (geomalg::BladeType BT : getBlades()) {
     Sum &= BT.getCanonicalTag().getTag();
     if (BT.getGrade() != K)
       return false;
