@@ -32,6 +32,7 @@ public:
   // Assume vectors are orthonormal unless specified otherwise.
   // This is designed to return {-1, 0, 1}.
   int dotProduct(BladeTag A, BladeTag B) const {
+    assert(A.getGrade() == 1 && B.getGrade() == 1);
     if (A > B)
       std::swap(A, B);
 
@@ -51,9 +52,9 @@ public:
     case MetricKind::unknown:
       return Metric(0, {});
     case MetricKind::cga:
-      return Metric(5, {Entry{32, 32, 0},
-                        Entry{64, 64, 0},
-                        Entry{32, 64, -1}});
+      return Metric(5, {Entry{8, 8, 0},
+                        Entry{16, 16, 0},
+                        Entry{8, 16, -1}});
     }
   }
 };

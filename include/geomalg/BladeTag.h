@@ -64,7 +64,7 @@ public:
 
   // Grade involution. B^ = (-1)^{grade(B)} B
   bool shouldInvoNegate() const {
-    return getGrade() % 2 == 0;
+    return getGrade() % 2 != 0;
   }
 
   bool shouldReverseNegate() const {

@@ -15,6 +15,9 @@ namespace geomalg {
 template <typename T>
 class Distributive : public mlir::OpTrait::TraitBase<T, Distributive>
 { };
+template <typename T>
+class ZeroAbsorb : public mlir::OpTrait::TraitBase<T, ZeroAbsorb>
+{ };
 }  // namespace
 
 // #pragma clang diagnostic push

@@ -120,9 +120,21 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
   using Base::OpTraitRewritePattern;
 
   void initialize() {
-    // TODO Do we want recursion here?
-    //setHasBoundedRewriteRecursion();
     setDebugName("Distribute");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override;
+};
+
+// If any operand is Zero, then replace the Op
+// with something resulting in Zero.
+struct ZeroAbsorbToZero : mlir::OpTraitRewritePattern<geomalg::ZeroAbsorb> {
+  using Base = mlir::OpTraitRewritePattern<geomalg::ZeroAbsorb>;
+  using Base::OpTraitRewritePattern;
+
+  void initialize() {
+    setDebugName("ZeroAbsorbToZero");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -250,11 +262,21 @@ struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
 
 }  // namespace
 
-static void setResultType(mlir::PatternRewriter& Rewriter,
-                   mlir::Operation* Op, mlir::Type Type) {
+static llvm::LogicalResult
+setResultType(mlir::PatternRewriter& Rewriter,
+              mlir::Operation* Op, mlir::Type Type) {
   Rewriter.startOpModification(Op);
   Op->getResult(0).setType(Type);
   Rewriter.finalizeOpModification(Op);
+  return llvm::success();
+}
+
+static llvm::LogicalResult
+replaceWithZero(mlir::PatternRewriter& Rewriter,
+                mlir::Operation* Op) {
+  auto ZeroT = geomalg::ZeroType::get(Op->getContext());
+  Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(Op, ZeroT, 0);
+  return llvm::success();
 }
 
 llvm::LogicalResult InferFuncType::matchAndRewrite(
@@ -340,6 +362,7 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
                             mlir::PatternRewriter& Rewriter) const {
   mlir::MLIRContext* Ctx = getContext();
 
+  // FIXME I think we moved removing Zeros in ExpandSum.
   // Match any Zero operand.
   bool HasZero = llvm::any_of(Op->getOperands(), [](mlir::Value Operand) {
       return isa<geomalg::ZeroType>(Operand.getType());
@@ -414,9 +437,7 @@ UpdateInferredTypes::matchAndRewrite(mlir::InferTypeOpInterface Op,
     return llvm::failure();
 
   // Just set the result type to the inferred type.
-  setResultType(Rewriter, Op.getOperation(), InferredTypes.front());
-
-  return llvm::success();
+  return setResultType(Rewriter, Op.getOperation(), InferredTypes.front());
 }
 
 llvm::LogicalResult SimplifyOP::matchAndRewrite(
@@ -424,8 +445,9 @@ llvm::LogicalResult SimplifyOP::matchAndRewrite(
     mlir::PatternRewriter& Rewriter) const {
   mlir::Value LHS = OP.getLHS();
   mlir::Value RHS = OP.getRHS();
-  auto L = dyn_cast<geomalg::BladeType>(OP.getLHS().getType());
-  auto R = dyn_cast<geomalg::BladeType>(OP.getRHS().getType());
+
+  auto L = dyn_cast<geomalg::BladeType>(LHS.getType());
+  auto R = dyn_cast<geomalg::BladeType>(RHS.getType());
   if (!L || !R)
     return llvm::failure();
 
@@ -448,6 +470,17 @@ llvm::LogicalResult SimplifyOP::matchAndRewrite(
   return llvm::failure();
 }
 
+llvm::LogicalResult ZeroAbsorbToZero::matchAndRewrite(
+    mlir::Operation* Op,
+    mlir::PatternRewriter& Rewriter) const {
+  for (mlir::Value V : Op->getOperands()) {
+    if (geomalg::isZero(V))
+      return replaceWithZero(Rewriter, Op);
+  }
+
+  return llvm::failure();
+}
+
 // Rewrite the geometric product of blades as terms of inner and outer products.
 llvm::LogicalResult ExpandGP::matchAndRewrite(
     geomalg::GeomProdOp GP,
@@ -459,11 +492,6 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   auto R = dyn_cast<geomalg::BladeType>(GP.getRHS().getType());
   if (!L || !R)
     return llvm::failure();
-
-  if (R < L) {
-    std::swap(LHS, RHS);
-    std::swap(L, R);
-  }
 
   // Use the left contraction for scalar multiplication.
   // α B = α ⌋ B
@@ -572,23 +600,19 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
 
   // 3.7
   // α ⌋ B = α B
-  if (L.getGrade() == 0) {
-    setResultType(Rewriter, LC, R);
-    return llvm::success();
-  }
+  if (L.getGrade() == 0)
+    return setResultType(Rewriter, LC, R);
 
   // 3.8
   // B ⌋ α = 0
-  if (L.getGrade() > 0 && R.getGrade() == 0) {
-    setResultType(Rewriter, LC, geomalg::ZeroType::get(LC->getContext()));
-    return llvm::success();
-  }
+  if (L.getGrade() > 0 && R.getGrade() == 0)
+    return replaceWithZero(Rewriter, LC);
 
   if (L.getGrade() == 1 && R.getGrade() == 1) {
     // 3.9
     // a ⌋ b = a ⬝ b
     // Requires a metric the application of
-    // which is deferred to its own pass.
+    // which is deferred to ApplyMetric.
     return llvm::failure();
   }
 
@@ -715,11 +739,13 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   mlir::Value RHS = LC.getRHS();
   auto L = dyn_cast<geomalg::BladeType>(LC.getLHS().getType());
   auto R = dyn_cast<geomalg::BladeType>(LC.getRHS().getType());
-  if (!(L && L.getGrade() == 1 && R && R.getGrade() == 1))
+  if (!L || !R || L.getGrade() != 1 || R.getGrade() != 1)
     return llvm::failure();
 
-  int DotResult = Metric.dotProduct(geomalg::BladeTag(L.getTag()),
-                                    geomalg::BladeTag(L.getTag()));
+  int DotResult = Metric.dotProduct(L.getBladeTag(), R.getBladeTag());
+
+  if (DotResult == 0)
+    return replaceWithZero(Rewriter, LC);
 
   auto BT = geomalg::BladeType::get(getContext(), 0); // Scalar
   Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
@@ -732,6 +758,7 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   PS.add<ExpandVP,
          ExpandSum,
          Distribute,
+         ZeroAbsorbToZero,
          ExpandLC,
          ExpandGP,
          SimplifyOP,

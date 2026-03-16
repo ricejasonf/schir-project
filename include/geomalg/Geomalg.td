@@ -24,7 +24,11 @@ class Geomalg_Trait<string name> : NativeOpTrait<name> {
   let cppNamespace = "::geomalg";
 }
 
+// If any operand is Multivector, expand and distribute.
 def Distributive : Geomalg_Trait<"Distributive">;
+
+// If any operand is Zero, result is Zero.
+def ZeroAbsorb : Geomalg_Trait<"ZeroAbsorb">;
 
 def InferredResult : DeclareOpInterfaceMethods<InferTypeOpInterface>;
 
@@ -202,7 +206,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
 }
 
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
-      [Distributive, InferredResult]> {
+      [Distributive, ZeroAbsorb, InferredResult]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -213,7 +217,7 @@ def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {
+def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive, ZeroAbsorb]> {
   let description = [{
     Map two multivectors to a scalar by their interior product.
   }];
@@ -238,7 +242,7 @@ def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive]> {
   ];
 }
 
-def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Distributive]> {
+def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Distributive, ZeroAbsorb]> {
   let description = [{
     Map two multivectors to the sum of their interior
     and exterior products which produces a multivector.
@@ -281,7 +285,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Distributive]> {
+      [Distributive, ZeroAbsorb]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
@@ -294,24 +298,24 @@ def Geomalg_NegateOp : Geomalg_Op<"negate",
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_CastOp : Geomalg_Op<"cast"> {
+def Geomalg_CastOp : Geomalg_Op<"cast", [ZeroAbsorb]> {
   let description = [{
     Cast a blade to another blade type that is typically
     used to factor out a basis vector from a k-blade.
     To change the sign, see NegateOp.
   }];
 
-  let arguments = (ins Geomalg_Blade:$arg);
-  let results   = (outs Geomalg_Blade:$result);
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Value:$result);
 }
 
 def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   let description = [{
-    Construct a basis blade with a constant coefficient.
+    Construct a basis blade or zero with a constant coefficient.
   }];
 
   let arguments = (ins Builtin_FloatAttr:$coefficient);
-  let results   = (outs Geomalg_Blade:$result);
+  let results   = (outs Geomalg_Value:$result);
 
   let builders = [
     // Default to 1.0 for the coefficient.
@@ -330,7 +334,7 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   }];
 }
 
-def Geomalg_VersorProdOp : Geomalg_Op<"vprod"> {
+def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [ZeroAbsorb]> {
   let description = [{
     A versor is a product of invertible vectors and is,
     therefore invertible. However, not all versors are k-blades

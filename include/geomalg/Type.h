@@ -7,6 +7,11 @@
 
 namespace geomalg {
 inline
+bool isZero(mlir::Value V) {
+  return isa<geomalg::ZeroType>(V.getType());
+}
+
+inline
 bool isZero(mlir::Type T) {
   return isa<geomalg::ZeroType>(T);
 }

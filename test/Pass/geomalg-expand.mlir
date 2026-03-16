@@ -236,9 +236,7 @@ func.func @iprod_3_7(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
 // CHECK-LABEL: func.func @iprod_3_8
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<0>,
 // CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<3>)
-// CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[B]], [[a]])
-// CHECK-SAME: -> !geomalg.zero
-// CHECK-NEXT: geomalg.return [[aB]]
+// CHECK: geomalg.return {{.*}} : !geomalg.zero
 func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
                           -> !geomalg.unknown {
   %0 = "geomalg.iprod"(%arg1, %arg0)
@@ -330,6 +328,23 @@ func.func @gprod_2(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
             -> !geomalg.unknown {
   %0 = "geomalg.gprod"(%arg0, %arg1)
     : (!geomalg.blade<1>, !geomalg.blade<2>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// a B = a ⌋ B + a ∧ B
+// CHECK-LABEL: @gprod_3
+// CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<2>,
+// CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<1>)
+// CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[a]], [[B]])
+// CHECK: [[a_B:%[0-9]+]] = "geomalg.oprod"([[a]], [[B]])
+// CHECK: [[a_B_negate:%[0-9]+]] = "geomalg.negate"([[a_B]])
+// CHECK-SAME: -> !geomalg.blade<3>
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aB]], [[a_B_negate]])
+// CHECK: geomalg.return [[SUM0]]
+func.func @gprod_3(%arg0: !geomalg.blade<2>, %arg1: !geomalg.blade<1>)
+            -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%arg0, %arg1)
+    : (!geomalg.blade<2>, !geomalg.blade<1>) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
 }
 
