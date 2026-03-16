@@ -742,13 +742,24 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   if (!L || !R || L.getGrade() != 1 || R.getGrade() != 1)
     return llvm::failure();
 
+  // DotResult ∈ {-1, 0, 1}
   int DotResult = Metric.dotProduct(L.getBladeTag(), R.getBladeTag());
 
   if (DotResult == 0)
     return replaceWithZero(Rewriter, LC);
 
-  auto BT = geomalg::BladeType::get(getContext(), 0); // Scalar
-  Rewriter.replaceOpWithNewOp<geomalg::BladeOp>(LC, BT, DotResult);
+  // Cast both operands to scalar and negate if the result was -1.
+  mlir::Type ScalarT = geomalg::BladeType::get(getContext(), 0);
+  mlir::Value CastL = geomalg::CastOp::create(Rewriter, Loc, ScalarT, LHS);
+  mlir::Value CastR = geomalg::CastOp::create(Rewriter, Loc, ScalarT, RHS);
+  if (DotResult == -1) {
+    mlir::Value Result = geomalg::InnerProdOp::create(
+        Rewriter, Loc, CastL, CastR);
+    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(LC, ScalarT, Result);
+  } else {
+    assert(DotResult == 1);
+    Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(LC, CastL, CastR);
+  }
   return llvm::success();
 }
 
