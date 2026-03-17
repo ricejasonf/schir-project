@@ -1,7 +1,9 @@
 #include "geomalg/Geomalg.td"
 
+// DEPRECATED None of this is used any more. It was more problems than it was worth.
+
 // The sum of a single value is just that value.
-Pattern => replace op<geomalg.sum>(SingleArg: Value) with SingleArg;
+//Pattern => replace op<geomalg.sum>(SingleArg: Value) with SingleArg;
 
 Constraint HasOneUse(value: Value) [{
   return llvm::success(value.hasOneUse());
@@ -16,9 +18,9 @@ Constraint Distributive(operation: Op<>) [{
 }];
 
 // Collapse unnecessary sum expansions.
-Pattern {
-  let root = op<geomalg.sum>(values: ValueRange);
-  let result = root.result;
-  HasOneUse(result);
-  replace op<geomalg.expand>(result) with values;
-}
+//Pattern {
+//  let root = op<geomalg.sum>(values: ValueRange);
+//  let result = root.result;
+//  HasOneUse(result);
+//  replace op<geomalg.expand>(result) with values;
+//}

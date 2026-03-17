@@ -39,10 +39,8 @@ expandMultivector(mlir::PatternRewriter& Rewriter, mlir::Value MV) {
   assert(isa<geomalg::MultivectorType>(MV.getType()) &&
       "expecting multivector type or unknown defined by sum");
   // Check if we can hijack the operands of the defining sum if any.
-  if (geomalg::SumOp OrigSumOp = MV.getDefiningOp<geomalg::SumOp>()) {
-    if (MV.hasOneUse())
-      return OrigSumOp.getArgs();
-  }
+  if (geomalg::SumOp OrigSumOp = MV.getDefiningOp<geomalg::SumOp>())
+    return OrigSumOp.getArgs();
 
   // Prevent duplicate ExpandOps.
   geomalg::ExpandOp ExpandOp;
@@ -51,7 +49,7 @@ expandMultivector(mlir::PatternRewriter& Rewriter, mlir::Value MV) {
         return llvm::isa<geomalg::ExpandOp>(Op);
       });
   if (ExpandOpItr != MV.getUsers().end()) {
-    ExpandOp = llvm::cast<geomalg::ExpandOp>(*ExpandOpItr);
+    ExpandOp = cast<geomalg::ExpandOp>(*ExpandOpItr);
   } else {
     // Ensure SSA dominance by inserting as "early" as possible.
     mlir::OpBuilder::InsertionGuard IG(Rewriter);
@@ -279,6 +277,22 @@ replaceWithZero(mlir::PatternRewriter& Rewriter,
   return llvm::success();
 }
 
+// Peel of a basis vector from a basis blade.
+static std::pair<mlir::Value, mlir::Value>
+factorBlade(mlir::PatternRewriter& Rewriter, mlir::Value V) {
+  mlir::Location Loc = V.getLoc();
+  auto BT = cast<geomalg::BladeType>(V.getType());
+  if (!BT.isCanonical()) {
+    BT = BT.getCanonicalType();
+    V = geomalg::NegateOp::create(Rewriter, Loc, BT, V);
+  }
+  assert(BT.getGrade() > 1 && "prevent idempotent rewrite");
+  auto [Type_a, Type_B] = BT.factor();
+  mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 1.0);
+  mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, V);
+  return {a, B};
+}
+
 llvm::LogicalResult InferFuncType::matchAndRewrite(
     mlir::func::FuncOp FuncOp,
     mlir::PatternRewriter& Rewriter) const {
@@ -321,6 +335,28 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
 
   mlir::Location Loc = Op.getLoc();
 
+  if (Op.getArgs().size() == 0)
+    return replaceWithZero(Rewriter, Op);
+
+  // Sum of single operand can be elided safely.
+  if (Op.getArgs().size() == 1) {
+    Rewriter.replaceOp(Op, Op.getArgs().front());
+    return llvm::success();
+  }
+
+  // Replace unnecessary ExpandOps. It is necessary that the operands
+  // represent the same values as the results they are replacing.
+  bool DidReplaceAnyExpands = false;
+  for (mlir::OpOperand& OO : Op.getResult().getUses()) {
+    if (auto ExpandOp = dyn_cast<geomalg::ExpandOp>(OO.getOwner())) {
+      Rewriter.replaceOp(ExpandOp, Op.getOperands());
+      DidReplaceAnyExpands = true;
+    }
+  }
+
+  if (DidReplaceAnyExpands)
+    return llvm::success();
+
   // Collect Values unnesting (directly nested) sums,
   // negating noncanical blades, and discarding Zeros.
   // Note some of these maybe still be multivectors.
@@ -361,17 +397,6 @@ llvm::LogicalResult
 Distribute::matchAndRewrite(mlir::Operation* Op,
                             mlir::PatternRewriter& Rewriter) const {
   mlir::MLIRContext* Ctx = getContext();
-
-  // FIXME I think we moved removing Zeros in ExpandSum.
-  // Match any Zero operand.
-  bool HasZero = llvm::any_of(Op->getOperands(), [](mlir::Value Operand) {
-      return isa<geomalg::ZeroType>(Operand.getType());
-    });
-  if (HasZero) {
-    // Replace entire operation with zero sum.
-    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(Op, mlir::ValueRange());
-    return llvm::success();
-  }
 
   // Match the first Multivector operand.
   auto Itr = llvm::find_if(Op->getOpOperands(), [](mlir::OpOperand& Operand) {
@@ -509,20 +534,36 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
     return llvm::success();
   }
 
+  // B^ a = -a ⌋ B + a ∧ B
+  // B a = a ⌋ B - a ∧ B  (if B^ = -B)
+  if (R.getGrade() == 1) {
+    mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, RHS, LHS);
+    mlir::Value NewWP = geomalg::OuterProdOp::create(Rewriter, Loc, RHS, LHS);
+    if (L.shouldInvoNegate())
+      NewWP = geomalg::NegateOp::create(Rewriter, Loc, NewWP.getType(), NewWP);
+    else
+      NewLC = geomalg::NegateOp::create(Rewriter, Loc, NewLC.getType(), NewLC);
+    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(GP, NewLC, NewWP);
+    return llvm::success();
+  }
+
+  llvm_unreachable("FIXME Need test case that covers this.");
   // Factor the LHS blade using
   // a ∧ B = 1/2 (a B + B^ a)
-  auto [Type_a, Type_B] = L.factor();
-  mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a);
-  mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, LHS);
-  mlir::Value Half = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 0.5f);
+  auto [a, B] = factorBlade(Rewriter, LHS);
   mlir::Value B_invo;
-  if (Type_B.shouldInvoNegate())
-    B_invo = geomalg::NegateOp::create(Rewriter, Loc, Type_B, B);
+  if (cast<geomalg::BladeType>(B.getType()).shouldInvoNegate())
+    B_invo = geomalg::NegateOp::create(Rewriter, Loc, B.getType(), B);
   mlir::Value GP1 = geomalg::GeomProdOp::create(Rewriter, Loc, a, B);
   mlir::Value GP2 = geomalg::GeomProdOp::create(Rewriter, Loc, B_invo, a);
   mlir::Value Sum = geomalg::SumOp::create(Rewriter, Loc, GP1, GP2);
+
   // Use the left contraction for scalar multiplication.
+  auto ScalarT = geomalg::BladeType::get(getContext(), 0);
+  mlir::Value Two = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, 2.0f);
+  mlir::Value Half = geomalg::InverseOp::create(Rewriter, Loc, Two);
   mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, Half, Sum);
+
   Rewriter.replaceOpWithNewOp<geomalg::GeomProdOp>(GP, NewLC, RHS);
 
   return llvm::success();
@@ -622,10 +663,8 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     // Factor the RHS blade.
     // a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
     // Note we used the antisymmetric property for the second term
-    auto [Type_b, Type_C] = R.factor();
     mlir::Value a = LHS;
-    mlir::Value b = geomalg::BladeOp::create(Rewriter, Loc, Type_b);
-    mlir::Value C = geomalg::CastOp::create(Rewriter, Loc, Type_C, RHS);
+    auto [b, C] = factorBlade(Rewriter, RHS);
     // (a ⌋ b)
     mlir::Value ab = geomalg::InnerProdOp::create(Rewriter, Loc, a, b);
     // (a ⌋ C)
@@ -644,9 +683,7 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   if (L.getGrade() > 1 && R.getGrade() > 0) {
     // Factor the LHS blade.
     // (a ∧ B) ⌋ C = a ⌋ (B ⌋ C)
-    auto [Type_a, Type_B] = L.factor();
-    auto a = geomalg::BladeOp::create(Rewriter, Loc, Type_a);
-    auto B = geomalg::CastOp::create(Rewriter, Loc, Type_B, LHS);
+    auto [a, B] = factorBlade(Rewriter, LHS);
     auto C = RHS;
     // (B ⌋ C)
     auto BC = geomalg::InnerProdOp::create(Rewriter, Loc, B, C);

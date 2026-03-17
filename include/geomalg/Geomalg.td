@@ -302,7 +302,9 @@ def Geomalg_CastOp : Geomalg_Op<"cast", [ZeroAbsorb]> {
   let description = [{
     Cast a blade to another blade type that is typically
     used to factor out a basis vector from a k-blade.
-    To change the sign, see NegateOp.
+    This operation does not change the the value (scalar coefficient).
+    When factoring a noncanonical wedge product, negate will
+    be used in addition to this operation.
   }];
 
   let arguments = (ins Geomalg_Value:$arg);

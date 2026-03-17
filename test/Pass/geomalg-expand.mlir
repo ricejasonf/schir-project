@@ -4,8 +4,9 @@
 
 module {
 // CHECK-LABEL: func.func @sum_0()
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"()
-// CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.zero
+// CHECK-NOT: "geomalg.sum"
+// CHECK: [[ZERO:%[0-9]+]] = "geomalg.blade"()
+// CHECK: geomalg.return [[ZERO]] : !geomalg.zero
 func.func @sum_0() -> !geomalg.zero {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.sum"(%0, %0) : (!geomalg.zero, !geomalg.zero) -> !geomalg.zero
@@ -44,8 +45,8 @@ func.func @sum_3(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
 }
 
 // CHECK-LABEL: func.func @distribute_0()
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"()
-// CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.zero
+// CHECK-NEXT: [[ZERO:%[0-9]+]] = "geomalg.blade"()
+// CHECK-NEXT: geomalg.return [[ZERO]] : !geomalg.zero
 func.func @distribute_0() -> !geomalg.zero {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.negate"(%0) : (!geomalg.zero) -> !geomalg.zero
@@ -86,8 +87,8 @@ func.func @distribute_2(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
 // Note we are not using a metric so iprod does not expand for 1-blades.
 // CHECK-LABEL: func.func @distribute_b_0
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>)
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"() : () -> !geomalg.zero
-// CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.zero
+// CHECK-NEXT: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{{.*}}> : () -> !geomalg.zero
+// CHECK-NEXT: geomalg.return [[ZERO]] : !geomalg.zero
 func.func @distribute_b_0(%arg0: !geomalg.blade<1>) -> !geomalg.unknown {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.iprod"(%0, %arg0)
@@ -97,8 +98,8 @@ func.func @distribute_b_0(%arg0: !geomalg.blade<1>) -> !geomalg.unknown {
 
 // CHECK-LABEL: func.func @distribute_b_1
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>)
-// CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"() : () -> !geomalg.zero
-// CHECK-NEXT: geomalg.return [[SUM0]] : !geomalg.zero
+// CHECK-NEXT: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{{.*}}> : () -> !geomalg.zero
+// CHECK-NEXT: geomalg.return [[ZERO]] : !geomalg.zero
 func.func @distribute_b_1(%arg0: !geomalg.blade<1>) -> !geomalg.unknown {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.iprod"(%arg0, %0)
@@ -381,10 +382,10 @@ func.func @inverse_k1(%arg0: !geomalg.blade<1>)
 // (a)⁻¹ = (a ⌋ a)⁻¹ (-1)^{k (k - 1) / 2} a
 // For k-blade and k = 2,
 // TODO Test expansion of the blade with iprod or make it not expand at all
-//      for unknown metric.
+//      for this test.
 // CHECK-LABEL: @inverse_k2
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<3>)
-// COM-CHECK: [[NEG_a:%[0-9]+]] = "geomalg.negate"([[a]])
+// CHECK: [[NEG_a:%[0-9]+]] = "geomalg.negate"([[a]])
 // COM-CHECK: [[MAG_a:%[0-9]+]] = "geomalg.iprod"([[a]], [[a]])
 // COM-CHECK-SAME: -> !geomalg.blade<0>
 // COM-CHECK: [[INV_MAG_a:%[0-9]+]] = "geomalg.inverse"([[MAG_a]])
@@ -402,22 +403,23 @@ func.func @inverse_k2(%arg0: !geomalg.blade<3>) -> !geomalg.blade<3> {
 // CHECK-LABEL: @inverse_v1
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK: [[EX:%[0-9]+]]:3 = "geomalg.expand"([[a]])
-// CHECK: [[I1:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#0)
-// CHECK: [[I2:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#1)
-// CHECK: [[I3:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#2)
-// CHECK: [[I4:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#0)
-// CHECK: [[I5:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#1)
-// CHECK: [[I6:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#2)
-// CHECK: [[I7:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#0)
-// CHECK: [[I8:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#1)
-// CHECK: [[I9:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#2)
-// CHECK: [[MAG_a:[%0-9]+]] = "geomalg.sum"(
-// CHECK-SAME: [[I1]], [[I2]], [[I3]], [[I4]], [[I5]],
-// CHECK-SAME: [[I6]], [[I7]], [[I8]], [[I9]])
-// CHECK: [[INV_MAG_a:%[0-9]+]] = "geomalg.inverse"([[MAG_a]])
-// CHECK: [[INV_a1:%[0-9]+]] = "geomalg.iprod"([[INV_MAG_a]], [[EX]]#0)
-// CHECK: [[INV_a2:%[0-9]+]] = "geomalg.iprod"([[INV_MAG_a]], [[EX]]#1)
-// CHECK: [[INV_a3:%[0-9]+]] = "geomalg.iprod"([[INV_MAG_a]], [[EX]]#2)
+// CHECK: [[I00:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#0)
+// CHECK: [[I01:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#1)
+// CHECK: [[I02:%[0-9]+]] = "geomalg.iprod"([[EX]]#0, [[EX]]#2)
+// CHECK: [[I10:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#0)
+// CHECK: [[I11:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#1)
+// CHECK: [[I12:%[0-9]+]] = "geomalg.iprod"([[EX]]#1, [[EX]]#2)
+// CHECK: [[I20:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#0)
+// CHECK: [[I21:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#1)
+// CHECK: [[I22:%[0-9]+]] = "geomalg.iprod"([[EX]]#2, [[EX]]#2)
+// CHECK: [[DOT_a:[%0-9]+]] = "geomalg.sum"(
+// CHECK-SAME: [[I00]], [[I01]], [[I02]],
+// CHECK-SAME: [[I10]], [[I11]], [[I12]],
+// CHECK-SAME: [[I20]], [[I21]], [[I22]])
+// CHECK: [[INV_DOT_a:%[0-9]+]] = "geomalg.inverse"([[DOT_a]])
+// CHECK: [[INV_a1:%[0-9]+]] = "geomalg.iprod"([[INV_DOT_a]], [[EX]]#0)
+// CHECK: [[INV_a2:%[0-9]+]] = "geomalg.iprod"([[INV_DOT_a]], [[EX]]#1)
+// CHECK: [[INV_a3:%[0-9]+]] = "geomalg.iprod"([[INV_DOT_a]], [[EX]]#2)
 // CHECK: [[RESULT:%[0-9]+]] = "geomalg.sum"(
 // CHECK-SAME: [[INV_a1]], [[INV_a2]], [[INV_a3]])
 // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
