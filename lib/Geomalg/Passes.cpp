@@ -547,15 +547,20 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
     return llvm::success();
   }
 
-  llvm_unreachable("FIXME Need test case that covers this.");
-  // Factor the LHS blade using
-  // a ∧ B = 1/2 (a B + B^ a)
+  // Factor the LHS blade using a ∧ B = 1/2 (a B + B^ a).
+  // With associativity we then get,
+  // (a ∧ B) C = 1/2 (a (B C) + B^ (a C))
   auto [a, B] = factorBlade(Rewriter, LHS);
+  mlir::Value C = RHS;
   mlir::Value B_invo;
   if (cast<geomalg::BladeType>(B.getType()).shouldInvoNegate())
     B_invo = geomalg::NegateOp::create(Rewriter, Loc, B.getType(), B);
-  mlir::Value GP1 = geomalg::GeomProdOp::create(Rewriter, Loc, a, B);
-  mlir::Value GP2 = geomalg::GeomProdOp::create(Rewriter, Loc, B_invo, a);
+  else
+    B_invo = B;
+  mlir::Value BC = geomalg::GeomProdOp::create(Rewriter, Loc, B, C);
+  mlir::Value GP1 = geomalg::GeomProdOp::create(Rewriter, Loc, a, BC);
+  mlir::Value aC = geomalg::GeomProdOp::create(Rewriter, Loc, a, C);
+  mlir::Value GP2 = geomalg::GeomProdOp::create(Rewriter, Loc, B_invo, aC);
   mlir::Value Sum = geomalg::SumOp::create(Rewriter, Loc, GP1, GP2);
 
   // Use the left contraction for scalar multiplication.
@@ -563,8 +568,7 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   mlir::Value Two = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, 2.0f);
   mlir::Value Half = geomalg::InverseOp::create(Rewriter, Loc, Two);
   mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, Half, Sum);
-
-  Rewriter.replaceOpWithNewOp<geomalg::GeomProdOp>(GP, NewLC, RHS);
+  Rewriter.replaceOp(GP, NewLC);
 
   return llvm::success();
 }

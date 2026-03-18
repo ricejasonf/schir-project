@@ -2,7 +2,8 @@
 // RUN:--geomalg-expand="enable-patterns=ExpandVP" %s \
 // RUN:| FileCheck %s
 
-// RUN: geomalg-opt --geomalg-expand="metric=cga" --cse %s
+// RUN: geomalg-opt --geomalg-expand="metric=cga" --cse --canonicalize %s \
+// RUN:| FileCheck --check-prefix="CGA"  %s
 
 // CHECK-LABEL: func.func @versor_prod_0
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
@@ -51,3 +52,16 @@ func.func @versor_prod_2(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
       -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
 }
+
+// This also tests the geometric product on basis blades
+// with grade k > 1.
+// CGA-LABEL: func.func @versor_prod_3
+// CGA-CHECK: return %{{[0-9]+}} : !geomalg.blade<4>
+func.func @versor_prod_3(%arg0: !geomalg.blade<2147483651>,
+                         %arg1: !geomalg.blade<4>)
+                          -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg1, %arg0)
+    : (!geomalg.blade<4>, !geomalg.blade<2147483651>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
