@@ -18,6 +18,9 @@ class Distributive : public mlir::OpTrait::TraitBase<T, Distributive>
 template <typename T>
 class ZeroAbsorb : public mlir::OpTrait::TraitBase<T, ZeroAbsorb>
 { };
+template <typename T>
+class IsMul : public mlir::OpTrait::TraitBase<T, IsMul>
+{ };
 }  // namespace
 
 // #pragma clang diagnostic push

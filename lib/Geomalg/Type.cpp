@@ -40,6 +40,24 @@ mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {
     : mlir::Type(geomalg::BladeType::get(MLIRContext, Tag.getTag()));
 }
 
+// This may return a noncanonical blade type.
+mlir::Type inferOuterProdResult(mlir::Value LHS, mlir::Value RHS) {
+  mlir::MLIRContext* Ctx = LHS.getContext();
+  mlir::Type TypeA = LHS.getType();
+  mlir::Type TypeB = RHS.getType();
+  auto A = dyn_cast<geomalg::BladeType>(TypeA);
+  auto B = dyn_cast<geomalg::BladeType>(TypeB);
+  if (A && B) {
+    // This can return a "noncanonical" blade (ie not sorted order basis blades.)
+    std::array<geomalg::BladeType, 2> BladeTypes{{A, B}};
+    return geomalg::createBladeType(BladeTypes);
+  } else if (geomalg::isZero(TypeA) || geomalg::isZero(TypeB)) {
+    return geomalg::ZeroType::get(Ctx);
+  } else {
+    return geomalg::UnknownType::get(Ctx);
+  }
+}
+
 // Create a type for a multivector.
 // The result may be a BladeType for a single term.
 // Do not combine blades equivalent by antisymmetric property

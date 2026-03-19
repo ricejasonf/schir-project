@@ -3,22 +3,24 @@
 #include <geomalg/Passes.h>
 #include <geomalg/Type.h>
 #include <llvm/ADT/STLExtras.h>
+#include <mlir/IR/Dominance.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Parser/Parser.h>
+#include <mlir/Transforms/CSE.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <cassert>
 #include <string>
 
 // Generated stuff
 namespace geomalg {
-#define GEN_PASS_DEF_FUNCINSTPASS
 #define GEN_PASS_DEF_EXPANDPASS
+#define GEN_PASS_DEF_SIMPLIFYPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
-namespace geomalg::transforms {
-#include "geomalg/Transforms/Expand.h.inc"
+namespace geomalg::simplify {
+#include "geomalg/Transforms/Simplify.h.inc"
 }
 
 namespace geomalg {
@@ -62,6 +64,7 @@ expandMultivector(mlir::PatternRewriter& Rewriter, mlir::Value MV) {
   return ExpandOp.getResults();
 }
 
+using namespace geomalg;
 namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
@@ -76,22 +79,14 @@ public:
   llvm::LogicalResult initialize(mlir::MLIRContext*) override;
 };
 
-struct FuncInstPass : public geomalg::impl::FuncInstPassBase<FuncInstPass> {
+class SimplifyPass : public geomalg::impl::SimplifyPassBase<SimplifyPass> {
+  using Base = geomalg::impl::SimplifyPassBase<SimplifyPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
   void runOnOperation() override;
-};
-
-// Rewriters for type inference.
-class InferFuncType
-  : public mlir::OpRewritePattern<mlir::func::FuncOp> {
-  using Base = mlir::OpRewritePattern<mlir::func::FuncOp>;
-  using Base::OpRewritePattern;
-
-  void initialize() {
-    setDebugName("InferFuncType");
-  }
-
-  llvm::LogicalResult matchAndRewrite(
-      mlir::func::FuncOp, mlir::PatternRewriter&) const override;
+  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
 };
 
 // Rewriters for expansion.
@@ -258,6 +253,38 @@ struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyMul : mlir::OpTraitRewritePattern<geomalg::IsMul> {
+  using Base = mlir::OpTraitRewritePattern<geomalg::IsMul>;
+  using Base::OpTraitRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyMul");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// For sorting operands within a block.
+auto compareBlockValues(mlir::Value A, mlir::Value B) -> bool {
+  // Return true if A < B.
+  if (auto BA = dyn_cast<mlir::BlockArgument>(A)) {
+    if (auto BB = dyn_cast<mlir::BlockArgument>(B))
+      return BA.getArgNumber() < BB.getArgNumber();
+    else
+      return true; // All block args precede opresults.
+  }
+  auto OA = cast<mlir::OpResult>(A);
+  if (auto OB = dyn_cast<mlir::OpResult>(B)) {
+    if (OA.getOwner() == OB.getOwner())
+      return OA.getResultNumber() < OA.getResultNumber();
+    else
+      return OA.getOwner()->isBeforeInBlock(OB.getOwner());
+  }
+  // B is a BlockArgument which precedes OpResult A.
+  return false;
+}
 }  // namespace
 
 static llvm::LogicalResult
@@ -277,6 +304,30 @@ replaceWithZero(mlir::PatternRewriter& Rewriter,
   return llvm::success();
 }
 
+// Create outer product and canonicalize the order of
+// operands negating the result the operands are swapped.
+// The result might not be directly of the OuterProdOp.
+static mlir::Value
+createOuterProd(mlir::PatternRewriter& Rewriter,
+                mlir::Location Loc,
+                mlir::Value LHS, mlir::Value RHS) {
+  bool ShouldNegate = false;
+  mlir::Type ResultT = inferOuterProdResult(LHS, RHS);
+  if (auto BT = dyn_cast<geomalg::BladeType>(ResultT)) {
+    if (!BT.isCanonical()) {
+      assert(ResultT != inferOuterProdResult(RHS, LHS));
+      ShouldNegate = true;
+      ResultT = BT.getCanonicalType();
+      std::swap(LHS, RHS);
+    }
+  }
+  mlir::Operation* Op = geomalg::OuterProdOp::create(Rewriter, Loc,
+                                                     ResultT, LHS, RHS);
+  if (ShouldNegate)
+    Op = geomalg::NegateOp::create(Rewriter, Loc, Op->getResult(0));
+  return Op->getResult(0);
+}
+
 // Peel of a basis vector from a basis blade.
 static std::pair<mlir::Value, mlir::Value>
 factorBlade(mlir::PatternRewriter& Rewriter, mlir::Value V) {
@@ -291,37 +342,6 @@ factorBlade(mlir::PatternRewriter& Rewriter, mlir::Value V) {
   mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 1.0);
   mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, V);
   return {a, B};
-}
-
-llvm::LogicalResult InferFuncType::matchAndRewrite(
-    mlir::func::FuncOp FuncOp,
-    mlir::PatternRewriter& Rewriter) const {
-  // Assume Body has a single block.
-  mlir::Block* Body = !FuncOp.getBody().empty()
-    ? &FuncOp.getBody().front() : nullptr;
-
-  geomalg::ReturnOp ReturnOp;
-  if (Body)
-    ReturnOp = dyn_cast_if_present<geomalg::ReturnOp>(Body->getTerminator());
-
-  if (!ReturnOp || ReturnOp.getOperands().size() != 1 ||
-      FuncOp.getResultTypes().size() != 1) {
-    return llvm::failure();
-  }
-
-  // Finally infer the function return type by the operand
-  // of the ReturnOp.
-  mlir::Type OrigResultTy = FuncOp.getResultTypes().front();
-  mlir::Type ReturnTy = ReturnOp.getOperands().front().getType();
-  if (isUnknown(OrigResultTy) && !isUnknown(ReturnTy)) {
-    // Replace the function type.
-    mlir::FunctionType NewFT = mlir::FunctionType::get(
-        FuncOp.getContext(), FuncOp.getArgumentTypes(), ReturnTy);
-    Rewriter.startOpModification(FuncOp);
-    FuncOp.setFunctionType(NewFT);
-    Rewriter.finalizeOpModification(FuncOp);
-  }
-  return llvm::success();
 }
 
 llvm::LogicalResult
@@ -357,8 +377,7 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
   if (DidReplaceAnyExpands)
     return llvm::success();
 
-  // Collect Values unnesting (directly nested) sums,
-  // negating noncanical blades, and discarding Zeros.
+  // Collect Values unnesting (directly nested) sums discarding Zeros.
   // Note some of these maybe still be multivectors.
   llvm::SmallVector<mlir::Value, 8> Values;
   for (mlir::Value V : Op.getOperands()) {
@@ -367,8 +386,6 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
     } else if (isa<MultivectorType>(V.getType())) {
       llvm::append_range(Values, expandMultivector(Rewriter, V));
     } else if (auto BT = dyn_cast<BladeType>(V.getType())) {
-      if (!BT.isCanonical())
-        V = geomalg::NegateOp::create(Rewriter, Loc, BT.getCanonicalType(), V);
       Values.push_back(V);
     } else if (isa<UnknownType>(V.getType())) {
       Values.push_back(V);
@@ -529,7 +546,7 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   // a B = a ⌋ B + a ∧ B
   if (L.getGrade() == 1) {
     mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, LHS, RHS);
-    mlir::Value NewWP = geomalg::OuterProdOp::create(Rewriter, Loc, LHS, RHS);
+    mlir::Value NewWP = createOuterProd(Rewriter, Loc, LHS, RHS);
     Rewriter.replaceOpWithNewOp<geomalg::SumOp>(GP, NewLC, NewWP);
     return llvm::success();
   }
@@ -538,7 +555,7 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   // B a = a ⌋ B - a ∧ B  (if B^ = -B)
   if (R.getGrade() == 1) {
     mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, RHS, LHS);
-    mlir::Value NewWP = geomalg::OuterProdOp::create(Rewriter, Loc, RHS, LHS);
+    mlir::Value NewWP = createOuterProd(Rewriter, Loc, RHS, LHS);
     if (L.shouldInvoNegate())
       NewWP = geomalg::NegateOp::create(Rewriter, Loc, NewWP.getType(), NewWP);
     else
@@ -565,8 +582,7 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
 
   // Use the left contraction for scalar multiplication.
   auto ScalarT = geomalg::BladeType::get(getContext(), 0);
-  mlir::Value Two = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, 2.0f);
-  mlir::Value Half = geomalg::InverseOp::create(Rewriter, Loc, Two);
+  mlir::Value Half = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, 0.5f);
   mlir::Value NewLC = geomalg::InnerProdOp::create(Rewriter, Loc, Half, Sum);
   Rewriter.replaceOp(GP, NewLC);
 
@@ -674,9 +690,9 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     // (a ⌋ C)
     mlir::Value aC = geomalg::InnerProdOp::create(Rewriter, Loc, a, C);
     // ((a ⌋ b) ∧ C)
-    mlir::Value abC = geomalg::OuterProdOp::create(Rewriter, Loc, ab, C);
+    mlir::Value abC = createOuterProd(Rewriter, Loc, ab, C);
     // ((a ⌋ C) ∧ b)
-    mlir::Value aCb = geomalg::OuterProdOp::create(Rewriter, Loc, aC, b);
+    mlir::Value aCb = createOuterProd(Rewriter, Loc, aC, b);
     // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
     Rewriter.replaceOpWithNewOp<geomalg::SumOp>(LC, abC, aCb);
 
@@ -804,6 +820,90 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   return llvm::success();
 }
 
+template <typename T>
+auto GetDefiningOp = [](mlir::Value V) -> T {
+  return V.getDefiningOp<T>();
+};
+
+llvm::LogicalResult SimplifyMul::matchAndRewrite(
+    mlir::Operation* Op,
+    mlir::PatternRewriter& Rewriter) const {
+
+  mlir::ValueRange Operands = Op->getOperands();
+  auto GetDefiningMul = [](mlir::Value V) -> mlir::Operation* {
+    if (V.getDefiningOp() &&
+        V.getDefiningOp()->hasTrait<geomalg::IsMul>())
+      return V.getDefiningOp();
+    return nullptr;
+  };
+
+  if (isa<geomalg::CMulOp>(Op) &&
+      !llvm::any_of(Operands, GetDefiningMul) &&
+      !llvm::any_of(Operands, GetDefiningOp<geomalg::CastOp>) &&
+      llvm::count_if(Operands, GetDefiningOp<geomalg::BladeOp>) <= 1)
+
+    return llvm::failure();
+
+  // Collect operands.
+  llvm::SmallVector<mlir::Value, 8> NewOperands;
+  for (mlir::Value V : Operands) {
+    if (mlir::Operation* VOp = GetDefiningMul(V))
+      llvm::append_range(NewOperands, VOp->getOperands());
+    else
+      NewOperands.push_back(V);
+  }
+
+  // Fold all results of NegateOp and BladeOp.
+  unsigned NegateCount = 0;
+  float Accum = 1.0f;
+  for (mlir::Value& V : NewOperands) {
+    if (auto NOp = V.getDefiningOp<geomalg::NegateOp>()) {
+      ++NegateCount;
+      // Remove the use of the Negate.
+      V = NOp.getArg();
+    } else if (auto BOp = V.getDefiningOp<geomalg::BladeOp>()) {
+      // Since float powers of 2 are closed under multiplication
+      // and represented exactly, they are associative and commutative.
+      int n = 0;
+      float m = std::frexp(BOp.getFloat(), &n);
+      float m_abs = std::abs(m);
+      if (m == 0.5f) {
+        Accum *= m;
+      } else if (m == -0.5f) {
+        Accum *= -m;
+        ++NegateCount;
+      }
+      // Mark to remove from list.
+      V = mlir::Value();
+    } else if (auto COp = V.getDefiningOp<geomalg::CastOp>()) {
+      V = COp.getArg();
+    }
+  }
+
+  // Remove nulls.
+  llvm::erase(NewOperands, mlir::Value());
+
+  mlir::Location Loc = Op->getLoc();
+  // Create and push new BladeOp if needed.
+  if (Accum != 1.0f) {
+    mlir::Type ScalarT = geomalg::BladeType::get(getContext(), 0);
+    mlir::Value S = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, Accum);
+    NewOperands.insert(NewOperands.begin(), S);
+  }
+
+  // Sort for CSE.
+  llvm::stable_sort(NewOperands, compareBlockValues);
+
+  mlir::Type ResultT = Op->getResult(0).getType();
+  mlir::Operation* NewOp
+    = geomalg::CMulOp::create(Rewriter, Loc, ResultT, NewOperands);
+  if (NegateCount % 2 != 0)
+    NewOp = geomalg::NegateOp::create(Rewriter, Loc,
+                                      ResultT, NewOp->getResult(0));
+  Rewriter.replaceOp(Op, NewOp);
+  return llvm::success();
+}
+
 llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
@@ -819,7 +919,6 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
          UpdateInferredTypes>(Ctx);
   if (metric != geomalg::MetricKind::unknown)
     PS.add<ApplyMetric>(Ctx, geomalg::Metric::get(metric));
-  geomalg::transforms::populateGeneratedPDLLPatterns(PS);
   Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                         disabledPatterns,
                         enabledPatterns);
@@ -834,14 +933,33 @@ void ExpandPass::runOnOperation() {
     return signalPassFailure();
 }
 
-void FuncInstPass::runOnOperation() {
-  mlir::MLIRContext* Ctx = &getContext();
-  mlir::ModuleOp ModuleOp = getOperation();
-
+llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-  PS.add<InferFuncType>(Ctx);
+//  geomalg::simplify::populateGeneratedPDLLPatterns(PS);
+  PS.add<SimplifyMul
+         //SimplifyNegate,
+         //SimplifyInverse,
+         //GroupSums
+         >(Ctx);
+  Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                        disabledPatterns,
+                        enabledPatterns);
+  return llvm::success();
+}
 
-  if (llvm::failed(mlir::applyPatternsGreedily(ModuleOp, std::move(PS))))
+void SimplifyPass::runOnOperation() {
+  mlir::MLIRContext* Ctx = &getContext();
+  mlir::func::FuncOp FuncOp = getOperation();
+
+  // Run CSE.
+  {
+    mlir::IRRewriter Rewriter(Ctx);
+    mlir::DominanceInfo DI;
+    mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp);
+  }
+
+  // Run Patterns.
+  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
     return signalPassFailure();
 }

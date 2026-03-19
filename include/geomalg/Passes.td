@@ -24,7 +24,7 @@ def MetricOption :
            [{geomalg::getMetricKindEnumValues()}]>;
 
 def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::func::FuncOp"> {
-  let summary = "expand and simplify operations for geometric algebra";
+  let summary = "expand operations for geometric algebra";
   let description = [{
     Expand and simplify Geomalg operations by distribution of multilinear
     operations over multivectors and expansion of k-blades until they are
@@ -36,17 +36,20 @@ def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::func::FuncOp"> {
   let options =  [MetricOption] # RewritePassUtils.options;
 }
 
-def FuncInstPass : GeomalgPass<"geomalg-func-inst", "mlir::ModuleOp"> {
-  let summary = "Deduce function return types and argument types";
+def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
+  let summary = "Simplify the geomalg expanded operations.";
   let description = [{
-    Some operations use placeholder types until certain configurations
-    are known (e.g. a metric). This propagates to function return types
-    so we must alter the function type in a module pass. This will also
-    replace geomalg.return with func.return.
+    Consolidate multiplications and negations, and group sums
+    by type folding blade constants. The resulting IR should consist only of:
 
-    NOTE: We are not currently using placeholder types as arguments,
-          but should that be necessary, this is the place to put that.
+      expand, cmul, inverse, sum, negate, and possibly blade,
+
+    but blade constants will likely be folded and/or cancelled.
+
+    After this pass, blade types only indicate the values' destination in
+    a the storage of a multivector.
   }];
+  let options = RewritePassUtils.options;
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD

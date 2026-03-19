@@ -91,21 +91,8 @@ geomalg::OuterProdOp::inferReturnTypes(
   if (Operands.size() != 2)
     return llvm::failure();
 
-  mlir::Type TypeA = Operands[0].getType();
-  mlir::Type TypeB = Operands[1].getType();
-  auto A = dyn_cast<geomalg::BladeType>(TypeA);
-  auto B = dyn_cast<geomalg::BladeType>(TypeB);
-  if (A && B) {
-    // This can return a "noncanonical" blade (ie not sorted order basis blades.)
-    std::array<geomalg::BladeType, 2> BladeTypes{{A, B}};
-    mlir::Type ResultType = geomalg::createBladeType(BladeTypes);
-    InferredTypes.push_back(ResultType);
-  } else if (geomalg::isZero(TypeA) || geomalg::isZero(TypeB)) {
-    InferredTypes.push_back(geomalg::ZeroType::get(Ctx));
-  } else {
-    InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
-  }
-
+  mlir::Type ResultT = geomalg::inferOuterProdResult(Operands[0], Operands[1]);
+  InferredTypes.push_back(ResultT);
   return llvm::success();
 }
 

@@ -47,6 +47,8 @@ mlir::Type getTypeFromSum(mlir::Type A, mlir::Type B);
 mlir::Type
 createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes);
 
+mlir::Type inferOuterProdResult(mlir::Value LHS, mlir::Value RHS);
+
 // Create a canonicalized type for a multivector.
 // The result may be a BladeType for a single term.
 // Expect that BladeTypes is a nonempty list of BladeTypes.

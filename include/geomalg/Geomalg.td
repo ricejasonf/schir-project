@@ -30,6 +30,9 @@ def Distributive : Geomalg_Trait<"Distributive">;
 // If any operand is Zero, result is Zero.
 def ZeroAbsorb : Geomalg_Trait<"ZeroAbsorb">;
 
+// If operation multiplies scalars convertible to CMul
+def IsMul : Geomalg_Trait<"IsMul">;
+
 def InferredResult : DeclareOpInterfaceMethods<InferTypeOpInterface>;
 
 // Types
@@ -206,7 +209,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
 }
 
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
-      [Distributive, ZeroAbsorb, InferredResult]> {
+      [Distributive, ZeroAbsorb, InferredResult, IsMul]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -217,7 +220,8 @@ def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_InnerProdOp : Geomalg_Op<"iprod", [Distributive, ZeroAbsorb]> {
+def Geomalg_InnerProdOp : Geomalg_Op<"iprod",
+      [Distributive, ZeroAbsorb, IsMul]> {
   let description = [{
     Map two multivectors to a scalar by their interior product.
   }];
@@ -285,7 +289,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Distributive, ZeroAbsorb]> {
+      [Distributive, ZeroAbsorb, SameOperandsAndResultType]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
@@ -311,6 +315,19 @@ def Geomalg_CastOp : Geomalg_Op<"cast", [ZeroAbsorb]> {
   let results   = (outs Geomalg_Value:$result);
 }
 
+def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {
+  let description = [{
+    Multiply the coefficients of multiple blades to produce
+    a scalar multiple of some other blade.
+
+    This is typically generated after applying a metric and
+    replaces both oprod and iprod along with any casts.
+  }];
+
+  let arguments = (ins Variadic<Geomalg_Blade>:$arg);
+  let results   = (outs Geomalg_Blade:$result);
+}
+
 def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   let description = [{
     Construct a basis blade or zero with a constant coefficient.
@@ -332,6 +349,11 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
     bool isOne() {
       llvm::APFloat C = getCoefficient().getValue();
       return C.bitwiseIsEqual(llvm::APFloat::getOne(C.getSemantics()));
+    }
+
+    float getFloat() {
+      llvm::APFloat C = getCoefficient().getValue();
+      return C.convertToFloat();
     }
   }];
 }

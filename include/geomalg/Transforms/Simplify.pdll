@@ -1,0 +1,8 @@
+#include "geomalg/Geomalg.td"
+
+//Pattern {
+//  let root = op<geomalg.sum>(values: ValueRange);
+//  let result = root.result;
+//  HasOneUse(result);
+//  replace op<geomalg.expand>(result) with values;
+//}
