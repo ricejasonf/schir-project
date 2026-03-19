@@ -89,6 +89,27 @@ public:
   llvm::LogicalResult initialize(mlir::MLIRContext*) override;
 };
 
+// CSE Rewriter.. why is this not a thing in upstream?
+
+struct CSEPatternRewrite
+    : mlir::OpRewritePattern<mlir::func::FuncOp> {
+  using Base = mlir::OpRewritePattern<mlir::func::FuncOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("CSEPatternRewrite");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::func::FuncOp FuncOp,
+      mlir::PatternRewriter& Rewriter) const override
+  {
+    mlir::DominanceInfo DI;
+    mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp);
+    return llvm::success();
+  }
+};
+
 // Rewriters for expansion.
 
 struct ExpandSum : mlir::OpRewritePattern<geomalg::SumOp> {
@@ -277,8 +298,8 @@ auto compareBlockValues(mlir::Value A, mlir::Value B) -> bool {
   }
   auto OA = cast<mlir::OpResult>(A);
   if (auto OB = dyn_cast<mlir::OpResult>(B)) {
-    if (OA.getOwner() == OB.getOwner())
-      return OA.getResultNumber() < OA.getResultNumber();
+    if (OA.getDefiningOp() == OB.getDefiningOp())
+      return OA.getResultNumber() < OB.getResultNumber();
     else
       return OA.getOwner()->isBeforeInBlock(OB.getOwner());
   }
@@ -313,18 +334,17 @@ createOuterProd(mlir::PatternRewriter& Rewriter,
                 mlir::Value LHS, mlir::Value RHS) {
   bool ShouldNegate = false;
   mlir::Type ResultT = inferOuterProdResult(LHS, RHS);
+  mlir::Type CResultT = ResultT; // canonical result type
   if (auto BT = dyn_cast<geomalg::BladeType>(ResultT)) {
     if (!BT.isCanonical()) {
-      assert(ResultT != inferOuterProdResult(RHS, LHS));
       ShouldNegate = true;
-      ResultT = BT.getCanonicalType();
-      std::swap(LHS, RHS);
+      CResultT = BT.getCanonicalType();
     }
   }
   mlir::Operation* Op = geomalg::OuterProdOp::create(Rewriter, Loc,
                                                      ResultT, LHS, RHS);
   if (ShouldNegate)
-    Op = geomalg::NegateOp::create(Rewriter, Loc, Op->getResult(0));
+    Op = geomalg::NegateOp::create(Rewriter, Loc, CResultT, Op->getResult(0));
   return Op->getResult(0);
 }
 
@@ -747,7 +767,7 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   mlir::Value Reverse;
   if (BT) {
     Reverse = BT.shouldReverseNegate()
-      ? geomalg::NegateOp::create(Rewriter, Loc, BT, Arg)
+      ? geomalg::NegateOp::create(Rewriter, Loc, Arg.getType(), Arg)
       : Arg;
   } else {
     Reverse = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
@@ -778,9 +798,9 @@ llvm::LogicalResult ExpandReverse::matchAndRewrite(
     return llvm::failure();
 
   if (BT.shouldReverseNegate())
-    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(RevOp, BT, RevOp.getArg());
+    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(RevOp, Arg.getType(), Arg);
   else
-    Rewriter.replaceOp(RevOp, RevOp.getArg());
+    Rewriter.replaceOp(RevOp, Arg);
 
   return llvm::success();
 }
@@ -812,7 +832,8 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
   if (DotResult == -1) {
     mlir::Value Result = geomalg::InnerProdOp::create(
         Rewriter, Loc, CastL, CastR);
-    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(LC, ScalarT, Result);
+    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(LC,
+                                  Result.getType(), Result);
   } else {
     assert(DotResult == 1);
     Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(LC, CastL, CastR);
@@ -894,13 +915,25 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
   // Sort for CSE.
   llvm::stable_sort(NewOperands, compareBlockValues);
 
+  // Absorb the result used only by a single NegateOp so we do
+  // not end up yielding a noncanonical blade type.
+  mlir::Operation* OpToReplace = Op;
+  mlir::Value Result = Op->getResult(0);
   mlir::Type ResultT = Op->getResult(0).getType();
+  if (Result.hasOneUse()) {
+    if (auto NOp = dyn_cast<NegateOp>(Result.use_begin()->getOwner())) {
+      OpToReplace = NOp.getOperation();
+      ResultT = NOp.getResult().getType();
+      ++NegateCount;
+    }
+  }
+
   mlir::Operation* NewOp
     = geomalg::CMulOp::create(Rewriter, Loc, ResultT, NewOperands);
   if (NegateCount % 2 != 0)
     NewOp = geomalg::NegateOp::create(Rewriter, Loc,
                                       ResultT, NewOp->getResult(0));
-  Rewriter.replaceOp(Op, NewOp);
+  Rewriter.replaceOp(OpToReplace, NewOp);
   return llvm::success();
 }
 
@@ -952,14 +985,17 @@ void SimplifyPass::runOnOperation() {
   mlir::MLIRContext* Ctx = &getContext();
   mlir::func::FuncOp FuncOp = getOperation();
 
-  // Run CSE.
-  {
-    mlir::IRRewriter Rewriter(Ctx);
-    mlir::DominanceInfo DI;
-    mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp);
-  }
+  bool IRChanged = true;
+  while (IRChanged) {
+    // Run Patterns.
+    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
+      return signalPassFailure();
 
-  // Run Patterns.
-  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
-    return signalPassFailure();
+    // Run CSE.
+    {
+      mlir::IRRewriter Rewriter(Ctx);
+      mlir::DominanceInfo DI;
+      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+    }
+  }
 }

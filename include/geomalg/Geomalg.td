@@ -289,7 +289,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Distributive, ZeroAbsorb, SameOperandsAndResultType]> {
+      [Distributive, ZeroAbsorb]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
