@@ -89,27 +89,6 @@ public:
   llvm::LogicalResult initialize(mlir::MLIRContext*) override;
 };
 
-// CSE Rewriter.. why is this not a thing in upstream?
-
-struct CSEPatternRewrite
-    : mlir::OpRewritePattern<mlir::func::FuncOp> {
-  using Base = mlir::OpRewritePattern<mlir::func::FuncOp>;
-  using Base::OpRewritePattern;
-
-  void initialize() {
-    setDebugName("CSEPatternRewrite");
-  }
-
-  llvm::LogicalResult matchAndRewrite(
-      mlir::func::FuncOp FuncOp,
-      mlir::PatternRewriter& Rewriter) const override
-  {
-    mlir::DominanceInfo DI;
-    mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp);
-    return llvm::success();
-  }
-};
-
 // Rewriters for expansion.
 
 struct ExpandSum : mlir::OpRewritePattern<geomalg::SumOp> {
