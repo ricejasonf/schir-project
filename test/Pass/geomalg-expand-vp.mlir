@@ -2,7 +2,7 @@
 // RUN:--geomalg-expand="enable-patterns=ExpandVP" %s \
 // RUN:| FileCheck %s
 
-// RUN: geomalg-opt --geomalg-expand="metric=cga" --cse --canonicalize %s \
+// RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-simplify %s \
 // RUN:| FileCheck --check-prefix="CGA"  %s
 
 // CHECK-LABEL: func.func @versor_prod_0
@@ -65,3 +65,51 @@ func.func @versor_prod_3(%arg0: !geomalg.blade<2147483651>,
   geomalg.return %0 : !geomalg.unknown
 }
 
+// Points are closed under the versor product.
+!vec2 = !geomalg.multivector<<1>, <2>>
+!vec3 = !geomalg.multivector<<1>, <2>, <4>>
+!point = !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+
+// CGA-LABEL: func.func @point_refl_1
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+func.func @point_refl_1(%arg0: !point, %arg1: !vec2) -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg0, %arg1)
+    : (!point, !vec2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// CGA-LABEL: func.func @point_refl_2
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+func.func @point_refl_2(%arg0: !point, %arg1: !vec3) -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg0, %arg1)
+    : (!point, !vec3) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// CGA-LABEL: func.func @point_refl_3
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+func.func @point_refl_3(%arg0: !point, %arg1: !vec2, %arg2: !vec3)
+    -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg0, %arg1, %arg2)
+    : (!point, !vec2, !vec3) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// CGA-LABEL: func.func @point_refl_4
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+func.func @point_refl_4(%arg0: !point, %arg1: !vec3, %arg2: !vec2)
+    -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg0, %arg1, %arg2)
+    : (!point, !vec3, !vec2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// COM-CGA-LABEL: func.func @point_refl_5
+// COM-CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+// FIXME runaway pass
+//func.func @point_refl_5(%arg0: !point, %arg1: !vec3, %arg2: !vec2, %arg3: !vec3)
+//    -> !geomalg.unknown {
+//  %0 = "geomalg.vprod"(%arg0, %arg1, %arg2, %arg3)
+//    : (!point, !vec3, !vec2, !vec3) -> !geomalg.unknown
+//  geomalg.return %0 : !geomalg.unknown
+//}

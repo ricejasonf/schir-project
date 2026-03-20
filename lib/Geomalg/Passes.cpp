@@ -266,6 +266,19 @@ struct SimplifyMul : mlir::OpTraitRewritePattern<geomalg::IsMul> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifySum : mlir::OpRewritePattern<geomalg::SumOp> {
+  using Base = mlir::OpRewritePattern<geomalg::SumOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyMul");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      SumOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 // For sorting operands within a block.
 auto compareBlockValues(mlir::Value A, mlir::Value B) -> bool {
   // Return true if A < B.
@@ -839,9 +852,9 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
 
   if (isa<geomalg::CMulOp>(Op) &&
       !llvm::any_of(Operands, GetDefiningMul) &&
+      !llvm::any_of(Operands, GetDefiningOp<geomalg::NegateOp>) &&
       !llvm::any_of(Operands, GetDefiningOp<geomalg::CastOp>) &&
       llvm::count_if(Operands, GetDefiningOp<geomalg::BladeOp>) <= 1)
-
     return llvm::failure();
 
   // Collect operands.
@@ -864,14 +877,19 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
     } else if (auto BOp = V.getDefiningOp<geomalg::BladeOp>()) {
       // Since float powers of 2 are closed under multiplication
       // and represented exactly, they are associative and commutative.
+      float C = BOp.getFloat();
       int n = 0;
-      float m = std::frexp(BOp.getFloat(), &n);
+      float m = std::frexp(C, &n);
       float m_abs = std::abs(m);
-      if (m == 0.5f) {
-        Accum *= m;
-      } else if (m == -0.5f) {
-        Accum *= -m;
-        ++NegateCount;
+      // Powers of 2 are part of the algebra and cancel each other out.
+      // (We do not support arbitrary constants at yet.)
+      assert(m_abs == 0.5f && "we are only expecting powers of 2 right now");
+      if (m_abs == 0.5f) {
+        Accum *= std::abs(C);
+        if (C < 0.0f)
+          ++NegateCount;
+      } else {
+        Accum *= C;
       }
       // Mark to remove from list.
       V = mlir::Value();
@@ -884,12 +902,10 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
   llvm::erase(NewOperands, mlir::Value());
 
   mlir::Location Loc = Op->getLoc();
-  // Create and push new BladeOp if needed.
-  if (Accum != 1.0f) {
-    mlir::Type ScalarT = geomalg::BladeType::get(getContext(), 0);
-    mlir::Value S = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, Accum);
-    NewOperands.insert(NewOperands.begin(), S);
-  }
+  // Create and push new BladeOp even if it is 1.0f.
+  mlir::Type ScalarT = geomalg::BladeType::get(getContext(), 0);
+  mlir::Value S = geomalg::BladeOp::create(Rewriter, Loc, ScalarT, Accum);
+  NewOperands.insert(NewOperands.begin(), S);
 
   // Sort for CSE.
   llvm::stable_sort(NewOperands, compareBlockValues);
@@ -913,6 +929,34 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
     NewOp = geomalg::NegateOp::create(Rewriter, Loc,
                                       ResultT, NewOp->getResult(0));
   Rewriter.replaceOp(OpToReplace, NewOp);
+  return llvm::success();
+}
+
+llvm::LogicalResult SimplifySum::matchAndRewrite(
+    SumOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  llvm::SmallVector<mlir::Value, 8> NewOperands(Op.getArgs().begin(),
+                                                Op.getArgs().end());
+  // Filter NewOperands by setting to mlir::Value().
+  for (mlir::Value& V : NewOperands) {
+    if (!V) continue;
+    // Cancel negates if their operand is also an operand of the sum.
+    if (auto NOp = V.getDefiningOp<NegateOp>()) {
+      auto Itr = llvm::find(NewOperands, NOp.getArg());
+      if (Itr != NewOperands.end()) {
+        // Cancel by removing both values.
+        V = mlir::Value();
+        *Itr = mlir::Value();
+      }
+    }
+  }
+
+  llvm::erase(NewOperands, mlir::Value());
+  if (llvm::equal(NewOperands, Op.getArgs()))
+    return llvm::failure();
+
+  Rewriter.replaceOpWithNewOp<SumOp>(Op, NewOperands);
+
   return llvm::success();
 }
 
@@ -948,11 +992,8 @@ void ExpandPass::runOnOperation() {
 llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-//  geomalg::simplify::populateGeneratedPDLLPatterns(PS);
-  PS.add<SimplifyMul
-         //SimplifyNegate,
-         //SimplifyInverse,
-         //GroupSums
+  PS.add<SimplifyMul,
+         SimplifySum
          >(Ctx);
   Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                         disabledPatterns,
