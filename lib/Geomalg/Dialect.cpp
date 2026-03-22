@@ -97,6 +97,27 @@ geomalg::OuterProdOp::inferReturnTypes(
 }
 
 llvm::LogicalResult
+geomalg::OSwapOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  if (Operands.size() != 1)
+    return llvm::failure();
+
+  mlir::Type T = Operands.front().getType();
+  auto BT = dyn_cast<geomalg::BladeType>(T);
+  if (!BT)
+    return llvm::failure();
+
+  InferredTypes.push_back(BT.oswap());
+  return llvm::success();
+}
+
+llvm::LogicalResult
 geomalg::InverseOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
                   std::optional<mlir::Location> LocOpt,
@@ -115,7 +136,7 @@ geomalg::InverseOp::inferReturnTypes(
   // The purpose of leaving a type unknown is that someone can
   // make their own fancy pass to use some method to find an
   // inverse of specific or arbitrary sets of elements.
-  if (BT || (MV && MV.isBlade(1)))
+  if (BT || (MV && MV.isVector()))
     InferredTypes.push_back(T);
   else
     InferredTypes.push_back(geomalg::UnknownType::get(Ctx));

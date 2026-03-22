@@ -2,6 +2,7 @@
 #define GEOMALG_BLADE_TAG_H
 
 #include <llvm/ADT/ArrayRef.h>
+#include <llvm/ADT/SmallVector.h>
 #include <bit>
 #include <utility>
 
@@ -53,11 +54,11 @@ public:
     return Tag == tag_sign_mask;
   }
 
-  // Change the to or from the set of canonical orderings
+  // Change to or from the set of canonical orderings
   // of basis vectors.
   // Note that "sign" only indicates the canonical ordering
   // without regard to the sign of the coefficient.
-  BladeTag negate() const {
+  BladeTag oswap() const {
     return getGrade() > 1 ? BladeTag(tag_sign_mask ^ getTag())
                           : *this;
   }
@@ -98,6 +99,17 @@ public:
     }
     assert(BladeTag(TagA).getGrade() == 1);
     return {BladeTag(TagA), BladeTag(TagB)};
+  }
+
+  // Break a basis blade down into 1-vector wedge product factors.
+  void factorize(llvm::SmallVectorImpl<BladeTag>& Result) {
+    BladeTag A = *this;
+    while (A.getGrade() > 1) {
+      auto [a, B] = A.factor();
+      Result.push_back(a);
+      A = B;
+    }
+    Result.push_back(A);
   }
 
   std::strong_ordering operator<=>(BladeTag const& B) const {

@@ -338,9 +338,9 @@ func.func @gprod_2(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<2>)
 // CHECK-SAME:  [[B:%arg[0-9]+]]: !geomalg.blade<1>)
 // CHECK: [[aB:%[0-9]+]] = "geomalg.iprod"([[a]], [[B]])
 // CHECK: [[a_B:%[0-9]+]] = "geomalg.oprod"([[a]], [[B]])
-// CHECK: [[a_B_negate:%[0-9]+]] = "geomalg.negate"([[a_B]])
+// CHECK: [[a_B_canon:%[0-9]+]] = "geomalg.oswap"([[a_B]])
 // CHECK-SAME: -> !geomalg.blade<3>
-// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aB]], [[a_B_negate]])
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aB]], [[a_B_canon]])
 // CHECK: geomalg.return [[SUM0]]
 func.func @gprod_3(%arg0: !geomalg.blade<2>, %arg1: !geomalg.blade<1>)
             -> !geomalg.unknown {

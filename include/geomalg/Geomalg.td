@@ -35,36 +35,39 @@ def IsMul : Geomalg_Trait<"IsMul">;
 
 def InferredResult : DeclareOpInterfaceMethods<InferTypeOpInterface>;
 
-// Types
+// Type interfaces
 
-def Geomalg_Metric : TypeDef<Geomalg_Dialect, "Metric", []> {
-  let mnemonic = "metric";
+def Geomalg_MultivectorLike : TypeInterface<"MultivectorLike"> {
   let description = [{
-    Define a metric tensor by specifying the dot product for pairs of basis
-    vectors defaulting to e_i . e_i = 1 and e_i . e_j = 0 for i != j.
-
-    TODO finish this
+    Provide an interface for tuple like objects representing sums
+    of basis blades. This allows for different types to encode
+    different properties such as unit length which allow for
+    omitting certain operations such as division by 1.
   }];
-
-  //let parameters = (ins ArrayRefParameter<"geomalg::MetricEntry">:$entries);
-  let assemblyFormat = "`<` params `>`";
-  let extraClassDeclaration = [{
-
-  }];
+  let methods = [
+    InterfaceMethod<
+      [{Get the BladeTypes}],
+      /*ReturnType*/"llvm::ArrayRef<geomalg::BladeType>",
+      /*MethodName*/"getBlades">,
+    InterfaceMethod<[{
+      Check if multivector is known to have unit length (ie ∑( cᵢ)² = 1)
+      }],
+      /*ReturnType*/"bool",
+      /*MethodName*/"isUnit">,
+    InterfaceMethod<[{
+      Check if multivector is known to be a sum of basis 1-blades.
+      }],
+      /*ReturnType*/"bool",
+      /*MethodName*/"isVector">
+  ];
 }
+
+// Types
 
 def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
   let mnemonic = "zero";
   let description = [{
     A blade of scalar zero has the zero type (iff its statically known.)
-  }];
-
-  let extraClassDeclaration = [{
-    geomalg::BladeTag getCanonicalTag() const { return {}; }
-    unsigned getGrade() const { return 0; }
-    bool isBasisVector() const { return true; }
-    static constexpr bool isZero() { return true; }
-    static constexpr bool isCanonical() { return true; }
   }];
 }
 
@@ -118,6 +121,10 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
       return get(getContext(), getCanonicalTag().getTag());
     }
 
+    geomalg::BladeType oswap() const {
+      return get(getContext(), getBladeTag().oswap().getTag());
+    }
+
     bool isCanonical() const {
       return getBladeTag().isCanonical();
     }
@@ -137,7 +144,7 @@ def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
               get(getContext(), R.getTag())};
     }
 
-    bool isZero() const { 
+    bool isZero() const {
       // Instead of adding a bunch of run-time verification,
       // we will support zero but assert against it here.
       assert(!getBladeTag().isZero());
@@ -162,7 +169,33 @@ def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
 
   let assemblyFormat = "`<` $blades `>`";
   let extraClassDeclaration = [{
-    bool isBlade(unsigned K) const;
+    bool isUnit() const { return false; }
+    bool isVector() const;
+  }];
+}
+
+def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector", []> {
+  let mnemonic = "unitvector";
+  let description = [{
+    A unit vector is a sum of basis 1-blades with the assumed property
+    that A^2 = 1 (assuming an orthonormal basis.)
+
+    We also get the properties:
+      A⁻¹ = A (inverse)
+      A^ = -A (grade involution)
+      A~ = A  (reverse)
+  }];
+
+  let parameters = (ins ArrayRefParameter<"geomalg::BladeType">:$blades);
+  let assemblyFormat = "`<` $blades `>`";
+  let extraClassDeclaration = [{
+    bool isUnit() const { return true; }
+    bool isVector() const { return true; }
+    static llvm::LogicalResult verifyInvariants(
+              auto EmitError, llvm::ArrayRef<geomalg::BladeType> Blades) {
+      return llvm::success(llvm::all_of(Blades,
+        [](geomalg::BladeType BT) { return BT.getGrade() == 1; }));
+    }
   }];
 }
 
@@ -289,7 +322,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Distributive, ZeroAbsorb]> {
+      [Distributive, ZeroAbsorb, SameOperandsAndResultType]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
@@ -300,6 +333,19 @@ def Geomalg_NegateOp : Geomalg_Op<"negate",
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
+}
+
+def Geomalg_OSwapOp : Geomalg_Op<"oswap",
+      [ZeroAbsorb, InferredResult]> {
+  let description = [{
+    Convert a basis blade of grade k > 1 to its anitsymmetric
+    counterpart. This changes the canonicalness of the type
+    and negates the coefficient.  If the blade is a basis
+    1-vector then the operation behaves as the identity.
+  }];
+
+  let arguments = (ins Geomalg_Blade:$arg);
+  let results   = (outs Geomalg_Blade:$result);
 }
 
 def Geomalg_CastOp : Geomalg_Op<"cast", [ZeroAbsorb]> {

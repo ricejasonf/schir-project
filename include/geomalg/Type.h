@@ -2,6 +2,7 @@
 #undef GEOMALG_TYPE_H
 
 #include <geomalg/Dialect.h>
+#include <geomalg/Metric.h>
 
 // Declare utility functions for geomalg types.
 
@@ -24,6 +25,11 @@ bool isUnknown(mlir::Value V) {
 inline
 bool isUnknown(mlir::Type T) {
   return isa<geomalg::UnknownType>(T);
+}
+
+inline
+bool isUnitVector(mlir::Type T) {
+  return isa<geomalg::UnitVectorType>(T);
 }
 
 // Ensure blade types are nonnegative.

@@ -32,6 +32,7 @@ public:
   // Assume vectors are orthonormal unless specified otherwise.
   // This is designed to return {-1, 0, 1}.
   int dotProduct(BladeTag A, BladeTag B) const {
+    assert(Dim != 0 && "expecting defined metric");
     assert(A.getGrade() == 1 && B.getGrade() == 1);
     if (A > B)
       std::swap(A, B);
@@ -45,6 +46,23 @@ public:
       return (A == B) ? 1 : 0;
 
     return std::get<2>(*Itr);
+  }
+
+  // Is known to be orthogonal.
+  bool isOrthogonal(BladeTag A, BladeTag B) const {
+    if (Dim == 0)
+      return false;
+
+    // Factor the blades.
+    llvm::SmallVector<BladeTag, 6> A_factors;
+    llvm::SmallVector<BladeTag, 6> B_factors;
+    A.factorize(A_factors);
+    B.factorize(B_factors);
+    for (auto a : A_factors)
+      for (auto b : B_factors)
+        if (dotProduct(a, b) != 0)
+          return false;
+    return true;
   }
 
   static Metric get(MetricKind Kind) {

@@ -25,6 +25,11 @@ namespace geomalg::simplify {
 
 namespace geomalg {
 // Because lldb cannot look at mlir::Operation, ...
+void dumpOp(mlir::Operation* Op) {
+  Op->dump();
+}
+
+// Because lldb cannot look at mlir::Operation, ...
 void dumpBlock(mlir::Operation* Op) {
   Op->getBlock()->dump();
 }
@@ -148,6 +153,19 @@ struct UpdateInferredTypes
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct RemoveExpand : mlir::OpRewritePattern<geomalg::ExpandOp> {
+  using Base = mlir::OpRewritePattern<geomalg::ExpandOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("RemoveExpand");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::ExpandOp OP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct SimplifyOP : mlir::OpRewritePattern<geomalg::OuterProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::OuterProdOp>;
   using Base::OpRewritePattern;
@@ -175,9 +193,29 @@ struct ExpandGP : mlir::OpRewritePattern<geomalg::GeomProdOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
-struct ExpandVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
+struct DistributeVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::VersorProdOp>;
   using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("DistributeVP");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+struct ExpandVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
+  using Base = mlir::OpRewritePattern<geomalg::VersorProdOp>;
+
+  geomalg::Metric Metric;
+
+  template <typename ...Args>
+  ExpandVP(geomalg::Metric M, Args&& ...args)
+    : Base(std::forward<Args>(args)...)
+    , Metric(M)
+  { }
 
   void initialize() {
     setDebugName("ExpandVP");
@@ -239,8 +277,9 @@ struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
 
   geomalg::Metric Metric;
 
-  ApplyMetric(mlir::MLIRContext* Ctx, geomalg::Metric M)
-    : Base(Ctx)
+  template <typename ...Args>
+  ApplyMetric(geomalg::Metric M, Args&& ...args)
+    : Base(std::forward<Args>(args)...)
     , Metric(M)
   { }
 
@@ -328,15 +367,13 @@ createOuterProd(mlir::PatternRewriter& Rewriter,
   mlir::Type ResultT = inferOuterProdResult(LHS, RHS);
   mlir::Type CResultT = ResultT; // canonical result type
   if (auto BT = dyn_cast<geomalg::BladeType>(ResultT)) {
-    if (!BT.isCanonical()) {
+    if (!BT.isCanonical())
       ShouldNegate = true;
-      CResultT = BT.getCanonicalType();
-    }
   }
   mlir::Operation* Op = geomalg::OuterProdOp::create(Rewriter, Loc,
                                                      ResultT, LHS, RHS);
   if (ShouldNegate)
-    Op = geomalg::NegateOp::create(Rewriter, Loc, CResultT, Op->getResult(0));
+    Op = OSwapOp::create(Rewriter, Loc, Op->getResult(0));
   return Op->getResult(0);
 }
 
@@ -347,13 +384,24 @@ factorBlade(mlir::PatternRewriter& Rewriter, mlir::Value V) {
   auto BT = cast<geomalg::BladeType>(V.getType());
   if (!BT.isCanonical()) {
     BT = BT.getCanonicalType();
-    V = geomalg::NegateOp::create(Rewriter, Loc, BT, V);
+    V = OSwapOp::create(Rewriter, Loc, V);
+    assert(V.getType() == mlir::Type(BT));
   }
   assert(BT.getGrade() > 1 && "prevent idempotent rewrite");
   auto [Type_a, Type_B] = BT.factor();
   mlir::Value a = geomalg::BladeOp::create(Rewriter, Loc, Type_a, 1.0);
   mlir::Value B = geomalg::CastOp::create(Rewriter, Loc, Type_B, V);
   return {a, B};
+}
+
+static bool requiresMetric(mlir::Operation* Op) {
+  if (auto IP = dyn_cast<InnerProdOp>(Op)) {
+    auto L = dyn_cast<BladeType>(IP.getLHS().getType());
+    auto R = dyn_cast<BladeType>(IP.getRHS().getType());
+    if (L && R && L.getGrade() == 1 && R.getGrade() == 1)
+      return true;
+  }
+  return false;
 }
 
 llvm::LogicalResult
@@ -375,19 +423,6 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
     Rewriter.replaceOp(Op, Op.getArgs().front());
     return llvm::success();
   }
-
-  // Replace unnecessary ExpandOps. It is necessary that the operands
-  // represent the same values as the results they are replacing.
-  bool DidReplaceAnyExpands = false;
-  for (mlir::OpOperand& OO : Op.getResult().getUses()) {
-    if (auto ExpandOp = dyn_cast<geomalg::ExpandOp>(OO.getOwner())) {
-      Rewriter.replaceOp(ExpandOp, Op.getOperands());
-      DidReplaceAnyExpands = true;
-    }
-  }
-
-  if (DidReplaceAnyExpands)
-    return llvm::success();
 
   // Collect Values unnesting (directly nested) sums discarding Zeros.
   // Note some of these maybe still be multivectors.
@@ -494,8 +529,35 @@ UpdateInferredTypes::matchAndRewrite(mlir::InferTypeOpInterface Op,
   return setResultType(Rewriter, Op.getOperation(), InferredTypes.front());
 }
 
+llvm::LogicalResult RemoveExpand::matchAndRewrite(
+    geomalg::ExpandOp ExpandOp,
+    mlir::PatternRewriter& Rewriter) const {
+  if (isa<UnknownType>(ExpandOp.getArg().getType()))
+    return llvm::failure();
+  // Replace unnecessary ExpandOps. It is necessary that the operands
+  // represent the same values as the results they are replacing so
+  // there must be an exact correspondence of args/results.
+  if (auto SOp = ExpandOp.getArg().getDefiningOp<SumOp>()) {
+    assert(SOp.getOperands().size() == ExpandOp.getResults().size());
+    for (auto [SV, EV] : llvm::zip(SOp.getOperands(),
+                                   ExpandOp.getResults())) {
+      assert(SV.getType() == EV.getType());
+    }
+    Rewriter.replaceOp(ExpandOp, SOp.getOperands());
+    return llvm::success();
+  }
+
+  if (isa<MultivectorType>(ExpandOp.getArg().getType()))
+    return llvm::failure();
+
+  // Replace unary expands with their operand.
+  assert(ExpandOp.getResults().size() == 1);
+  Rewriter.replaceOp(ExpandOp, ExpandOp.getArg());
+  return llvm::success();
+}
+
 llvm::LogicalResult SimplifyOP::matchAndRewrite(
-    geomalg::OuterProdOp OP,
+    geomalg::OuterProdOp OP, // OP acronym for OuterProd
     mlir::PatternRewriter& Rewriter) const {
   mlir::Value LHS = OP.getLHS();
   mlir::Value RHS = OP.getRHS();
@@ -601,8 +663,9 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   return llvm::success();
 }
 
-// Expand a versor product to the geometric product.
-llvm::LogicalResult ExpandVP::matchAndRewrite(
+// Distribute the versor product of the first blade 
+// across the argument if its a multivector.
+llvm::LogicalResult DistributeVP::matchAndRewrite(
       geomalg::VersorProdOp VP,
       mlir::PatternRewriter& Rewriter) const {
   mlir::Location Loc = VP.getLoc();
@@ -612,21 +675,78 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
     return llvm::success();
   }
 
+  mlir::Value Arg = VP.getArg();
+  auto MV = dyn_cast<MultivectorType>((Arg.getType()));
+  if (!MV)
+    return llvm::failure();
+
+  // Distribute the VP of the first blade only.
+  llvm::SmallVector<mlir::Value, 8> SumArgs;
+  mlir::ValueRange Values = expandMultivector(Rewriter, Arg);
+  for (mlir::Value V : Values) {
+    mlir::Value SumArg = VersorProdOp::create(Rewriter, Loc, V, Blades.front());
+    SumArgs.push_back(SumArg);
+  }
+  Rewriter.replaceOpWithNewOp<SumOp>(VP, SumArgs);
+
+  return llvm::success();
+}
+
+// Expand a versor product to the geometric product.
+llvm::LogicalResult ExpandVP::matchAndRewrite(
+      geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const {
+  mlir::Value Arg = VP.getArg();
+  BladeType BT = dyn_cast<BladeType>(Arg.getType());
+  if (!BT)
+    return llvm::failure();
+
+  mlir::Location Loc = VP.getLoc();
+  // TODO Functions like this would be great as an interface
+  //      to an object that captures Rewriter, Loc, etc.
   auto Mult = [&](mlir::Value LHS, mlir::Value RHS) {
-    return geomalg::GeomProdOp::create(Rewriter, Loc, LHS, RHS);
+    return GeomProdOp::create(Rewriter, Loc, LHS, RHS);
   };
   auto Inverse = [&](mlir::Value V) {
-    return geomalg::InverseOp::create(Rewriter, Loc, V);
+    if (isUnitVector(V.getType()))
+      return V;
+    return mlir::Value(InverseOp::create(Rewriter, Loc, V));
   };
 
-  // Multiply left to right.
-  // v₂ v₁ A v₁⁻¹ v₂⁻¹
-  mlir::Value Result = Blades.back();
-  for (auto Blade : llvm::reverse(Blades.drop_back()))
-    Result = Mult(Result, Blade);
-  Result = Mult(Result, VP.getArg());
-  for (auto Blade : Blades)
-    Result = Mult(Result, Inverse(Blade));
+  mlir::Value Versor = VP.getBlades().front();
+  BladeType SingleVBT = dyn_cast<BladeType>(Versor.getType());
+  llvm::ArrayRef<BladeType> VersorBladeTypes;
+  if (auto MVT = dyn_cast<MultivectorType>(Versor.getType()))
+    VersorBladeTypes = MVT.getBlades();
+  else
+    VersorBladeTypes = SingleVBT;
+
+  // Check if BT is known to be orthogonal to all the elements
+  // of Versor to bypass some distributing.
+  bool IsOrthogonal = bool(Metric);
+  if (Metric) {
+    for (BladeType VBT : VersorBladeTypes) {
+      if (!Metric.isOrthogonal(BT.getBladeTag(), VBT.getBladeTag())) {
+        IsOrthogonal = false;
+        break;
+      }
+    }
+  }
+
+  // v₂ (v₁ A v₁⁻¹) v₂⁻¹
+  // Expand the application of one versor at a time
+  // to tame the combinational explosions which requires
+  // this pattern to have a relatively low "benefit".
+  mlir::Value Result;
+  if (IsOrthogonal) {
+    // Use the antisymmetric property.
+    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, Versor, Versor);
+    Dot = Inverse(Dot);
+    Result = InnerProdOp::create(Rewriter, Loc, Dot, Arg); // scalar mult
+    Result = NegateOp::create(Rewriter, Loc, Result.getType(), Result);
+  } else {
+    Result = Mult(Versor, Mult(Arg, Inverse(Versor)));
+  }
 
   Rewriter.replaceOp(VP, Result);
 
@@ -751,7 +871,7 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   // Arbitrary multivectors are unsupported by this pass.
   if ((!BT && !MV) ||
       (BT && BT.getGrade() == 0) ||
-      (MV && !MV.isBlade(1)))
+      (MV && !MV.isVector()))
     return llvm::failure();
 
 
@@ -860,10 +980,17 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
   // Collect operands.
   llvm::SmallVector<mlir::Value, 8> NewOperands;
   for (mlir::Value V : Operands) {
-    if (mlir::Operation* VOp = GetDefiningMul(V))
-      llvm::append_range(NewOperands, VOp->getOperands());
-    else
+    if (mlir::Operation* MOp = GetDefiningMul(V)) {
+      if (requiresMetric(MOp)) {
+        MOp->emitError("cannot simplify inner product without metric");
+        // Do not emit a gazillion op errors.
+        std::exit(1);
+        return llvm::failure();
+      }
+      llvm::append_range(NewOperands, MOp->getOperands());
+    } else {
       NewOperands.push_back(V);
+    }
   }
 
   // Fold all results of NegateOp and BladeOp.
@@ -884,13 +1011,10 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
       // Powers of 2 are part of the algebra and cancel each other out.
       // (We do not support arbitrary constants at yet.)
       assert(m_abs == 0.5f && "we are only expecting powers of 2 right now");
-      if (m_abs == 0.5f) {
-        Accum *= std::abs(C);
-        if (C < 0.0f)
-          ++NegateCount;
-      } else {
-        Accum *= C;
-      }
+
+      Accum *= std::abs(C);
+      if (C < 0.0f)
+        ++NegateCount;
       // Mark to remove from list.
       V = mlir::Value();
     } else if (auto COp = V.getDefiningOp<geomalg::CastOp>()) {
@@ -941,6 +1065,7 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
   for (mlir::Value& V : NewOperands) {
     if (!V) continue;
     // Cancel negates if their operand is also an operand of the sum.
+    // (ie Additive cancellation: A - A = 0)
     if (auto NOp = V.getDefiningOp<NegateOp>()) {
       auto Itr = llvm::find(NewOperands, NOp.getArg());
       if (Itr != NewOperands.end()) {
@@ -963,18 +1088,23 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
 llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-  PS.add<ExpandVP,
-         ExpandSum,
-         Distribute,
-         ZeroAbsorbToZero,
-         ExpandLC,
+  PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
+  PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
+  PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
+  PS.add<ExpandLC,
          ExpandGP,
          SimplifyOP,
+         RemoveExpand,
          ExpandInverse,
          ExpandReverse,
-         UpdateInferredTypes>(Ctx);
-  if (metric != geomalg::MetricKind::unknown)
-    PS.add<ApplyMetric>(Ctx, geomalg::Metric::get(metric));
+         UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
+  PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
+  PS.add<ExpandVP>(geomalg::Metric::get(metric), Ctx,
+                      mlir::PatternBenefit(2));
+  if (metric != geomalg::MetricKind::unknown) {
+    PS.add<ApplyMetric>(geomalg::Metric::get(metric), Ctx,
+                        mlir::PatternBenefit(10));
+  }
   Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                         disabledPatterns,
                         enabledPatterns);
