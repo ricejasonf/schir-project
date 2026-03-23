@@ -1,5 +1,5 @@
 // RUN: geomalg-opt \
-// RUN:--geomalg-expand="enable-patterns={ExpandVP, DistributeVP}" %s \
+// RUN:--geomalg-expand="enable-patterns={ExpandVP, DistributeVP}" --cse %s \
 // RUN:| FileCheck %s
 
 // RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-simplify %s \
@@ -19,10 +19,16 @@ func.func @versor_prod_0(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK-LABEL: func.func @versor_prod_1
 // CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<1>
-// CHECK: [[P0:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[ARG0]])
+// CHECK: [[MV:%[0-9]+]]:3 = "geomalg.expand"(%arg0)
 // CHECK: [[I0:%[0-9]+]] = "geomalg.inverse"([[ARG1]])
-// CHECK: [[P1:%[0-9]+]] = "geomalg.gprod"([[P0]], [[I0]])
-// CHECK: return [[P1]]
+// CHECK: [[P0_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#0, [[I0]])
+// CHECK: [[P0_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P0_0]])
+// CHECK: [[P1_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#1, [[I0]])
+// CHECK: [[P1_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P1_0]])
+// CHECK: [[P2_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#2, [[I0]])
+// CHECK: [[P2_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P2_0]])
+// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"([[P0_1]], [[P1_1]], [[P2_1]])
+// CHECK: return [[SUM]]
 func.func @versor_prod_1(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
                          %arg1: !geomalg.blade<1>)
             -> !geomalg.unknown {
@@ -36,13 +42,19 @@ func.func @versor_prod_1(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
 // CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<1>
 // CHECK-SAME: [[ARG2:%arg[0-9]+]]: !geomalg.blade<2>
-// CHECK: [[P0:%[0-9]+]] = "geomalg.gprod"([[ARG2]], [[ARG1]])
-// CHECK: [[P1:%[0-9]+]] = "geomalg.gprod"([[P0]], [[ARG0]])
+// CHECK: [[MV:%[0-9]+]]:3 = "geomalg.expand"(%arg0)
 // CHECK: [[I0:%[0-9]+]] = "geomalg.inverse"([[ARG1]])
-// CHECK: [[P2:%[0-9]+]] = "geomalg.gprod"([[P1]], [[I0]])
-// CHECK: [[I1:%[0-9]+]] = "geomalg.inverse"([[ARG2]])
-// CHECK: [[P3:%[0-9]+]] = "geomalg.gprod"([[P2]], [[I1]])
-// CHECK: return [[P3]]
+// CHECK: [[P0_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#0, [[I0]])
+// CHECK: [[P0_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P0_0]])
+// CHECK: [[VP0:%[0-9]+]] = "geomalg.vprod"([[P0_1]], [[ARG2]])
+// CHECK: [[P1_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#1, [[I0]])
+// CHECK: [[P1_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P1_0]])
+// CHECK: [[VP1:%[0-9]+]] = "geomalg.vprod"([[P1_1]], [[ARG2]])
+// CHECK: [[P2_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#2, [[I0]])
+// CHECK: [[P2_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P2_0]])
+// CHECK: [[VP2:%[0-9]+]] = "geomalg.vprod"([[P2_1]], [[ARG2]])
+// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"([[VP0]], [[VP1]], [[VP2]])
+// CHECK: return [[SUM]]
 func.func @versor_prod_2(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
                          %arg1: !geomalg.blade<1>, %arg2: !geomalg.blade<2>)
             -> !geomalg.unknown {
@@ -104,12 +116,12 @@ func.func @point_refl_4(%arg0: !point, %arg1: !vec3, %arg2: !vec2)
   geomalg.return %0 : !geomalg.unknown
 }
 
-// COM-CGA-LABEL: func.func @point_refl_5
-// COM-CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
-// FIXME runaway pass
-//func.func @point_refl_5(%arg0: !point, %arg1: !vec3, %arg2: !vec2, %arg3: !vec3)
-//    -> !geomalg.unknown {
-//  %0 = "geomalg.vprod"(%arg0, %arg1, %arg2, %arg3)
-//    : (!point, !vec3, !vec2, !vec3) -> !geomalg.unknown
-//  geomalg.return %0 : !geomalg.unknown
-//}
+// CGA-LABEL: func.func @point_refl_5
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+// FIXME verrry slow
+func.func @point_refl_5(%arg0: !point, %arg1: !vec3, %arg2: !vec2, %arg3: !vec3)
+    -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%arg0, %arg1, %arg2, %arg3)
+    : (!point, !vec3, !vec2, !vec3) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}

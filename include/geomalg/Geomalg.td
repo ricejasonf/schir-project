@@ -321,6 +321,17 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
   let results   = (outs Geomalg_Value:$result);
 }
 
+def Geomalg_GradeInvoOp : Geomalg_Op<"grade_invo",
+      [Distributive, SameOperandsAndResultType]> {
+  let description = [{
+    Perform grade involution on a k-blade which will
+    negate elements when 2k + 1 ≅ 0 (mod 2).
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Value:$result);
+}
+
 def Geomalg_NegateOp : Geomalg_Op<"negate",
       [Distributive, ZeroAbsorb, SameOperandsAndResultType]> {
   let description = [{
@@ -416,12 +427,12 @@ def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [ZeroAbsorb]> {
     transformations ordered from left to right.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg, Variadic<Geomalg_Value>:$blades);
+  let arguments = (ins Geomalg_Value:$arg, Variadic<Geomalg_Value>:$versors);
   let results   = (outs Geomalg_Value:$result);
   let builders = [
-    OpBuilder<(ins "::mlir::Value":$Arg, "::mlir::ValueRange":$Blades), [{
+    OpBuilder<(ins "::mlir::Value":$Arg, "::mlir::ValueRange":$Versors), [{
         $_state.addOperands(Arg);
-        $_state.addOperands(Blades);
+        $_state.addOperands(Versors);
         $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];

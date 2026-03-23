@@ -270,6 +270,19 @@ struct ExpandReverse : mlir::OpRewritePattern<geomalg::ReverseOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct ExpandGradeInvo : mlir::OpRewritePattern<geomalg::GradeInvoOp> {
+  using Base = mlir::OpRewritePattern<geomalg::GradeInvoOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandGradeInvo");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::GradeInvoOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 // Expand inner product of basis 1-blades.
 // If the metric is unspecified (unknown) this does nothing.
 struct ApplyMetric : mlir::OpRewritePattern<geomalg::InnerProdOp> {
@@ -669,8 +682,8 @@ llvm::LogicalResult DistributeVP::matchAndRewrite(
       geomalg::VersorProdOp VP,
       mlir::PatternRewriter& Rewriter) const {
   mlir::Location Loc = VP.getLoc();
-  mlir::ValueRange Blades = VP.getBlades();
-  if (Blades.empty()) {
+  mlir::ValueRange Versors = VP.getVersors();
+  if (Versors.empty()) {
     Rewriter.replaceOp(VP, VP.getArg());
     return llvm::success();
   }
@@ -680,11 +693,10 @@ llvm::LogicalResult DistributeVP::matchAndRewrite(
   if (!MV)
     return llvm::failure();
 
-  // Distribute the VP of the first blade only.
   llvm::SmallVector<mlir::Value, 8> SumArgs;
   mlir::ValueRange Values = expandMultivector(Rewriter, Arg);
   for (mlir::Value V : Values) {
-    mlir::Value SumArg = VersorProdOp::create(Rewriter, Loc, V, Blades.front());
+    mlir::Value SumArg = VersorProdOp::create(Rewriter, Loc, V, Versors);
     SumArgs.push_back(SumArg);
   }
   Rewriter.replaceOpWithNewOp<SumOp>(VP, SumArgs);
@@ -712,8 +724,14 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
       return V;
     return mlir::Value(InverseOp::create(Rewriter, Loc, V));
   };
+  auto Negate = [&](mlir::Value V) {
+    return mlir::Value(NegateOp::create(Rewriter, Loc, V));
+  };
+  auto GradeInvo = [&](mlir::Value V) {
+    return mlir::Value(GradeInvoOp::create(Rewriter, Loc, V));
+  };
 
-  mlir::Value Versor = VP.getBlades().front();
+  mlir::Value Versor = VP.getVersors().front();
   BladeType SingleVBT = dyn_cast<BladeType>(Versor.getType());
   llvm::ArrayRef<BladeType> VersorBladeTypes;
   if (auto MVT = dyn_cast<MultivectorType>(Versor.getType()))
@@ -737,16 +755,26 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   // Expand the application of one versor at a time
   // to tame the combinational explosions which requires
   // this pattern to have a relatively low "benefit".
+
+  // Leftmost and righmost operands
+  // v₁ A v₁⁻¹
+  mlir::Value VL = Negate(GradeInvo(Versor));
+  mlir::Value VR = Inverse(Versor);
+
   mlir::Value Result;
   if (IsOrthogonal) {
     // Use the antisymmetric property.
-    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, Versor, Versor);
-    Dot = Inverse(Dot);
+    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, VL, VR);
     Result = InnerProdOp::create(Rewriter, Loc, Dot, Arg); // scalar mult
     Result = NegateOp::create(Rewriter, Loc, Result.getType(), Result);
   } else {
     Result = Mult(Versor, Mult(Arg, Inverse(Versor)));
   }
+
+  // Recreate VP for remaining versors.
+  mlir::ValueRange RestVersors = VP.getVersors().drop_front();
+  if (!RestVersors.empty())
+    Result = VersorProdOp::create(Rewriter, Loc, Result, RestVersors);
 
   Rewriter.replaceOp(VP, Result);
 
@@ -917,6 +945,27 @@ llvm::LogicalResult ExpandReverse::matchAndRewrite(
   return llvm::success();
 }
 
+llvm::LogicalResult ExpandGradeInvo::matchAndRewrite(
+    geomalg::GradeInvoOp InvoOp,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::MLIRContext* Ctx = getContext();
+  mlir::Location Loc = InvoOp.getLoc();
+  mlir::Value Arg = InvoOp.getArg();
+
+  auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
+
+  // Multivectors are handled by the Distribute rewriter.
+  if (!BT)
+    return llvm::failure();
+
+  if (BT.shouldInvoNegate())
+    Rewriter.replaceOpWithNewOp<geomalg::NegateOp>(InvoOp, Arg.getType(), Arg);
+  else
+    Rewriter.replaceOp(InvoOp, Arg);
+
+  return llvm::success();
+}
+
 llvm::LogicalResult ApplyMetric::matchAndRewrite(
     geomalg::InnerProdOp LC,
     mlir::PatternRewriter& Rewriter) const {
@@ -993,14 +1042,18 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
     }
   }
 
-  // Fold all results of NegateOp and BladeOp.
+  // Fold all results of NegateOp, OSwapOp, and BladeOp.
   unsigned NegateCount = 0;
   float Accum = 1.0f;
   for (mlir::Value& V : NewOperands) {
     if (auto NOp = V.getDefiningOp<geomalg::NegateOp>()) {
       ++NegateCount;
-      // Remove the use of the Negate.
+      // Remove the use of the negate.
       V = NOp.getArg();
+    } else if (auto SwapOp = V.getDefiningOp<geomalg::OSwapOp>()) {
+      ++NegateCount;
+      // Remove the use of the oswap.
+      V = SwapOp.getArg();
     } else if (auto BOp = V.getDefiningOp<geomalg::BladeOp>()) {
       // Since float powers of 2 are closed under multiplication
       // and represented exactly, they are associative and commutative.
@@ -1043,6 +1096,10 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
     if (auto NOp = dyn_cast<NegateOp>(Result.use_begin()->getOwner())) {
       OpToReplace = NOp.getOperation();
       ResultT = NOp.getResult().getType();
+      ++NegateCount;
+    } else if (auto SWOp = dyn_cast<OSwapOp>(Result.use_begin()->getOwner())) {
+      OpToReplace = SWOp.getOperation();
+      ResultT = SWOp.getResult().getType();
       ++NegateCount;
     }
   }
@@ -1097,6 +1154,7 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
          RemoveExpand,
          ExpandInverse,
          ExpandReverse,
+         ExpandGradeInvo,
          UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
   PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
   PS.add<ExpandVP>(geomalg::Metric::get(metric), Ctx,
