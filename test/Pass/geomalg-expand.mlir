@@ -9,8 +9,8 @@ module {
 // CHECK: geomalg.return [[ZERO]] : !geomalg.zero
 func.func @sum_0() -> !geomalg.zero {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
-  %1 = "geomalg.sum"(%0, %0) : (!geomalg.zero, !geomalg.zero) -> !geomalg.zero
-  geomalg.return %1 : !geomalg.zero
+  %1 = "geomalg.sum"(%0, %0) : (!geomalg.zero, !geomalg.zero) -> !geomalg.unknown
+  geomalg.return %1 : !geomalg.unknown
 }
 
 // CHECK-LABEL: func.func @sum_1
@@ -19,8 +19,8 @@ func.func @sum_0() -> !geomalg.zero {
 func.func @sum_1(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.sum"(%arg0, %0) : (!geomalg.blade<1>, !geomalg.zero)
-    -> !geomalg.blade<1>
-  geomalg.return %1 : !geomalg.blade<1>
+    -> !geomalg.unknown
+  geomalg.return %1 : !geomalg.unknown
 }
 
 // CHECK-LABEL: func.func @sum_2
@@ -29,8 +29,8 @@ func.func @sum_1(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
 func.func @sum_2(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.sum"(%0, %arg0) : (!geomalg.zero, !geomalg.blade<1>)
-    -> !geomalg.blade<1>
-  geomalg.return %1 : !geomalg.blade<1>
+    -> !geomalg.unknown
+  geomalg.return %1 : !geomalg.unknown
 }
 // CHECK-LABEL: func.func @sum_3
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.blade<1>)
@@ -40,8 +40,8 @@ func.func @sum_3(%arg0: !geomalg.blade<1>) -> !geomalg.blade<1> {
   %0 = "geomalg.sum"() : () -> !geomalg.zero
   %1 = "geomalg.sum"(%arg0, %0, %arg0)
     : (!geomalg.blade<1>, !geomalg.zero, !geomalg.blade<1>)
-      -> !geomalg.blade<1>
-  geomalg.return %1 : !geomalg.blade<1>
+      -> !geomalg.unknown
+  geomalg.return %1 : !geomalg.unknown
 }
 
 // CHECK-LABEL: func.func @distribute_0()
@@ -212,9 +212,23 @@ func.func @oprod_0(%arg0: !geomalg.blade<0>,
        !geomalg.blade<3>,
        !geomalg.blade<3>,
        !geomalg.blade<2147483651>)
-       -> !geomalg.multivector<<0>, <1>, <3>, !geomalg.blade<2147483651>>
+       -> !geomalg.multivector<
+         <0>,
+         <1>,
+         <1>,
+         <3>,
+         <3>,
+         <3>,
+         <2147483651>>
   geomalg.return %16
-    : !geomalg.multivector<<0>, <1>, <3>, !geomalg.blade<2147483651>>
+    : !geomalg.multivector<
+         <0>,
+         <1>,
+         <1>,
+         <3>,
+         <3>,
+         <3>,
+         <2147483651>>
 }
 
 // 3.7

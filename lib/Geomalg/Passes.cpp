@@ -331,6 +331,14 @@ struct SimplifySum : mlir::OpRewritePattern<geomalg::SumOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+auto compareBlades(mlir::Value Aval, mlir::Value Bval) -> bool {
+  geomalg::BladeType A = dyn_cast<BladeType>(Aval.getType());
+  geomalg::BladeType B = dyn_cast<BladeType>(Bval.getType());
+  if (!A || !B)
+    return B && !A;
+  return A.getTag() < B.getTag();
+}
+
 // For sorting operands within a block.
 auto compareBlockValues(mlir::Value A, mlir::Value B) -> bool {
   // Return true if A < B.
@@ -355,9 +363,13 @@ auto compareBlockValues(mlir::Value A, mlir::Value B) -> bool {
 static llvm::LogicalResult
 setResultType(mlir::PatternRewriter& Rewriter,
               mlir::Operation* Op, mlir::Type Type) {
+  mlir::Value Result = Op->getResult(0);
+  assert(Result.getType() != Type);
   Rewriter.startOpModification(Op);
-  Op->getResult(0).setType(Type);
+  Result.setType(Type);
   Rewriter.finalizeOpModification(Op);
+  // Notify the uses.
+  Rewriter.replaceAllUsesWith(Result, Result);
   return llvm::success();
 }
 
@@ -420,12 +432,6 @@ static bool requiresMetric(mlir::Operation* Op) {
 llvm::LogicalResult
 ExpandSum::matchAndRewrite(geomalg::SumOp Op,
                            mlir::PatternRewriter& Rewriter) const {
-  using SumOp = geomalg::SumOp;
-  using BladeType = geomalg::BladeType;
-  using MultivectorType = geomalg::MultivectorType;
-  using UnknownType = geomalg::UnknownType;
-  using ZeroType = geomalg::ZeroType;
-
   mlir::Location Loc = Op.getLoc();
 
   if (Op.getArgs().size() == 0)
@@ -438,34 +444,62 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
   }
 
   // Collect Values unnesting (directly nested) sums discarding Zeros.
-  // Note some of these maybe still be multivectors.
   llvm::SmallVector<mlir::Value, 8> Values;
+  mlir::Type ResultT = Op.getResult().getType();
   for (mlir::Value V : Op.getOperands()) {
-    if (auto S = V.getDefiningOp<SumOp>()) {
-      llvm::append_range(Values, S.getOperands());
+    if (auto BT = dyn_cast<BladeType>(V.getType())) {
+      // Fold sums of a common blade.
+      if (auto S = V.getDefiningOp<SumOp>(); S && BT == ResultT)
+        llvm::append_range(Values, S.getArgs());
+      else
+        Values.push_back(V);
     } else if (isa<MultivectorType>(V.getType())) {
       llvm::append_range(Values, expandMultivector(Rewriter, V));
-    } else if (auto BT = dyn_cast<BladeType>(V.getType())) {
-      Values.push_back(V);
     } else if (isa<UnknownType>(V.getType())) {
-      Values.push_back(V);
+      return llvm::failure();
     } else {
+      // Discard zeros.
       assert(isa<ZeroType>(V.getType()));
     }
-  };
+  }
 
   // Sort by BladeTag putting all non-blades at the front.
-  llvm::stable_sort(Values, [](mlir::Value Aval, mlir::Value Bval) {
-    geomalg::BladeType A = dyn_cast<BladeType>(Aval.getType());
-    geomalg::BladeType B = dyn_cast<BladeType>(Bval.getType());
-    if (!A || !B)
-      return B && !A;
-    return A.getTag() < B.getTag();
-  });
+  llvm::stable_sort(Values, compareBlades);
   if (llvm::equal(Values, Op.getOperands()))
     return llvm::failure();
 
-  Rewriter.replaceOpWithNewOp<SumOp>(Op, Values);
+  // Group by type putting all blade types in their own sum
+  // so that all operands are either blades or unknown.
+  using ValuesTy = llvm::SmallVector<mlir::Value, 8>;
+  llvm::SmallVector<std::pair<mlir::Type, ValuesTy>> TypeMap;
+  for (mlir::Value V : Values) {
+    auto HasTheType = [&](auto TypeMapNode) {
+      auto const& [T, ..._] = TypeMapNode; // just testing my packs
+      return T == V.getType();
+    };
+    auto Itr = llvm::find_if(TypeMap, HasTheType);
+    if (Itr == TypeMap.end())
+      TypeMap.push_back({V.getType(), {V}});
+    else
+      Itr->second.push_back(V);
+  }
+
+  // Values should remain in sorted order.
+  llvm::SmallVector<mlir::Value, 8> GroupedValues;
+  for (auto& TypeMapNode : TypeMap) {
+    auto const& [T, Vs] = TypeMapNode;
+    if (isa<BladeType>(T)) {
+      mlir::Value S = SumOp::create(Rewriter, Loc, Vs);
+      GroupedValues.push_back(S);
+    } else if (isZero(T)) {
+      // Discard (nested) zeros.
+    } else {
+      assert(isUnknown(T));
+      llvm::append_range(GroupedValues, Vs);
+    }
+  }
+
+  Rewriter.replaceOpWithNewOp<SumOp>(Op, GroupedValues);
   return llvm::success();
 }
 
@@ -821,8 +855,9 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
 
   // 3.7
   // α ⌋ B = α B
-  if (L.getGrade() == 0)
+  if (L.getGrade() == 0) {
     return setResultType(Rewriter, LC, R);
+  }
 
   // 3.8
   // B ⌋ α = 0
@@ -855,7 +890,6 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     mlir::Value aCb = createOuterProd(Rewriter, Loc, aC, b);
     // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
     Rewriter.replaceOpWithNewOp<geomalg::SumOp>(LC, abC, aCb);
-
     return llvm::success();
   }
 
@@ -869,7 +903,6 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     auto BC = geomalg::InnerProdOp::create(Rewriter, Loc, B, C);
     // (a ⌋ (B ⌋ C))
     Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(LC, a, BC);
-
     return llvm::success();
   }
 
@@ -1121,9 +1154,11 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
   // Filter NewOperands by setting to mlir::Value().
   for (mlir::Value& V : NewOperands) {
     if (!V) continue;
-    // Cancel negates if their operand is also an operand of the sum.
-    // (ie Additive cancellation: A - A = 0)
-    if (auto NOp = V.getDefiningOp<NegateOp>()) {
+    if (isZero(V)) {
+      V = mlir::Value();
+    } else if (auto NOp = V.getDefiningOp<NegateOp>()) {
+      // Cancel negates if their operand is also an operand of the sum.
+      // (ie Additive cancellation: A - A = 0)
       auto Itr = llvm::find(NewOperands, NOp.getArg());
       if (Itr != NewOperands.end()) {
         // Cancel by removing both values.
@@ -1145,7 +1180,7 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
 llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
-  PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
+  //PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
   PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
   PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
   PS.add<ExpandLC,
@@ -1173,13 +1208,45 @@ void ExpandPass::runOnOperation() {
   mlir::MLIRContext* Ctx = &getContext();
   mlir::func::FuncOp FuncOp = getOperation();
 
-  if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
-    return signalPassFailure();
+  bool AnyIRChanged = true;
+  while (AnyIRChanged) {
+    AnyIRChanged = false;
+    bool IRChanged = false;
+    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns,
+                mlir::GreedyRewriteConfig(), &IRChanged)))
+      return signalPassFailure();
+    AnyIRChanged |= IRChanged;
+
+    // Run CSE... maybe.
+    if (IRChanged) {
+      mlir::IRRewriter Rewriter(Ctx);
+      mlir::DominanceInfo DI;
+      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+    }
+    AnyIRChanged |= IRChanged;
+
+    // TODO FrozenPatternify this
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
+    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS),
+                mlir::GreedyRewriteConfig(), &IRChanged)))
+      return signalPassFailure();
+    AnyIRChanged |= IRChanged;
+
+    // Run CSE.
+    {
+      mlir::IRRewriter Rewriter(Ctx);
+      mlir::DominanceInfo DI;
+      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+    }
+    AnyIRChanged |= IRChanged;
+  }
 }
 
 llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
+  PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
   PS.add<SimplifyMul,
          SimplifySum
          >(Ctx);

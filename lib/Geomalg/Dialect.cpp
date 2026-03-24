@@ -49,33 +49,30 @@ geomalg::SumOp::inferReturnTypes(
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
-  mlir::Type ResultType;
+  mlir::Type ResultT;
   for (mlir::Value V : Operands) {
     mlir::Type Type = V.getType();
-    if (isUnknown(V)) {
-      ResultType = geomalg::UnknownType::get(Ctx);
-      break;
-    }
-    if (auto BT = dyn_cast<geomalg::BladeType>(Type))
+    if (isa<UnknownType, ZeroType, MultivectorType>(V.getType())) {
+      InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
+      return llvm::success();
+    } else if (auto BT = dyn_cast<geomalg::BladeType>(Type)) {
       BladeTypes.push_back(BT);
-    else if (auto MT = dyn_cast<geomalg::MultivectorType>(Type))
-      llvm::append_range(BladeTypes, MT.getBlades());
-    else {
-      if (!geomalg::isZero(Type)) {
-        mlir::Location Loc = LocOpt ? *LocOpt : mlir::UnknownLoc::get(Ctx);
-        ResultType = geomalg::UnknownType::get(Ctx);
-        mlir::emitError(Loc,
-            "expecting a valid operand type to geomalg.sum");
-        return llvm::failure();
-      }
+    } else {
+      mlir::Location Loc = LocOpt ? *LocOpt : mlir::UnknownLoc::get(Ctx);
+      mlir::emitError(Loc,
+          "expecting a valid operand type to geomalg.sum");
+      return llvm::failure();
     }
   }
-  if (!ResultType && BladeTypes.empty())
-    ResultType = geomalg::ZeroType::get(Ctx);
-  else if (!ResultType)
-    ResultType = geomalg::createMultivectorType(BladeTypes);
-  assert(ResultType && "expecting a valid type");
-  InferredTypes.push_back(ResultType);
+
+  if (BladeTypes.empty())
+    ResultT = geomalg::ZeroType::get(Ctx);
+  else if (llvm::all_equal(BladeTypes))
+    ResultT = BladeTypes.front();
+  else
+    ResultT = geomalg::MultivectorType::get(Ctx, BladeTypes);
+
+  InferredTypes.push_back(ResultT);
   return llvm::success();
 }
 
