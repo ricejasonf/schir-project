@@ -21,12 +21,16 @@ class ZeroAbsorb : public mlir::OpTrait::TraitBase<T, ZeroAbsorb>
 template <typename T>
 class IsMul : public mlir::OpTrait::TraitBase<T, IsMul>
 { };
+
+class BladeType;
 }  // namespace
 
 // #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wunused-parameter"
 
 #include "geomalg/GeomalgDialect.h.inc"
+
+#include "geomalg/GeomalgTypeInterfaces.h.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "geomalg/GeomalgTypes.h.inc"

@@ -44,6 +44,7 @@ def Geomalg_MultivectorLike : TypeInterface<"MultivectorLike"> {
     different properties such as unit length which allow for
     omitting certain operations such as division by 1.
   }];
+  let cppNamespace = "geomalg";
   let methods = [
     InterfaceMethod<
       [{Get the BladeTypes}],
@@ -158,7 +159,8 @@ class Geomalg_BladeOfGradeK<int K> :
     CPred<
       "::llvm::cast<geomalg::BladeType>($_self).getGrade() == " # K>>;
 
-def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
+def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector",
+                                  [Geomalg_MultivectorLike]> {
   let mnemonic = "multivector";
   let description = [{
     A multivector is a sum of basis blades. It is itself a k-blade if
@@ -174,8 +176,9 @@ def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector", []> {
   }];
 }
 
-def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector", []> {
-  let mnemonic = "unitvector";
+def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector",
+                                 [Geomalg_MultivectorLike]> {
+  let mnemonic = "unit_vector";
   let description = [{
     A unit vector is a sum of basis 1-blades with the assumed property
     that A^2 = 1 (assuming an orthonormal basis.)
@@ -207,7 +210,7 @@ def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown", []> {
 }
 
 def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
-                               Geomalg_Multivector,
+                               Geomalg_MultivectorLike,
                                Geomalg_Zero,
                                Geomalg_Unknown]>;
 
@@ -368,8 +371,23 @@ def Geomalg_CastOp : Geomalg_Op<"cast", [ZeroAbsorb]> {
     be used in addition to this operation.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg);
-  let results   = (outs Geomalg_Value:$result);
+  let arguments = (ins AnyType:$arg);
+  let results   = (outs AnyType:$result);
+}
+
+def Geomalg_ConvertOp : Geomalg_Op<"convert"> {
+  let description = [{
+    Convert can be used to refine an object such that it
+    posseses properties indicated by the type it is converting to.
+    For instance, to convert a vector to a unit_vector, a pattern
+    rewriter can expand this operation into a division by the square
+    of the vector followed by a cast which would guarantee that
+    the result squared would equal 1 and subsequent transformations
+    could make that assumption based on the type.
+  }];
+
+  let arguments = (ins AnyType:$arg);
+  let results   = (outs AnyType:$result);
 }
 
 def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {
@@ -383,6 +401,23 @@ def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {
 
   let arguments = (ins Variadic<Geomalg_Blade>:$arg);
   let results   = (outs Geomalg_Blade:$result);
+}
+
+def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
+  let description = [{
+    Prevent expanding the dot product for vectors
+    represented by an orthogonal basis.
+
+    Notes:
+    We could possibly just use linalg.dot for this, but here
+    we assert the result is the scalar from our set of types.
+
+    If this does not end up transforming into a special
+    dot operation on the backend then we can get rid of it.
+  }];
+
+  let arguments = (ins Geomalg_Multivector:$LHS, Geomalg_Multivector:$RHS);
+  let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 
 def Geomalg_BladeOp : Geomalg_Op<"blade"> {
@@ -417,14 +452,9 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
 
 def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [ZeroAbsorb]> {
   let description = [{
-    A versor is a product of invertible vectors and is,
-    therefore invertible. However, not all versors are k-blades
-    so we keep things in factored form to construct the inverse.
-
     Given an ordered set of invertible blades, construct a versor
     and its inverse applying it to an operand using the
-    sandwich product. Think of each blade being applied as
-    transformations ordered from left to right.
+    sandwich product.
   }];
 
   let arguments = (ins Geomalg_Value:$arg, Variadic<Geomalg_Value>:$versors);

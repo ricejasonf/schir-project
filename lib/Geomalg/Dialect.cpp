@@ -12,6 +12,8 @@
 #define GET_TYPEDEF_CLASSES
 #include "geomalg/GeomalgTypes.cpp.inc"
 
+#include "geomalg/GeomalgTypeInterfaces.cpp.inc"
+
 #if 0 // We do not have custom attributes yet.
 #define GET_ATTRDEF_CLASSES
 #include "geomalg/GeomalgAttrs.cpp.inc"
@@ -128,7 +130,7 @@ geomalg::InverseOp::inferReturnTypes(
 
   mlir::Type T = Operands.front().getType();
   auto BT = dyn_cast<geomalg::BladeType>(T);
-  auto MV = dyn_cast<geomalg::MultivectorType>(T);
+  auto MV = dyn_cast<geomalg::MultivectorLike>(T);
 
   // The purpose of leaving a type unknown is that someone can
   // make their own fancy pass to use some method to find an

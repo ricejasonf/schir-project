@@ -266,7 +266,7 @@ func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<1>,
 // CHECK-SAME:  [[bC:%arg[0-9]+]]: !geomalg.blade<3>)
 // CHECK: [[b:%[0-9]+]] = "geomalg.blade"()
-// CHECK-SAME:   coefficient = 1
+// CHECK-SAME:   coefficient = 1.0
 // CHECK: [[C:%[0-9]+]] = "geomalg.cast"([[bC]])
 // CHECK-SAME: : (!geomalg.blade<3>) -> !geomalg.blade<2>
 // CHECK: [[ab:%[0-9]+]] = "geomalg.iprod"([[a]], [[b]])
@@ -292,7 +292,7 @@ func.func @iprod_3_10(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<3>)
 // CHECK-SAME: ([[aB:%arg[0-9]+]]: !geomalg.blade<6>,
 // CHECK-SAME:  [[C:%arg[0-9]+]]: !geomalg.blade<1>)
 // CHECK: [[a:%[0-9]+]] = "geomalg.blade"()
-// CHECK-SAME:   coefficient = 1
+// CHECK-SAME:   coefficient = 1.0
 // CHECK: [[B:%[0-9]+]] = "geomalg.cast"([[aB]])
 // CHECK-SAME: : (!geomalg.blade<6>) -> !geomalg.blade<4>
 // CHECK: [[BC:%[0-9]+]] = "geomalg.iprod"([[B]], [[C]])
@@ -414,6 +414,8 @@ func.func @inverse_k2(%arg0: !geomalg.blade<3>) -> !geomalg.blade<3> {
 
 // (a)⁻¹ = (a ⌋ a)⁻¹ a
 // For 1-vector,
+// TODO Do not expand iprod for 1-vectors until we know they are
+//      not represented by an orthonormal basis.
 // CHECK-LABEL: @inverse_v1
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK: [[EX:%[0-9]+]]:3 = "geomalg.expand"([[a]])
@@ -444,5 +446,49 @@ func.func @inverse_v1(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
     : (!geomalg.multivector<<1>, <2>, <4>>)
       -> !geomalg.multivector<<1>, <2>, <4>>
   geomalg.return %0 : !geomalg.multivector<<1>, <2>, <4>>
+}
+
+// Inverse of unit_vector.
+// CHECK-LABEL: @inverse_uv0
+// CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.unit_vector<<1>, <2>, <4>>)
+// CHECK-NOT: inverse
+// CHECK: return [[ARG0]] : !geomalg.unit_vector<<1>, <2>, <4>>
+func.func @inverse_uv0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
+            -> !geomalg.unit_vector<<1>, <2>, <4>> {
+  %0 = "geomalg.inverse"(%arg0)
+    : (!geomalg.unit_vector<<1>, <2>, <4>>)
+      -> !geomalg.unit_vector<<1>, <2>, <4>>
+  geomalg.return %0 : !geomalg.unit_vector<<1>, <2>, <4>>
+}
+
+// Convert to unit_vector.
+// CHECK-LABEL: @inverse_convert_to_uv
+// CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
+// TODO Check that this produces inverse of dot product
+// CHECK: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"
+// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"
+// CHECK: [[CAST:%[0-9]+]] = "geomalg.cast"([[SUM]])
+// CHECK: return [[CAST]] : !geomalg.unit_vector<<1>, <2>, <4>>
+func.func @inverse_convert_to_uv(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
+            -> !geomalg.unit_vector<<1>, <2>, <4>> {
+  %0 = "geomalg.convert"(%arg0)
+    : (!geomalg.multivector<<1>, <2>, <4>>)
+      -> !geomalg.unit_vector<<1>, <2>, <4>>
+  geomalg.return %0 : !geomalg.unit_vector<<1>, <2>, <4>>
+}
+
+// Dot product of unit_vector with itself.
+// CHECK-LABEL: @unit_vec0
+// CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.unit_vector<<1>, <2>, <4>>)
+// CHECK: [[RES:%[0-9]+]] = "geomalg.blade"
+// CHECK-SAME: coefficient = 1.0
+// CHECK: return [[RES]] : !geomalg.blade<0>
+func.func @unit_vec0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
+            -> !geomalg.unit_vector<<1>, <2>, <4>> {
+  %0 = "geomalg.iprod"(%arg0, %arg0)
+    : (!geomalg.unit_vector<<1>, <2>, <4>>,
+       !geomalg.unit_vector<<1>, <2>, <4>>)
+      -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }
 }  // module

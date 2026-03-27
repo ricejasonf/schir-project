@@ -80,7 +80,14 @@ func.func @versor_prod_3(%arg0: !geomalg.blade<2147483651>,
 // Points are closed under the versor product.
 !vec2 = !geomalg.multivector<<1>, <2>>
 !vec3 = !geomalg.multivector<<1>, <2>, <4>>
+!uvec3 = !geomalg.unit_vector<<1>, <2>, <4>>
 !point = !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+!scalar = !geomalg.blade<0>
+!e1 = !geomalg.blade<1>
+!e2 = !geomalg.blade<2>
+!e3 = !geomalg.blade<4>
+!no = !geomalg.blade<8>
+!ni = !geomalg.blade<16>
 
 // CGA-LABEL: func.func @point_refl_1
 // CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
@@ -118,10 +125,48 @@ func.func @point_refl_4(%arg0: !point, %arg1: !vec3, %arg2: !vec2)
 
 // CGA-LABEL: func.func @point_refl_5
 // CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
-// FIXME verrry slow
 func.func @point_refl_5(%arg0: !point, %arg1: !vec3, %arg2: !vec2, %arg3: !vec3)
     -> !geomalg.unknown {
   %0 = "geomalg.vprod"(%arg0, %arg1, %arg2, %arg3)
     : (!point, !vec3, !vec2, !vec3) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
+}
+
+// CGA-LABEL: func.func @point_refl_e1
+// CGA-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
+// CGA-NOT: "geomalg.inverse"
+// CGA: "geomalg.dot"([[ARG0]], [[ARG0]])
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+func.func @point_refl_e1(%arg0: !vec3)
+    -> !geomalg.unknown {
+  %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
+  %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !scalar
+  %3 = "geomalg.iprod"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
+  %4 = "geomalg.cmul"(%2, %3) : (!scalar, !scalar) -> !ni
+  %5 = "geomalg.sum"(%1, %arg0, %4) : (!no, !vec3, !ni) -> !geomalg.unknown
+  %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1
+  %0 = "geomalg.vprod"(%5, %6)
+    : (!geomalg.unknown, !e1) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// CGA-LABEL: func.func @point_refl_e1_simplified
+// CGA-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
+// CGA-NOT: "geomalg.inverse"
+// CGA-NOT: "geomalg.dot"([[ARG0]], [[ARG0]])
+// CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>>
+func.func @point_refl_e1_simplified(%arg0: !vec3)
+    -> !geomalg.multivector<<1>, <2>, <4>> {
+  %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
+  %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !scalar
+  %3 = "geomalg.iprod"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
+  %4 = "geomalg.cmul"(%2, %3) : (!scalar, !scalar) -> !ni
+  %5 = "geomalg.sum"(%1, %arg0, %4) : (!no, !vec3, !ni) -> !geomalg.unknown
+  %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1
+  %7 = "geomalg.vprod"(%5, %6)
+    : (!geomalg.unknown, !e1) -> !geomalg.unknown
+  %8:3 = "geomalg.expand"(%7) : (!geomalg.unknown) -> (!e1, !e2, !e3)
+  %9 = "geomalg.sum"(%8#0, %8#1, %8#2)
+    : (!e1, !e2, !e3) -> !geomalg.multivector<<1>, <2>, <4>>
+  geomalg.return %9 : !geomalg.multivector<<1>, <2>, <4>>
 }
