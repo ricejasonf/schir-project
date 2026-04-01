@@ -52,4 +52,12 @@ def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
   let options = RewritePassUtils.options;
 }
 
+def MatrixPass : GeomalgPass<"geomalg-matrix", "mlir::func::FuncOp"> {
+  let summary = "Substitute function bodies with matmul";
+  let description = [{
+    For each function, clone its region for each basis vector of the first
+    argument into a geomalg.matmul operation.
+  }];
+}
+
 #endif  // GEOMALG_DIALECT_PASSES_TD

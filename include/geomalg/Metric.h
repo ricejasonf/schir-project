@@ -67,12 +67,13 @@ public:
 
   static Metric get(MetricKind Kind) {
     switch (Kind) {
-    case MetricKind::unknown:
-      return Metric(0, {});
     case MetricKind::cga:
       return Metric(5, {Entry{8, 8, 0},
                         Entry{16, 16, 0},
                         Entry{8, 16, -1}});
+    case MetricKind::unknown:
+    default:
+      return Metric(0, {});
     }
   }
 };

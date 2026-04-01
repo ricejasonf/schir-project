@@ -16,6 +16,7 @@
 namespace geomalg {
 #define GEN_PASS_DEF_EXPANDPASS
 #define GEN_PASS_DEF_SIMPLIFYPASS
+#define GEN_PASS_DEF_MATRIXPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
@@ -86,6 +87,16 @@ public:
 
 class SimplifyPass : public geomalg::impl::SimplifyPassBase<SimplifyPass> {
   using Base = geomalg::impl::SimplifyPassBase<SimplifyPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+  void runOnOperation() override;
+  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
+};
+
+class MatrixPass : public geomalg::impl::MatrixPassBase<MatrixPass> {
+  using Base = geomalg::impl::MatrixPassBase<MatrixPass>;
   mlir::FrozenRewritePatternSet Patterns;
 
 public:
@@ -532,7 +543,7 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
   llvm::SmallVector<std::pair<mlir::Type, ValuesTy>> TypeMap;
   for (mlir::Value V : Values) {
     auto HasTheType = [&](auto TypeMapNode) {
-      auto const& [T, ..._] = TypeMapNode; // just testing my packs
+      auto const& [T, _] = TypeMapNode;
       return T == V.getType();
     };
     auto Itr = llvm::find_if(TypeMap, HasTheType);
@@ -1386,4 +1397,58 @@ void SimplifyPass::runOnOperation() {
       mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
     }
   }
+}
+
+llvm::LogicalResult MatrixPass::initialize(mlir::MLIRContext* Ctx) {
+  return llvm::success();
+}
+
+void MatrixPass::runOnOperation() {
+  // Create a new region for the body with the same arguments
+  // and insert a new matmul and return operation.
+  mlir::MLIRContext* Ctx = &getContext();
+  mlir::func::FuncOp FuncOp = getOperation();
+  mlir::Location Loc = FuncOp.getLoc();
+
+  mlir::Region& Body = FuncOp.getBody();
+  auto NewBody = std::make_unique<mlir::Region>(FuncOp);
+  NewBody->emplaceBlock();
+  for (mlir::Type ArgT : FuncOp.getArgumentTypes())
+    NewBody->addArgument(ArgT, Loc);
+  auto BodyBuilder = mlir::OpBuilder(NewBody.get());
+
+  mlir::Value InputArg = !Body.getArguments().empty()
+        ? mlir::Value(Body.getArguments().front()) : mlir::Value();
+  if (!InputArg || !isa<MultivectorLike>(InputArg.getType())) {
+    FuncOp->emitError("expecting an input argument");
+    return signalPassFailure();
+  }
+  MultivectorLike MVL = cast<MultivectorLike>(InputArg.getType());
+  mlir::Value NewInputArg = NewBody->getArguments().front();
+
+  llvm::ArrayRef<BladeType> Blades = MVL.getBlades();
+
+  unsigned NumRegions = MVL.getBlades().size();
+  auto MM = MatmulOp::create(BodyBuilder, Loc, mlir::Type(MVL), NewInputArg,
+                             /*NumRegions=*/MVL.getBlades().size());
+  mlir::Value Result = MM.getResult();
+  mlir::Block& BB = NewBody->front();
+  ReturnOp::create(BodyBuilder, Loc, MM.getResult());
+
+  // Instantiate the regions of the new MatMulOp.
+  for (auto [Region, BladeT] : llvm::zip(MM.getBodies(), MVL.getBlades())) {
+    // Instantiate body substituting InputArg
+    // with the basis element for this blade.
+    mlir::OpBuilder Builder = mlir::OpBuilder(MM);
+    mlir::Value BasisElement = BladeOp::create(Builder, Loc, BladeT, 1.0f);
+    mlir::IRMapping IRMap;
+    IRMap.map(InputArg, BasisElement);
+    Body.cloneInto(&Region, IRMap);
+  }
+
+  // TODO Use PatternRewriters to fix ExpandOps and simplify zeros.
+
+
+  // Finish by replacing the original body with the new one.
+  Body.takeBody(*NewBody);
 }

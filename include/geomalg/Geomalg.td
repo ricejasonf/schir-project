@@ -244,6 +244,24 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
   let results   = (outs Variadic<Geomalg_Blade>:$results);
 }
 
+def Geomalg_MatmulOp : Geomalg_Op<"matmul", []> {
+  let description = [{
+    Create a matrix of a linear operator by defining each
+    column vector with its own region.
+
+    The regions are likely copied from a template region with
+    the first argument mapped to a unit basis vector for
+    each basis vector in the original input multivector.
+    The sole operand of this operation is the original input
+    multivector and the operation itself represents the created
+    matrix left multiplied by the operand.
+  }];
+
+  let regions = (region VariadicRegion<AnyRegion>:$bodies);
+  let arguments = (ins Geomalg_Value: $arg);
+  let results = (outs Geomalg_Value: $result);
+}
+
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
       [Distributive, ZeroAbsorb, InferredResult, IsMul]> {
   let description = [{
@@ -416,7 +434,7 @@ def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
     dot operation on the backend then we can get rid of it.
   }];
 
-  let arguments = (ins Geomalg_Multivector:$LHS, Geomalg_Multivector:$RHS);
+  let arguments = (ins Geomalg_MultivectorLike:$LHS, Geomalg_MultivectorLike:$RHS);
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 

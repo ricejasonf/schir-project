@@ -1,8 +1,5 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Type.h>
-#include <heavy/Context.h>
-#include <heavy/MlirHelper.h>
-#include <heavy/Value.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/SmallVector.h>
 
