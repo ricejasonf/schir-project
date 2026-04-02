@@ -20,7 +20,10 @@ def Geomalg_Dialect : Dialect {
 
 // Traits
 
-class Geomalg_Trait<string name> : NativeOpTrait<name> {
+class Geomalg_Trait<string name, list<Trait> traits = [],
+                    code extraOpDeclaration = [{}],
+                    code extraOpDefinition = [{}]>
+    : NativeOpTrait <name, traits, extraOpDeclaration, extraOpDefinition> {
   let cppNamespace = "::geomalg";
 }
 
@@ -33,7 +36,13 @@ def ZeroAbsorb : Geomalg_Trait<"ZeroAbsorb">;
 // If operation multiplies scalars convertible to CMul
 def IsMul : Geomalg_Trait<"IsMul">;
 
-def InferredResult : DeclareOpInterfaceMethods<InferTypeOpInterface>;
+def InferredResult : TraitList<[
+  DeclareOpInterfaceMethods<InferTypeOpInterface>,
+  Geomalg_Trait<"InferredResult", [],
+    /*extraOpDeclaration=*/[{
+      using InferredResultBase::isCompatibleReturnTypes;
+    }]>
+  ]>;
 
 // Type interfaces
 

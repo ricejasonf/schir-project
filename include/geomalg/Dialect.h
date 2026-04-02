@@ -12,18 +12,26 @@
 #include <concepts>
 
 namespace geomalg {
+struct DistributiveTag { };
+struct ZeroAbsorbTag { };
+struct IsMulTag { };
+
 template <typename T>
-class Distributive : public mlir::OpTrait::TraitBase<T, Distributive>
-{ };
+using Distributive = DistributiveTag;
 template <typename T>
-class ZeroAbsorb : public mlir::OpTrait::TraitBase<T, ZeroAbsorb>
-{ };
+using ZeroAbsorb = ZeroAbsorbTag;
 template <typename T>
-class IsMul : public mlir::OpTrait::TraitBase<T, IsMul>
-{ };
+using IsMul = IsMulTag;
+
+struct InferredResultBase {
+  static bool isCompatibleReturnTypes(mlir::TypeRange Ls, mlir::TypeRange Rs);
+};
+
+template <typename T>
+using InferredResult = InferredResultBase;
 
 class BladeType;
-}  // namespace
+} // namespace geomalg
 
 // #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wunused-parameter"

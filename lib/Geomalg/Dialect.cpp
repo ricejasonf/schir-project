@@ -41,6 +41,30 @@ void geomalg::GeomalgDialect::initialize() {
 
 }
 
+using namespace geomalg;
+
+
+bool
+InferredResultBase::isCompatibleReturnTypes(mlir::TypeRange Ls,
+                                            mlir::TypeRange Rs) {
+  // Inferred type must be narrower or equal to the actual type.
+  // Ls - inferred result types
+  // Rs - actual operation result types
+  if (Ls.size() != Rs.size())
+    return false;
+
+  // Using the map R -> L, allowed narrowings are:
+  //  Unknown -> Any
+  //  Any -> Zero
+  //  Multivector -> Blade
+  // where Any is defined as Geomalg_Value in the TableGen.
+  for (auto [L, R] : llvm::zip(Ls, Rs))
+    if (!(L == R || isUnknown(R) || isZero(L) ||
+          (isa<BladeType>(L) && isa<MultivectorLike>(R))))
+      return false;
+  return true;
+}
+
 llvm::LogicalResult
 geomalg::SumOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
@@ -54,9 +78,11 @@ geomalg::SumOp::inferReturnTypes(
   mlir::Type ResultT;
   for (mlir::Value V : Operands) {
     mlir::Type Type = V.getType();
-    if (isa<UnknownType, ZeroType, MultivectorType>(V.getType())) {
+    if (isa<UnknownType, MultivectorType>(V.getType())) {
       InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
       return llvm::success();
+    } else if (isa<ZeroType>(V.getType())) {
+      // Ignore Zeros.
     } else if (auto BT = dyn_cast<geomalg::BladeType>(Type)) {
       BladeTypes.push_back(BT);
     } else {
