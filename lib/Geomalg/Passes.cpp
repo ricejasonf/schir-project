@@ -263,6 +263,19 @@ struct ExpandLC : mlir::OpRewritePattern<geomalg::InnerProdOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyNegate : mlir::OpRewritePattern<geomalg::NegateOp> {
+  using Base = mlir::OpRewritePattern<geomalg::NegateOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyNegate");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::NegateOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct SimplifyInverse : mlir::OpRewritePattern<geomalg::InverseOp> {
   using Base = mlir::OpRewritePattern<geomalg::InverseOp>;
   using Base::OpRewritePattern;
@@ -367,6 +380,19 @@ struct SimplifySum : mlir::OpRewritePattern<geomalg::SumOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyDot : mlir::OpRewritePattern<geomalg::DotOp> {
+  using Base = mlir::OpRewritePattern<geomalg::DotOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyDot");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      DotOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 auto compareBlades(mlir::Value Aval, mlir::Value Bval) -> bool {
   geomalg::BladeType A = dyn_cast<BladeType>(Aval.getType());
   geomalg::BladeType B = dyn_cast<BladeType>(Bval.getType());
@@ -401,6 +427,7 @@ setResultType(mlir::PatternRewriter& Rewriter,
               mlir::Operation* Op, mlir::Type Type) {
   mlir::Value Result = Op->getResult(0);
   assert(Result.getType() != Type);
+  assert(isValidNarrowing(Result.getType(), Type));
   Rewriter.startOpModification(Op);
   Result.setType(Type);
   Rewriter.finalizeOpModification(Op);
@@ -854,7 +881,7 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   // to tame the combinational explosions which requires
   // this pattern to have a relatively low "benefit".
 
-  // Leftmost and righmost operands
+  // Leftmost and rightmost operands
   // v₁ A v₁⁻¹
   mlir::Value VL = Negate(GradeInvo(Versor));
   mlir::Value VR = Inverse(Versor);
@@ -979,6 +1006,18 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     auto BC = geomalg::InnerProdOp::create(Rewriter, Loc, B, C);
     // (a ⌋ (B ⌋ C))
     Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(LC, a, BC);
+    return llvm::success();
+  }
+
+  return llvm::failure();
+}
+
+llvm::LogicalResult SimplifyNegate::matchAndRewrite(
+    NegateOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  // Negate of negate cancels.
+  if (auto NOp = Op.getArg().getDefiningOp<NegateOp>()) {
+    Rewriter.replaceOp(Op, NOp.getArg());
     return llvm::success();
   }
 
@@ -1292,6 +1331,18 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
   }
 
   llvm::erase(NewOperands, mlir::Value());
+
+  // If operands are equal to the results of an Expand,
+  // remove the unnecessary expand and sum altogether.
+  if (!NewOperands.empty()) {
+    if (auto ExOp = NewOperands.front().getDefiningOp<ExpandOp>()) {
+      if (llvm::equal(NewOperands, ExOp.getResults())) {
+        Rewriter.replaceOp(Op, ExOp.getArg());
+        return llvm::success();
+      }
+    }
+  }
+
   if (llvm::equal(NewOperands, Op.getArgs()))
     return llvm::failure();
 
@@ -1300,11 +1351,32 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
   return llvm::success();
 }
 
+llvm::LogicalResult SimplifyDot::matchAndRewrite(
+    DotOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  if (Op.getLHS() != Op.getRHS())
+    return llvm::failure();
+
+  mlir::Value LHS = Op.getLHS();
+  mlir::Value RHS = Op.getRHS();
+
+  mlir::Type T = LHS.getType();
+  if (LHS == RHS && isa<UnitVectorType>(T)) {
+    auto ScalarT = geomalg::BladeType::get(getContext(), 0);
+    Rewriter.replaceOpWithNewOp<BladeOp>(Op, ScalarT, 1.0f);
+    return llvm::success();
+  }
+  return llvm::failure();
+}
+
 llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
   PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
-  PS.add<ZeroAbsorbToZero, SimplifyInverse>(Ctx, mlir::PatternBenefit(10));
+  PS.add<ZeroAbsorbToZero,
+         SimplifyInverse,
+         SimplifyNegate,
+         SimplifyDot>(Ctx, mlir::PatternBenefit(10));
   PS.add<ExpandLC,
          ExpandGP,
          SimplifyOP,
@@ -1372,7 +1444,10 @@ llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
   PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
   PS.add<SimplifyMul,
          SimplifySum,
-         SimplifyInverse
+         SimplifyDot,
+         SimplifyInverse,
+         SimplifyNegate,
+         SimplifyDot
          >(Ctx);
   Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                         disabledPatterns,

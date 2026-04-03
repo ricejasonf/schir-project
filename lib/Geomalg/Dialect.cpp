@@ -53,16 +53,48 @@ InferredResultBase::isCompatibleReturnTypes(mlir::TypeRange Ls,
   if (Ls.size() != Rs.size())
     return false;
 
-  // Using the map R -> L, allowed narrowings are:
-  //  Unknown -> Any
-  //  Any -> Zero
-  //  Multivector -> Blade
-  // where Any is defined as Geomalg_Value in the TableGen.
+  // Using the map R → L,
   for (auto [L, R] : llvm::zip(Ls, Rs))
-    if (!(L == R || isUnknown(R) || isZero(L) ||
-          (isa<BladeType>(L) && isa<MultivectorLike>(R))))
+    if (!isValidNarrowing(R, L))
       return false;
   return true;
+}
+
+llvm::LogicalResult
+geomalg::ReverseOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  llvm::append_range(InferredTypes, Operands.getTypes());
+  return llvm::success();
+}
+llvm::LogicalResult
+geomalg::NegateOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  llvm::append_range(InferredTypes, Operands.getTypes());
+  return llvm::success();
+}
+llvm::LogicalResult
+geomalg::GradeInvoOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  llvm::append_range(InferredTypes, Operands.getTypes());
+  return llvm::success();
 }
 
 llvm::LogicalResult

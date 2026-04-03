@@ -32,6 +32,8 @@ bool isUnitVector(mlir::Type T) {
   return isa<geomalg::UnitVectorType>(T);
 }
 
+bool isValidNarrowing(mlir::Type A, mlir::Type B);
+
 // Ensure blade types are nonnegative.
 inline
 mlir::Type getCanonicalType(mlir::Type Type) {

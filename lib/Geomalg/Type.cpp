@@ -2,10 +2,55 @@
 #include <geomalg/Type.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/STLExtras.h>
 
 namespace geomalg {
 // Implement utilities for construction and
 // introspection of geomalg dialect types.
+
+// If a pattern rewriter changes a result type
+// it must be a known mapping A → B where the
+// semantics of B is contained in A.
+bool isValidNarrowing(mlir::Type A, mlir::Type B) {
+  // Allowed narrowings are:
+  //  Unknown -> Any
+  //  Any -> Zero
+  //  Multivector -> Blade (for Blade in Multivector Blades)
+  //  Multivector -> Multivector (if resuling blades are a subset)
+  // where Any is a type with known semantics.
+  if (A == B)
+    return true;
+
+  // Unknown has no semantics (ie vacuous case).
+  if (isUnknown(A))
+    return true;
+
+  // We must know the semantics.
+  if (!isa<MultivectorLike, BladeType,
+           UnknownType, ZeroType>(A))
+    return false;
+
+  // If all other sum operands become zero then
+  // a multivector becomes a single basis blade
+  // provided it was a member of the sum to begin with.
+  if (auto ML = dyn_cast<MultivectorLike>(A))
+    if (auto BT = dyn_cast<BladeType>(B))
+      return llvm::is_contained(ML.getBlades(), BT);
+
+  if (auto MLA = dyn_cast<MultivectorLike>(A)) {
+    if (auto MLB = dyn_cast<MultivectorLike>(B)) {
+      bool IsUV = isa<UnitVectorType>(B);
+      // Blades are sorted during construction.
+      if (IsUV || A.getTypeID() == B.getTypeID())
+        return llvm::includes(MLA.getBlades(), MLB.getBlades());
+    }
+  }
+
+  if (isZero(B))
+    return true;
+
+  return false;
+}
 
 // Create a BladeType from a wedge product of basis blades (nonempty).
 mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {

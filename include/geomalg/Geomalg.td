@@ -339,7 +339,7 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", [InferredResult]> {
 }
 
 def Geomalg_ReverseOp : Geomalg_Op<"reverse",
-      [Distributive, SameOperandsAndResultType]> {
+      [Distributive, InferredResult]> {
   let description = [{
     Take the reverse of a k-blade that swaps vectors
     in the wedge product until the vectors are in reverse sorted
@@ -352,7 +352,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_GradeInvoOp : Geomalg_Op<"grade_invo",
-      [Distributive, SameOperandsAndResultType]> {
+      [Distributive, InferredResult]> {
   let description = [{
     Perform grade involution on a k-blade which will
     negate elements when 2k + 1 ≅ 0 (mod 2).
@@ -363,7 +363,7 @@ def Geomalg_GradeInvoOp : Geomalg_Op<"grade_invo",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Distributive, ZeroAbsorb, SameOperandsAndResultType]> {
+      [Distributive, ZeroAbsorb, InferredResult]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
@@ -443,7 +443,7 @@ def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
     dot operation on the backend then we can get rid of it.
   }];
 
-  let arguments = (ins Geomalg_MultivectorLike:$LHS, Geomalg_MultivectorLike:$RHS);
+  let arguments = (ins Geomalg_Value:$LHS, Geomalg_Value:$RHS);
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 
