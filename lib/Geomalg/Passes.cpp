@@ -476,7 +476,7 @@ static bool requiresMetric(mlir::Operation* Op) {
   if (auto IP = dyn_cast<InnerProdOp>(Op)) {
     auto L = dyn_cast<BladeType>(IP.getLHS().getType());
     auto R = dyn_cast<BladeType>(IP.getRHS().getType());
-    if (L && R && L.getGrade() == 1 && R.getGrade() == 1)
+    if (L && R && L.getGrade() > 0 && R.getGrade() > 0)
       return true;
   }
   return false;
@@ -1166,6 +1166,12 @@ auto GetDefiningOp = [](mlir::Value V) -> T {
 llvm::LogicalResult SimplifyMul::matchAndRewrite(
     mlir::Operation* Op,
     mlir::PatternRewriter& Rewriter) const {
+  if (requiresMetric(Op)) {
+    Op->emitError("cannot simplify inner product without metric");
+    // Do not emit a gazillion op errors.
+    std::exit(1);
+    return llvm::failure();
+  }
 
   mlir::ValueRange Operands = Op->getOperands();
   auto GetDefiningMul = [](mlir::Value V) -> mlir::Operation* {
