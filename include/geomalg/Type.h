@@ -50,6 +50,11 @@ bool isLikeBlades(mlir::Type A, mlir::Type B) {
   return false;
 }
 
+inline
+auto compareBladeTypes = [](BladeType const& A, BladeType const& B) {
+  return A.getBladeTag() < B.getBladeTag();
+};
+
 mlir::Type getTypeFromSum(mlir::Type A, mlir::Type B);
 
 mlir::Type

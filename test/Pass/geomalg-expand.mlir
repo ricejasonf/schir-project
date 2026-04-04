@@ -260,7 +260,7 @@ func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
 }
 
 // 3.10
-// a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
+// a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C))
 // Note we used the antisymmetric property for the second term
 // CHECK-LABEL: func.func @iprod_3_10
 // CHECK-SAME: ([[a:%arg[0-9]+]]: !geomalg.blade<1>,
@@ -271,12 +271,11 @@ func.func @iprod_3_8(%arg0: !geomalg.blade<0>, %arg1: !geomalg.blade<3>)
 // CHECK-SAME: : (!geomalg.blade<3>) -> !geomalg.blade<2>
 // CHECK: [[ab:%[0-9]+]] = "geomalg.iprod"([[a]], [[b]])
 // CHECK: [[aC:%[0-9]+]] = "geomalg.iprod"([[a]], [[C]])
-// Note the oprod simplifies to iprod because of the scalar.
 // CHECK-NOT: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
-// CHECK-NOT: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
-// CHECK: [[ab_C:%[0-9]+]] = "geomalg.iprod"([[ab]], [[C]])
-// CHECK: [[aC_b:%[0-9]+]] = "geomalg.iprod"([[aC]], [[b]])
-// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[aC_b]], [[ab_C]])
+// CHECK: [[ab_C:%[0-9]+]] = "geomalg.oprod"([[ab]], [[C]])
+// CHECK: [[b_aC:%[0-9]+]] = "geomalg.oprod"([[b]], [[aC]])
+// CHECK: [[negate_b_aC:%[0-9]+]] = "geomalg.negate"([[b_aC]])
+// CHECK: [[SUM0:%[0-9]+]] = "geomalg.sum"([[negate_b_aC]], [[ab_C]])
 // CHECK-NEXT: geomalg.return [[SUM0]]
 func.func @iprod_3_10(%arg0: !geomalg.blade<1>, %arg1: !geomalg.blade<3>)
                           -> !geomalg.unknown {

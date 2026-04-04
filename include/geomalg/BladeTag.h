@@ -114,11 +114,12 @@ public:
 
   std::strong_ordering operator<=>(BladeTag const& B) const {
     // Order by grade and then by the tag value.
-    return Tag == B.Tag
-              ? std::strong_ordering::equal :
-           getGrade() < B.getGrade() || Tag < B.Tag
-              ? std::strong_ordering::less
-              : std::strong_ordering::greater;
+    if (Tag == B.Tag)
+      return std::strong_ordering::equal;
+    if (getGrade() < B.getGrade() ||
+        ((getGrade() == B.getGrade() && Tag < B.Tag)))
+      return std::strong_ordering::less;
+    return std::strong_ordering::greater;
   }
 
   bool operator==(BladeTag const&) const = default;
@@ -154,13 +155,11 @@ public:
         std::swap(A, B);
         SignTag ^= geomalg::BladeTag::tag_sign_mask;
       };
-    auto LessThanEqual = [](auto& A, auto& B) {
-        return A.getTag() <= B.getTag();
-      };
 
     for (unsigned I = 0; I < BladeTags.size(); I++) {
       for (unsigned J = I + 1; J < BladeTags.size(); J++) {
-        if (!LessThanEqual(BladeTags[I], BladeTags[J]))
+        // Prevent swapping equal blades.
+        if (!(BladeTags[I] <= BladeTags[J]))
           Swap(BladeTags[I], BladeTags[J]);
       }
     }

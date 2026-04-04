@@ -42,7 +42,8 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
       bool IsUV = isa<UnitVectorType>(B);
       // Blades are sorted during construction.
       if (IsUV || A.getTypeID() == B.getTypeID())
-        return llvm::includes(MLA.getBlades(), MLB.getBlades());
+        return llvm::includes(MLA.getBlades(), MLB.getBlades(),
+                              compareBladeTypes);
     }
   }
 
@@ -110,9 +111,7 @@ createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
 
   // Sort by tag.
-  llvm::sort(BladeTypes, [](auto& A, auto& B) {
-      return A.getTag() < B.getTag();
-    });
+  llvm::sort(BladeTypes, compareBladeTypes);
 
   // Unique by pointer-like equality. (mlir::Types are uniqued)
   auto EndItr = llvm::unique(BladeTypes);

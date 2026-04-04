@@ -189,19 +189,6 @@ struct RemoveExpand : mlir::OpRewritePattern<geomalg::ExpandOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
-struct SimplifyOP : mlir::OpRewritePattern<geomalg::OuterProdOp> {
-  using Base = mlir::OpRewritePattern<geomalg::OuterProdOp>;
-  using Base::OpRewritePattern;
-
-  void initialize() {
-    setDebugName("SimplifyOP");
-  }
-
-  llvm::LogicalResult matchAndRewrite(
-      geomalg::OuterProdOp OP,
-      mlir::PatternRewriter& Rewriter) const override;
-};
-
 // Rewrite the geometric product of blades as terms of inner and outer products.
 struct ExpandGP : mlir::OpRewritePattern<geomalg::GeomProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::GeomProdOp>;
@@ -393,12 +380,14 @@ struct SimplifyDot : mlir::OpRewritePattern<geomalg::DotOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+// Partial ordering where all non-blades are less than
+// any blade.
 auto compareBlades(mlir::Value Aval, mlir::Value Bval) -> bool {
   geomalg::BladeType A = dyn_cast<BladeType>(Aval.getType());
   geomalg::BladeType B = dyn_cast<BladeType>(Bval.getType());
   if (!A || !B)
-    return B && !A;
-  return A.getTag() < B.getTag();
+    return !A && B;
+  return compareBladeTypes(A, B);
 }
 
 // For sorting operands within a block.
@@ -452,6 +441,7 @@ createOuterProd(mlir::PatternRewriter& Rewriter,
                 mlir::Location Loc,
                 mlir::Value LHS, mlir::Value RHS) {
   bool ShouldNegate = false;
+  // Use InferredResult for OuterProdOp
   mlir::Type ResultT = inferOuterProdResult(LHS, RHS);
   mlir::Type CResultT = ResultT; // canonical result type
   if (auto BT = dyn_cast<geomalg::BladeType>(ResultT)) {
@@ -585,8 +575,13 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
   for (auto& TypeMapNode : TypeMap) {
     auto const& [T, Vs] = TypeMapNode;
     if (isa<BladeType>(T)) {
-      mlir::Value S = SumOp::create(Rewriter, Loc, Vs);
-      GroupedValues.push_back(S);
+      if (Vs.size() == 1) {
+        GroupedValues.push_back(Vs.front());
+      } else if (Vs.size() > 1) {
+        mlir::Value S = SumOp::create(Rewriter, Loc, Vs);
+        GroupedValues.push_back(S);
+      }
+      // Do not make an empty sum. (ie its like zero)
     } else if (isZero(T)) {
       // Discard (nested) zeros.
     } else {
@@ -595,6 +590,7 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
     }
   }
 
+  llvm::stable_sort(GroupedValues, compareBlades);
   Rewriter.replaceOpWithNewOp<SumOp>(Op, GroupedValues);
   return llvm::success();
 }
@@ -693,36 +689,6 @@ llvm::LogicalResult RemoveExpand::matchAndRewrite(
   return llvm::success();
 }
 
-llvm::LogicalResult SimplifyOP::matchAndRewrite(
-    geomalg::OuterProdOp OP, // OP acronym for OuterProd
-    mlir::PatternRewriter& Rewriter) const {
-  mlir::Value LHS = OP.getLHS();
-  mlir::Value RHS = OP.getRHS();
-
-  auto L = dyn_cast<geomalg::BladeType>(LHS.getType());
-  auto R = dyn_cast<geomalg::BladeType>(RHS.getType());
-  if (!L || !R)
-    return llvm::failure();
-
-  // α ∧ B = B ∧ α = α ⌋ B
-  // Outer product with a scalar can be written as
-  // the inner product with the scalar on the left hand side.
-  if (mlir::Value Scalar =
-        L.getGrade() == 0 ? LHS :
-        R.getGrade() == 0 ? RHS : mlir::Value()) {
-    mlir::Value Other = Scalar == LHS ? RHS : LHS;
-    if (geomalg::isUnit(Scalar)) {
-      Rewriter.replaceOp(OP, Other);
-    } else {
-      assert(OP.getResult().getType() == Other.getType()); // Sanity check
-      Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(OP, Scalar, Other);
-    }
-    return llvm::success();
-  }
-
-  return llvm::failure();
-}
-
 llvm::LogicalResult ZeroAbsorbToZero::matchAndRewrite(
     mlir::Operation* Op,
     mlir::PatternRewriter& Rewriter) const {
@@ -751,6 +717,13 @@ llvm::LogicalResult ExpandGP::matchAndRewrite(
   if (L.getGrade() == 0) {
     Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(
       GP, LHS, RHS);
+    return llvm::success();
+  }
+
+  // B α = α ⌋ B
+  if (R.getGrade() == 0) {
+    Rewriter.replaceOpWithNewOp<geomalg::InnerProdOp>(
+      GP, RHS, LHS);
     return llvm::success();
   }
 
@@ -979,8 +952,6 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   // (a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C)))
   if (L.getGrade() == 1 && R.getGrade() > 1) {
     // Factor the RHS blade.
-    // a ⌋ (b ∧ C) = ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
-    // Note we used the antisymmetric property for the second term
     mlir::Value a = LHS;
     auto [b, C] = factorBlade(Rewriter, RHS);
     // (a ⌋ b)
@@ -989,10 +960,11 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
     mlir::Value aC = geomalg::InnerProdOp::create(Rewriter, Loc, a, C);
     // ((a ⌋ b) ∧ C)
     mlir::Value abC = createOuterProd(Rewriter, Loc, ab, C);
-    // ((a ⌋ C) ∧ b)
-    mlir::Value aCb = createOuterProd(Rewriter, Loc, aC, b);
-    // ((a ⌋ b) ∧ C) + ((a ⌋ C) ∧ b)
-    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(LC, abC, aCb);
+    // - (b ∧ (a ⌋ C))
+    mlir::Value baC = createOuterProd(Rewriter, Loc, b, aC);
+    baC = NegateOp::create(Rewriter, Loc, baC);
+    // ((a ⌋ b) ∧ C) - (b ∧ (a ⌋ C))
+    Rewriter.replaceOpWithNewOp<geomalg::SumOp>(LC, abC, baC);
     return llvm::success();
   }
 
@@ -1379,7 +1351,6 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
          SimplifyDot>(Ctx, mlir::PatternBenefit(10));
   PS.add<ExpandLC,
          ExpandGP,
-         SimplifyOP,
          RemoveExpand,
          ExpandInverse,
          ExpandReverse,
