@@ -12,8 +12,8 @@ func.func @versor_prod_0(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
             -> !geomalg.multivector<<1>, <2>, <4>> {
   %0 = "geomalg.vprod"(%arg0)
     : (!geomalg.multivector<<1>, <2>, <4>>)
-      -> !geomalg.multivector<<1>, <2>, <4>>
-  geomalg.return %0 : !geomalg.multivector<<1>, <2>, <4>>
+      -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }
 
 // CHECK-LABEL: func.func @versor_prod_1
@@ -141,7 +141,7 @@ func.func @point_refl_e1(%arg0: !vec3)
     -> !geomalg.unknown {
   %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
   %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !scalar
-  %3 = "geomalg.iprod"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
+  %3 = "geomalg.dot"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
   %4 = "geomalg.cmul"(%2, %3) : (!scalar, !scalar) -> !ni
   %5 = "geomalg.sum"(%1, %arg0, %4) : (!no, !vec3, !ni) -> !geomalg.unknown
   %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1
@@ -159,7 +159,7 @@ func.func @point_refl_e1_simplified(%arg0: !vec3)
     -> !geomalg.multivector<<1>, <2>, <4>> {
   %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
   %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !scalar
-  %3 = "geomalg.iprod"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
+  %3 = "geomalg.dot"(%arg0, %arg0) : (!vec3, !vec3) -> !scalar
   %4 = "geomalg.cmul"(%2, %3) : (!scalar, !scalar) -> !ni
   %5 = "geomalg.sum"(%1, %arg0, %4) : (!no, !vec3, !ni) -> !geomalg.unknown
   %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1

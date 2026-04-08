@@ -13,11 +13,14 @@
 
 namespace geomalg {
 struct DistributiveTag { };
+struct LinearTag { };
 struct ZeroAbsorbTag { };
 struct IsMulTag { };
 
 template <typename T>
 using Distributive = DistributiveTag;
+template <typename T>
+using Linear = LinearTag;
 template <typename T>
 using ZeroAbsorb = ZeroAbsorbTag;
 template <typename T>

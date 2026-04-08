@@ -40,10 +40,13 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
   if (auto MLA = dyn_cast<MultivectorLike>(A)) {
     if (auto MLB = dyn_cast<MultivectorLike>(B)) {
       bool IsUV = isa<UnitVectorType>(B);
-      // Blades are sorted during construction.
-      if (IsUV || A.getTypeID() == B.getTypeID())
-        return llvm::includes(MLA.getBlades(), MLB.getBlades(),
-                              compareBladeTypes);
+      if (IsUV || A.getTypeID() == B.getTypeID()) {
+        llvm::SmallVector<BladeType, 8> MLA_BTs(MLA.getBlades());
+        llvm::SmallVector<BladeType, 8> MLB_BTs(MLB.getBlades());
+        llvm::sort(MLA_BTs);
+        llvm::sort(MLB_BTs);
+        return llvm::includes(MLA_BTs, MLB_BTs, compareBladeTypes);
+      }
     }
   }
 

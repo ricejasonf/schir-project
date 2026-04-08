@@ -407,8 +407,8 @@ func.func @inverse_k1(%arg0: !geomalg.blade<1>)
 // COM-CHECK: geomalg.return [[PROD_a]]
 func.func @inverse_k2(%arg0: !geomalg.blade<3>) -> !geomalg.blade<3> {
   %0 = "geomalg.inverse"(%arg0)
-    : (!geomalg.blade<3>) -> !geomalg.blade<3>
-  geomalg.return %0 : !geomalg.blade<3>
+    : (!geomalg.blade<3>) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }
 
 // (a)⁻¹ = (a ⌋ a)⁻¹ a
@@ -443,8 +443,8 @@ func.func @inverse_v1(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
             -> !geomalg.multivector<<1>, <2>, <4>> {
   %0 = "geomalg.inverse"(%arg0)
     : (!geomalg.multivector<<1>, <2>, <4>>)
-      -> !geomalg.multivector<<1>, <2>, <4>>
-  geomalg.return %0 : !geomalg.multivector<<1>, <2>, <4>>
+      -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }
 
 // Inverse of unit_vector.
@@ -456,8 +456,8 @@ func.func @inverse_uv0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
             -> !geomalg.unit_vector<<1>, <2>, <4>> {
   %0 = "geomalg.inverse"(%arg0)
     : (!geomalg.unit_vector<<1>, <2>, <4>>)
-      -> !geomalg.unit_vector<<1>, <2>, <4>>
-  geomalg.return %0 : !geomalg.unit_vector<<1>, <2>, <4>>
+      -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }
 
 // Convert to unit_vector.

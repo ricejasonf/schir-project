@@ -188,12 +188,9 @@ geomalg::InverseOp::inferReturnTypes(
 
   mlir::Type T = Operands.front().getType();
   auto BT = dyn_cast<geomalg::BladeType>(T);
-  auto MV = dyn_cast<geomalg::MultivectorLike>(T);
 
-  // The purpose of leaving a type unknown is that someone can
-  // make their own fancy pass to use some method to find an
-  // inverse of specific or arbitrary sets of elements.
-  if (BT || (MV && MV.isVector()))
+  // Let operations that expand have unknown results.
+  if (BT && BT.getGrade() <= 1)
     InferredTypes.push_back(T);
   else
     InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
@@ -201,18 +198,75 @@ geomalg::InverseOp::inferReturnTypes(
   return llvm::success();
 }
 
-mlir::Type
-geomalg::InnerProdOp::maybeInferType(mlir::Type LHS, mlir::Type RHS) {
-  mlir::MLIRContext* Ctx = LHS.getContext();
-  auto A = dyn_cast<geomalg::BladeType>(LHS);
-  auto B = dyn_cast<geomalg::BladeType>(RHS);
+llvm::LogicalResult
+geomalg::InnerProdOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  mlir::Type TA = Operands[0].getType();
+  mlir::Type TB = Operands[1].getType();
+  auto A = dyn_cast<geomalg::BladeType>(TA);
+  auto B = dyn_cast<geomalg::BladeType>(TB);
+  mlir::Type Result;
   if (A && B) {
     if (A.getGrade() == 0)
-      return B;
+      Result = B;
     else if (B.getGrade() == 0)
-      return geomalg::ZeroType::get(Ctx);
+      Result = ZeroType::get(Ctx);
     else if (A.getGrade() == 1 && B.getGrade() == 1)
-      return geomalg::BladeType::get(Ctx, 0);
+      Result = BladeType::get(Ctx, 0); // Scalar
+  } else if (isZero(TA) || isZero(TB)) {
+    Result = ZeroType::get(Ctx);
   }
-  return geomalg::UnknownType::get(Ctx);
+  if (!Result)
+    Result = geomalg::UnknownType::get(Ctx);
+
+  InferredTypes.push_back(Result);
+  return llvm::success();
+}
+
+llvm::LogicalResult
+geomalg::MatmulOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange Regions,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  // Iterate the regions collecting the all of the blades from
+  // the return types. Unknown absorbs. Zero is identity.
+  llvm::SmallVector<BladeType, 8> BladeTypes;
+  for (mlir::Region* Region : Regions) {
+    mlir::Type T;
+    if (!Region->empty()) {
+      auto ReturnOp = Region->front().getTerminator();
+      T = ReturnOp->getOperand(0).getType();
+    }
+
+    if (!T || isUnknown(T)) {
+      InferredTypes.push_back(UnknownType::get(Ctx));
+      return llvm::success();
+    }
+
+    if (auto MV = dyn_cast<MultivectorLike>(T))
+      llvm::append_range(BladeTypes, MV.getBlades());
+    else if (auto BT = dyn_cast<BladeType>(T))
+      BladeTypes.push_back(BT);
+    else
+      assert(isZero(T) && "expecting zero as the only remaining case");
+  }
+
+  mlir::Type Result;
+  if (BladeTypes.empty())
+    Result = ZeroType::get(Ctx);
+  else
+    Result = createMultivectorType(BladeTypes);
+
+  InferredTypes.push_back(Result);
+  return llvm::success();
 }
