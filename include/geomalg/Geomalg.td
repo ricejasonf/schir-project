@@ -246,7 +246,7 @@ def Geomalg_SumOp : Geomalg_Op<"sum", [InferredResult]> {
   ];
 }
 
-def Geomalg_ExpandOp : Geomalg_Op<"expand", []> {
+def Geomalg_ExpandOp : Geomalg_Op<"expand", [InferredResult]> {
   let description = [{
     Expand breaks out the operands of a multivector's
     sum of basis blades representation.

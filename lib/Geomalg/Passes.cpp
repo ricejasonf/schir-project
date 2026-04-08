@@ -97,6 +97,11 @@ static OpTy replaceOpWithNewOp(mlir::RewriterBase& RB,
                                mlir::Operation* Op, Args&& ...args) {
   auto NewOp = OpTy::create(RB, Op->getLoc(),
                             std::forward<Args>(args)...);
+
+  if (auto S = dyn_cast<SumOp>(Op)) {
+    if constexpr(std::is_same_v<OpTy, SumOp>)
+      assert(isUnknown(S.getResult().getType()) || NewOp.getArgs().size() <= S.getArgs().size());
+  }
   replaceOp(RB, Op, NewOp->getResults());
   return NewOp;
 }
@@ -219,6 +224,18 @@ struct UpdateInferredTypes
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct RemoveCast : mlir::OpRewritePattern<geomalg::CastOp> {
+  using Base = mlir::OpRewritePattern<geomalg::CastOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("RemoveCast");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::CastOp, mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct RemoveExpand : mlir::OpRewritePattern<geomalg::ExpandOp> {
   using Base = mlir::OpRewritePattern<geomalg::ExpandOp>;
   using Base::OpRewritePattern;
@@ -228,8 +245,7 @@ struct RemoveExpand : mlir::OpRewritePattern<geomalg::ExpandOp> {
   }
 
   llvm::LogicalResult matchAndRewrite(
-      geomalg::ExpandOp OP,
-      mlir::PatternRewriter& Rewriter) const override;
+      geomalg::ExpandOp, mlir::PatternRewriter&) const override;
 };
 
 // Rewrite the geometric product of blades as terms of inner and outer products.
@@ -747,6 +763,19 @@ UpdateInferredTypes::matchAndRewrite(mlir::InferTypeOpInterface Op,
 
   // Just set the result type to the inferred type.
   return setResultType(Rewriter, Op.getOperation(), ResultT);
+}
+
+llvm::LogicalResult RemoveCast::matchAndRewrite(
+    geomalg::CastOp CastOp,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Type ArgT = CastOp.getArg().getType();
+  mlir::Type ResultT = CastOp.getResult().getType();
+
+  if (ArgT != ResultT)
+    return llvm::failure();
+
+  replaceOp(Rewriter, CastOp, CastOp.getArg());
+  return llvm::success();
 }
 
 llvm::LogicalResult RemoveExpand::matchAndRewrite(
@@ -1444,6 +1473,7 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   PS.add<ExpandLC,
          ExpandGP,
          RemoveExpand,
+         RemoveCast,
          ExpandInverse,
          ExpandReverse,
          ExpandGradeInvo,

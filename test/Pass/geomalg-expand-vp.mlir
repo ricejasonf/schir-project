@@ -165,8 +165,11 @@ func.func @point_refl_e1_simplified(%arg0: !vec3)
   %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1
   %7 = "geomalg.vprod"(%5, %6)
     : (!geomalg.unknown, !e1) -> !geomalg.unknown
-  %8:3 = "geomalg.expand"(%7) : (!geomalg.unknown) -> (!e1, !e2, !e3)
-  %9 = "geomalg.sum"(%8#0, %8#1, %8#2)
+  %8 = "geomalg.cast"(%7) : (!geomalg.unknown)
+    -> !geomalg.multivector<!e1, !e2, !e3, !no, !ni>
+  %9:5 = "geomalg.expand"(%8) : (!geomalg.multivector<!e1, !e2, !e3, !no, !ni>)
+    -> (!e1, !e2, !e3, !no, !ni)
+  %10 = "geomalg.sum"(%9#0, %9#1, %9#2)
     : (!e1, !e2, !e3) -> !geomalg.multivector<<1>, <2>, <4>>
-  geomalg.return %9 : !geomalg.multivector<<1>, <2>, <4>>
+  geomalg.return %10 : !geomalg.multivector<<1>, <2>, <4>>
 }

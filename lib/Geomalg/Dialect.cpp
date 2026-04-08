@@ -137,6 +137,28 @@ geomalg::SumOp::inferReturnTypes(
 }
 
 llvm::LogicalResult
+geomalg::ExpandOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::OpaqueProperties,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  mlir::Type ArgT = Operands.front().getType();
+  auto MV = dyn_cast<MultivectorLike>(ArgT);
+  // Unary sums just propagate their argument.
+  if (!MV) {
+    InferredTypes.push_back(ArgT);
+    return llvm::success();
+  }
+
+  for (BladeType BT : MV.getBlades())
+    InferredTypes.push_back(BT);
+  return llvm::success();
+}
+
+llvm::LogicalResult
 geomalg::OuterProdOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
                   std::optional<mlir::Location> LocOpt,
