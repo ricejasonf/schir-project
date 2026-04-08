@@ -692,7 +692,8 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
   }
 
   // Replace the original op with a shiny, new SumOp.
-  replaceOpWithNewOp<geomalg::SumOp>(Rewriter, Op, Results);
+  bool IsUnit = isa<UnitVectorType>(Op->getResult(0).getType());
+  replaceOpWithNewOp<geomalg::SumOp>(Rewriter, Op, IsUnit, Results);
 
   return llvm::success();
 }
@@ -729,7 +730,7 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   llvm::ArrayRef<BladeType> Blades = MVL.getBlades();
   auto MM = MatmulOp::create(Rewriter, Loc, MV,
                              /*NumRegions=*/Blades.size());
-  mlir::Value Result = MM.getResult();
+
   // Instantiate the regions of the new MatmulOp.
   for (auto&& [Region, BladeT] : llvm::zip(MM.getBodies(), Blades)) {
     // Instantiate body substituting the multivector
@@ -744,7 +745,12 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
     NewOp->setOperand(MVOperandIndex, BasisElement);
     ReturnOp::create(Rewriter, Loc, NewOp->getResult(0));
   }
-  replaceOp(Rewriter, Op, MM.getResult());
+
+  // Update the result type after adding the regions.
+  mlir::Value Result = MM.getResult();
+  Result.setType(inferReturnType(MM));
+
+  replaceOp(Rewriter, Op, Result);
   return llvm::success();
 }
 
@@ -932,7 +938,7 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
     return GeomProdOp::create(Rewriter, Loc, LHS, RHS);
   };
   auto Inverse = [&](mlir::Value V) {
-    if (isUnitVector(V.getType()))
+    if (isUnitVector(V))
       return V;
     return mlir::Value(InverseOp::create(Rewriter, Loc, V));
   };
@@ -1030,10 +1036,10 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   if (L.getGrade() == 0) {
     // Simplify if multiplying by constant 1 as is
     // common when factoring higher dimensional blades.
-    if (geomalg::isUnit(LHS)) {
+    if (geomalg::isUnitBlade(LHS)) {
       replaceOp(Rewriter, LC, RHS);
       return llvm::success();
-    } else if (R.getGrade() == 0 && geomalg::isUnit(RHS)) {
+    } else if (R.getGrade() == 0 && geomalg::isUnitBlade(RHS)) {
       llvm_unreachable("FIXME Does this happen in practice?");
       replaceOp(Rewriter, LC, LHS);
       return llvm::success();
@@ -1122,7 +1128,7 @@ llvm::LogicalResult SimplifyInverse::matchAndRewrite(
   // The inverse of scalar 1 is just 1.
   if (auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
       BT && BT.getGrade() == 0) {
-    if (geomalg::isUnit(Arg)) {
+    if (geomalg::isUnitBlade(Arg)) {
       replaceOp(Rewriter, InvOp, Arg);
       return llvm::success();
     }
@@ -1296,7 +1302,7 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
       !llvm::any_of(Operands, GetDefiningOp<geomalg::NegateOp>) &&
       !llvm::any_of(Operands, GetDefiningOp<geomalg::CastOp>) &&
       llvm::count_if(Operands, GetDefiningOp<geomalg::BladeOp>) <= 1 &&
-      (llvm::none_of(Operands, isUnit)))
+      (llvm::none_of(Operands, isUnitBlade)))
     return llvm::failure();
 
   // Collect operands.
@@ -1453,7 +1459,7 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
   mlir::Value RHS = Op.getRHS();
 
   mlir::Type T = LHS.getType();
-  if (LHS == RHS && isa<UnitVectorType>(T)) {
+  if (LHS == RHS && (isUnitVector(LHS) || isUnitBlade(LHS))) {
     auto ScalarT = geomalg::BladeType::get(getContext(), 0);
     replaceOpWithNewOp<BladeOp>(Rewriter, Op, ScalarT, 1.0f);
     return llvm::success();
@@ -1465,7 +1471,6 @@ llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
   // Create pattern rewriter thingy.
   mlir::RewritePatternSet PS(Ctx);
   PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
-  //PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(6));
   PS.add<ZeroAbsorbToZero,
          SimplifyInverse,
          SimplifyNegate,
@@ -1537,7 +1542,6 @@ llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
   PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
   PS.add<SimplifyMul,
          SimplifySum,
-         SimplifyDot,
          SimplifyInverse,
          SimplifyNegate,
          SimplifyDot
@@ -1577,6 +1581,8 @@ void MatrixPass::runOnOperation() {
   mlir::MLIRContext* Ctx = &getContext();
   mlir::func::FuncOp FuncOp = getOperation();
   mlir::Location Loc = FuncOp.getLoc();
+  // TODO Use ExpandMatmul.
+  //PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(6));
 
   mlir::Region& Body = FuncOp.getBody();
   auto NewBody = std::make_unique<mlir::Region>(FuncOp);

@@ -102,10 +102,12 @@ geomalg::SumOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
-                  mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
-                  mlir::RegionRange,
+                  mlir::DictionaryAttr Attributes,
+                  mlir::OpaqueProperties Properties,
+                  mlir::RegionRange Regions,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  SumOpAdaptor Adaptor(Operands, Attributes, Properties, Regions);
+  bool IsUnit = Adaptor.getIsUnit();
   llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
   mlir::Type ResultT;
   for (mlir::Value V : Operands) {
@@ -129,6 +131,8 @@ geomalg::SumOp::inferReturnTypes(
     ResultT = geomalg::ZeroType::get(Ctx);
   else if (llvm::all_equal(BladeTypes))
     ResultT = BladeTypes.front();
+  else if (IsUnit)
+    ResultT = geomalg::UnitVectorType::get(Ctx, BladeTypes);
   else
     ResultT = geomalg::MultivectorType::get(Ctx, BladeTypes);
 

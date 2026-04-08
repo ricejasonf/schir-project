@@ -24,7 +24,7 @@ inline llvm::cl::ValuesClass getMetricKindEnumValues() {
 }
 
 // Check if a value is a unit basis blade.
-inline bool isUnit(mlir::Value V) {
+inline bool isUnitBlade(mlir::Value V) {
   if (isa<BladeType>(V.getType())) {
     if (auto B = V.getDefiningOp<BladeOp>())
       return B.isOne();

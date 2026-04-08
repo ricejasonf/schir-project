@@ -28,8 +28,8 @@ bool isUnknown(mlir::Type T) {
 }
 
 inline
-bool isUnitVector(mlir::Type T) {
-  return isa<geomalg::UnitVectorType>(T);
+bool isUnitVector(mlir::Value V) {
+  return isa<geomalg::UnitVectorType>(V.getType());
 }
 
 bool isValidNarrowing(mlir::Type A, mlir::Type B);

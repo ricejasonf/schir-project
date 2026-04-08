@@ -234,9 +234,12 @@ class Geomalg_Op<string mnemonic, list<Trait> traits = []> :
 def Geomalg_SumOp : Geomalg_Op<"sum", [InferredResult]> {
   let description = [{
     Take a sum of k-blades to produce a multivector.
+
+    If the $IsUnit attribute is set the sum returns a unit_vector.
+    This is known to happen when negating a unit_vector.
   }];
 
-  let arguments = (ins Variadic<Geomalg_Value>:$args);
+  let arguments = (ins UnitAttr:$IsUnit, Variadic<Geomalg_Value>:$args);
   let results   = (outs Geomalg_Value:$result);
   let builders = [
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
