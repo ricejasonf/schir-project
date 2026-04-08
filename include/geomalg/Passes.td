@@ -58,6 +58,7 @@ def MatrixPass : GeomalgPass<"geomalg-matrix", "mlir::func::FuncOp"> {
     For each function, clone its region for each basis vector of the first
     argument into a geomalg.matmul operation.
   }];
+  let options =  [MetricOption] # RewritePassUtils.options;
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD

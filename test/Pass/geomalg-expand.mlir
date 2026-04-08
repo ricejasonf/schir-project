@@ -1,5 +1,5 @@
 // RUN: geomalg-opt \
-// RUN:   --geomalg-expand %s \
+// RUN:   --geomalg-expand="disable-patterns={ExpandMatmul}" %s \
 // RUN:   | FileCheck %s
 
 module {

@@ -110,36 +110,6 @@ namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
 
-class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
-  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
-  mlir::FrozenRewritePatternSet Patterns;
-
-public:
-  using Base::Base;
-  void runOnOperation() override;
-  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
-};
-
-class SimplifyPass : public geomalg::impl::SimplifyPassBase<SimplifyPass> {
-  using Base = geomalg::impl::SimplifyPassBase<SimplifyPass>;
-  mlir::FrozenRewritePatternSet Patterns;
-
-public:
-  using Base::Base;
-  void runOnOperation() override;
-  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
-};
-
-class MatrixPass : public geomalg::impl::MatrixPassBase<MatrixPass> {
-  using Base = geomalg::impl::MatrixPassBase<MatrixPass>;
-  mlir::FrozenRewritePatternSet Patterns;
-
-public:
-  using Base::Base;
-  void runOnOperation() override;
-  llvm::LogicalResult initialize(mlir::MLIRContext*) override;
-};
-
 // Rewriters for expansion.
 
 struct ExpandConvert : mlir::OpRewritePattern<geomalg::ConvertOp> {
@@ -707,8 +677,8 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   if (isa<MatmulOp>(Op))
     return llvm::failure();
 
-  // Prevent nesting
-  if (Op->getParentOfType<MatmulOp>())
+  // A matrix for operations like Negate are not so useful.
+  if (Op->getNumOperands() < 2)
     return llvm::failure();
 
   assert(Op->getResults().size() == 1);
@@ -1467,162 +1437,189 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
   return llvm::failure();
 }
 
-llvm::LogicalResult ExpandPass::initialize(mlir::MLIRContext* Ctx) {
-  // Create pattern rewriter thingy.
-  mlir::RewritePatternSet PS(Ctx);
-  PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
-  PS.add<ZeroAbsorbToZero,
-         SimplifyInverse,
-         SimplifyNegate,
-         SimplifyDot>(Ctx, mlir::PatternBenefit(10));
-  PS.add<ExpandLC,
-         ExpandGP,
-         RemoveExpand,
-         RemoveCast,
-         ExpandInverse,
-         ExpandReverse,
-         ExpandGradeInvo,
-         ExpandConvert,
-         UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
-  PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
-  PS.add<ExpandVP>(geomalg::Metric::get(metric), Ctx,
-                      mlir::PatternBenefit(2));
-  if (metric != geomalg::MetricKind::unknown) {
-    PS.add<ApplyMetric>(geomalg::Metric::get(metric), Ctx,
-                        mlir::PatternBenefit(10));
-  }
-  Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
-                        disabledPatterns,
-                        enabledPatterns);
-  return llvm::success();
-}
+namespace {
+class Expander {
+  mlir::FrozenRewritePatternSet ExpandPatterns;
+  mlir::FrozenRewritePatternSet ExpandSumPatterns;
 
-void ExpandPass::runOnOperation() {
-  mlir::MLIRContext* Ctx = &getContext();
-  mlir::func::FuncOp FuncOp = getOperation();
-
-  bool AnyIRChanged = true;
-  while (AnyIRChanged) {
-    AnyIRChanged = false;
-    bool IRChanged = false;
-    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns,
-                mlir::GreedyRewriteConfig(), &IRChanged)))
-      return signalPassFailure();
-    AnyIRChanged |= IRChanged;
-
-    // Run CSE... maybe.
-    if (IRChanged) {
-      mlir::IRRewriter Rewriter(Ctx);
-      mlir::DominanceInfo DI;
-      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+  static
+  mlir::FrozenRewritePatternSet initExpandPatterns(
+      mlir::MLIRContext* Ctx, MetricKind MK,
+      llvm::ArrayRef<std::string> disabledPatterns,
+      llvm::ArrayRef<std::string> enabledPatterns) {
+    // Create pattern rewriter thingy.
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
+    PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(100));
+    PS.add<ZeroAbsorbToZero,
+           SimplifyInverse,
+           SimplifyNegate,
+           SimplifyDot>(Ctx, mlir::PatternBenefit(10));
+    PS.add<ExpandLC,
+           ExpandGP,
+           RemoveExpand,
+           RemoveCast,
+           ExpandInverse,
+           ExpandReverse,
+           ExpandGradeInvo,
+           ExpandConvert,
+           UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
+    PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
+    PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
+    if (MK != MetricKind::unknown) {
+      PS.add<ApplyMetric>(geomalg::Metric::get(MK), Ctx,
+                          mlir::PatternBenefit(10));
     }
-    AnyIRChanged |= IRChanged;
+    return mlir::FrozenRewritePatternSet(std::move(PS),
+                            disabledPatterns,
+                            enabledPatterns);
+  }
 
-    // TODO FrozenPatternify this
+  static mlir::FrozenRewritePatternSet initExpandSumPatterns(
+                                        mlir::MLIRContext* Ctx) {
     mlir::RewritePatternSet PS(Ctx);
     PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
-    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, std::move(PS),
-                mlir::GreedyRewriteConfig(), &IRChanged)))
-      return signalPassFailure();
-    AnyIRChanged |= IRChanged;
-
-    // Run CSE.
-    {
-      mlir::IRRewriter Rewriter(Ctx);
-      mlir::DominanceInfo DI;
-      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
-    }
-    AnyIRChanged |= IRChanged;
+    return mlir::FrozenRewritePatternSet(std::move(PS));
   }
-}
 
-llvm::LogicalResult SimplifyPass::initialize(mlir::MLIRContext* Ctx) {
-  // Create pattern rewriter thingy.
-  mlir::RewritePatternSet PS(Ctx);
-  PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
-  PS.add<SimplifyMul,
-         SimplifySum,
-         SimplifyInverse,
-         SimplifyNegate,
-         SimplifyDot
-         >(Ctx);
-  Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
-                        disabledPatterns,
-                        enabledPatterns);
-  return llvm::success();
-}
+public:
+  Expander() = default;
+  Expander(mlir::MLIRContext* Ctx, MetricKind MK,
+           llvm::ArrayRef<std::string> disabledPatterns,
+           llvm::ArrayRef<std::string> enabledPatterns)
+    : ExpandPatterns(initExpandPatterns(Ctx, MK, disabledPatterns,
+                                        enabledPatterns)),
+      ExpandSumPatterns(initExpandSumPatterns(Ctx))
+  { }
 
-void SimplifyPass::runOnOperation() {
-  mlir::MLIRContext* Ctx = &getContext();
-  mlir::func::FuncOp FuncOp = getOperation();
+  llvm::LogicalResult run(mlir::func::FuncOp FuncOp) const {
+    mlir::MLIRContext* Ctx = FuncOp->getContext();
 
-  bool IRChanged = true;
-  while (IRChanged) {
-    // Run Patterns.
+    bool AnyIRChanged = true;
+    while (AnyIRChanged) {
+      AnyIRChanged = false;
+      bool IRChanged = false;
+      if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, ExpandPatterns,
+                  mlir::GreedyRewriteConfig(), &IRChanged)))
+        return llvm::failure();
+      AnyIRChanged |= IRChanged;
+
+      // Run CSE... maybe.
+      if (IRChanged) {
+        mlir::IRRewriter Rewriter(Ctx);
+        mlir::DominanceInfo DI;
+        mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+      }
+      AnyIRChanged |= IRChanged;
+
+      if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, ExpandSumPatterns,
+                  mlir::GreedyRewriteConfig(), &IRChanged)))
+        return llvm::failure();
+      AnyIRChanged |= IRChanged;
+
+      // Run CSE.
+      {
+        mlir::IRRewriter Rewriter(Ctx);
+        mlir::DominanceInfo DI;
+        mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+      }
+      AnyIRChanged |= IRChanged;
+    }
+    return llvm::success();
+  }
+};
+
+class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
+  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+  ::Expander Expander;
+
+public:
+  using Base::Base;
+  void runOnOperation() override {
+    if (llvm::failed(Expander.run(getOperation())))
+      signalPassFailure();
+  }
+
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    Expander = ::Expander(Ctx, metric, disabledPatterns, enabledPatterns);
+    return llvm::success();
+  }
+};
+
+class SimplifyPass : public geomalg::impl::SimplifyPassBase<SimplifyPass> {
+  using Base = geomalg::impl::SimplifyPassBase<SimplifyPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+  void runOnOperation() override {
+    mlir::MLIRContext* Ctx = &getContext();
+    mlir::func::FuncOp FuncOp = getOperation();
+
+    bool IRChanged = true;
+    while (IRChanged) {
+      // Run Patterns.
+      if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
+        return signalPassFailure();
+
+      // Run CSE.
+      {
+        mlir::IRRewriter Rewriter(Ctx);
+        mlir::DominanceInfo DI;
+        mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+      }
+    }
+  }
+
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    // Create pattern rewriter thingy.
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
+    PS.add<SimplifyMul,
+           SimplifySum,
+           SimplifyInverse,
+           SimplifyNegate,
+           SimplifyDot
+           >(Ctx);
+    Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                          disabledPatterns,
+                          enabledPatterns);
+    return llvm::success();
+  }
+};
+
+class MatrixPass : public geomalg::impl::MatrixPassBase<MatrixPass> {
+  using Base = geomalg::impl::MatrixPassBase<MatrixPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+  void runOnOperation() override {
+    mlir::func::FuncOp FuncOp = getOperation();
     if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
       return signalPassFailure();
+  }
 
-    // Run CSE.
-    {
-      mlir::IRRewriter Rewriter(Ctx);
-      mlir::DominanceInfo DI;
-      mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp, &IRChanged);
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    // Create pattern rewriter thingy.
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
+    PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(6));
+    PS.add<SimplifyMul,
+           SimplifySum,
+           SimplifyInverse,
+           SimplifyNegate,
+           SimplifyDot
+           >(Ctx);
+    if (metric != MetricKind::unknown) {
+      PS.add<ApplyMetric>(geomalg::Metric::get(metric), Ctx,
+                          mlir::PatternBenefit(10));
     }
+    Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                          disabledPatterns,
+                          enabledPatterns);
+    return llvm::success();
   }
-}
-
-llvm::LogicalResult MatrixPass::initialize(mlir::MLIRContext* Ctx) {
-  return llvm::success();
-}
-
-void MatrixPass::runOnOperation() {
-  // Create a new region for the body with the same arguments
-  // and insert a new matmul and return operation.
-  mlir::MLIRContext* Ctx = &getContext();
-  mlir::func::FuncOp FuncOp = getOperation();
-  mlir::Location Loc = FuncOp.getLoc();
-  // TODO Use ExpandMatmul.
-  //PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(6));
-
-  mlir::Region& Body = FuncOp.getBody();
-  auto NewBody = std::make_unique<mlir::Region>(FuncOp);
-  NewBody->emplaceBlock();
-  for (mlir::Type ArgT : FuncOp.getArgumentTypes())
-    NewBody->addArgument(ArgT, Loc);
-  auto BodyBuilder = mlir::OpBuilder(NewBody.get());
-
-  mlir::Value InputArg = !Body.getArguments().empty()
-        ? mlir::Value(Body.getArguments().front()) : mlir::Value();
-  if (!InputArg || !isa<MultivectorLike>(InputArg.getType())) {
-    FuncOp->emitError("expecting an input argument");
-    return signalPassFailure();
-  }
-  MultivectorLike MVL = cast<MultivectorLike>(InputArg.getType());
-  mlir::Value NewInputArg = NewBody->getArguments().front();
-
-  llvm::ArrayRef<BladeType> Blades = MVL.getBlades();
-
-  unsigned NumRegions = MVL.getBlades().size();
-  auto MM = MatmulOp::create(BodyBuilder, Loc, NewInputArg,
-                             /*NumRegions=*/MVL.getBlades().size());
-  mlir::Value Result = MM.getResult();
-  mlir::Block& BB = NewBody->front();
-  ReturnOp::create(BodyBuilder, Loc, MM.getResult());
-
-  // Instantiate the regions of the new MatmulOp.
-  for (auto&& [Region, BladeT] : llvm::zip(MM.getBodies(), MVL.getBlades())) {
-    // Instantiate body substituting InputArg
-    // with the basis element for this blade.
-    mlir::OpBuilder Builder = mlir::OpBuilder(MM);
-    mlir::Value BasisElement = BladeOp::create(Builder, Loc, BladeT, 1.0f);
-    mlir::IRMapping IRMap;
-    IRMap.map(InputArg, BasisElement);
-    Body.cloneInto(&Region, IRMap);
-  }
-
-  // TODO Use PatternRewriters to fix ExpandOps and simplify zeros.
-
-
-  // Finish by replacing the original body with the new one.
-  Body.takeBody(*NewBody);
-}
+};
+} // namespace

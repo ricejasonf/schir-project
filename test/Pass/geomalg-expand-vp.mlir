@@ -2,7 +2,8 @@
 // RUN:--geomalg-expand="enable-patterns={ExpandVP, DistributeVP}" --cse %s \
 // RUN:| FileCheck %s
 
-// RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-simplify %s \
+// RUN: geomalg-opt --geomalg-expand="metric=cga disable-patterns={ExpandMatmul}" \
+// RUN:             --geomalg-simplify %s \
 // RUN:| FileCheck --check-prefix="CGA"  %s
 
 // CHECK-LABEL: func.func @versor_prod_0
