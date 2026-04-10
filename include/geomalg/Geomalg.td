@@ -418,7 +418,7 @@ def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {
     replaces both oprod and iprod along with any casts.
   }];
 
-  let arguments = (ins Variadic<Geomalg_Blade>:$arg);
+  let arguments = (ins Variadic<Geomalg_Blade>:$args);
   let results   = (outs Geomalg_Blade:$result);
 }
 

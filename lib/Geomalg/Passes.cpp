@@ -20,6 +20,7 @@ namespace geomalg {
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
+// PDLL Junk
 namespace geomalg::simplify {
 #include "geomalg/Transforms/Simplify.h.inc"
 }
@@ -1589,37 +1590,4 @@ public:
   }
 };
 
-class MatrixPass : public geomalg::impl::MatrixPassBase<MatrixPass> {
-  using Base = geomalg::impl::MatrixPassBase<MatrixPass>;
-  mlir::FrozenRewritePatternSet Patterns;
-
-public:
-  using Base::Base;
-  void runOnOperation() override {
-    mlir::func::FuncOp FuncOp = getOperation();
-    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
-      return signalPassFailure();
-  }
-
-  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
-    // Create pattern rewriter thingy.
-    mlir::RewritePatternSet PS(Ctx);
-    PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
-    PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(6));
-    PS.add<SimplifyMul,
-           SimplifySum,
-           SimplifyInverse,
-           SimplifyNegate,
-           SimplifyDot
-           >(Ctx);
-    if (metric != MetricKind::unknown) {
-      PS.add<ApplyMetric>(geomalg::Metric::get(metric), Ctx,
-                          mlir::PatternBenefit(10));
-    }
-    Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
-                          disabledPatterns,
-                          enabledPatterns);
-    return llvm::success();
-  }
-};
 } // namespace

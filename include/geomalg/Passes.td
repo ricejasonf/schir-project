@@ -11,9 +11,7 @@ include "mlir/Rewrite/PassUtil.td"
 class GeomalgPass<string name, string operation = "">
 : Pass<name, operation> {
   let dependentDialects = ["geomalg::GeomalgDialect",
-                           "mlir::func::FuncDialect",
-                           "mlir::pdl::PDLDialect",
-                           "mlir::pdl_interp::PDLInterpDialect"];
+                           "mlir::func::FuncDialect"];
 }
 
 // Allow pass to optionally use one of the predefined metrics.
@@ -52,13 +50,15 @@ def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
   let options = RewritePassUtils.options;
 }
 
-def MatrixPass : GeomalgPass<"geomalg-matrix", "mlir::func::FuncOp"> {
-  let summary = "Substitute function bodies with matmul";
+def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
+  let summary = "Lower Geomalg to Arith and Sparse dialects.";
   let description = [{
-    For each function, clone its region for each basis vector of the first
-    argument into a geomalg.matmul operation.
+    Lower to dialects that themselves can lower to LLVM or SPIRV.
   }];
-  let options =  [MetricOption] # RewritePassUtils.options;
+  let dependentDialects = ["geomalg::GeomalgDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::func::FuncDialect",
+                           "mlir::tensor::TensorDialect"];
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD
