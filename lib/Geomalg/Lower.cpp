@@ -19,14 +19,14 @@ using namespace geomalg;
 namespace {
 // All types will be converted a single scalar type
 // and tensors over said scalar type.
-class TypeConverter : mlir::TypeConverter {
+class TypeConverter : public mlir::TypeConverter {
   mlir::Type ScalarT;
 public:
   TypeConverter(mlir::Type ScalarT)
     : mlir::TypeConverter(),
       ScalarT(ScalarT)
   {
-    addConversion([=](BladeType BT) { return ScalarT; });
+    addConversion([ScalarT](BladeType BT) { return ScalarT; });
     // addConversion([](MultivectorLike MV) { return ???; });
   }
 };
@@ -43,49 +43,107 @@ struct ConversionTarget : mlir::ConversionTarget {
   }
 };
 
-#if 0  // TODO If we need TypeConverter anyways we could
-       //      use it to specify the scalar type with this
-       //      explicit object parameter thingy I have been
-       //      wanting to use.
-struct PatternBase {
+class PatternBase {
+public:
   template <typename Self>
   mlir::Type getScalarT(this Self& self) {
-    mlir::MLIRContext* Ctx = &self.getContext();
-    mlir::TypeConverter* TC = self.getTypeConverter();
+    mlir::MLIRContext* Ctx = self.getContext();
+    mlir::TypeConverter const* TC = self.getTypeConverter();
     mlir::Type BT = BladeType::get(Ctx, 0);
     return TC->convertType(BT);
   }
 };
-#endif
 
 // Conversion Patterns
 
-class CMulToMul : public mlir::OpConversionPattern<CMulOp> {
-  mlir::Type ScalarT;
-
-public:
-  template <typename ...Args>
-  CMulToMul(mlir::Type ScalarT, Args ...args)
-    : Base(args...),
-      ScalarT(ScalarT)
-  { }
+struct CMulToMul : mlir::OpConversionPattern<CMulOp>,
+                   ::PatternBase {
+  using Base::Base;
 
   llvm::LogicalResult matchAndRewrite(
         CMulOp Op, CMulOp::Adaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
     mlir::ValueRange Args = Adaptor.getArgs();
+    mlir::Type ScalarT = getScalarT();
+
     if (Args.empty()) {
       // Return a constant 1.0f.
       R.replaceOpWithNewOp<arith::ConstantOp>(Op, R.getOneAttr(ScalarT));
     } else {
-      mlir::Value Result = Args.front();
+      mlir::Value NewResult = Args.front();
       for (mlir::Value Arg : Args.drop_front())
-        Result = arith::MulFOp::create(R, Op.getLoc(), ScalarT, Result, Arg);
-      R.replaceOp(Op, Result);
+        NewResult = arith::MulFOp::create(R, Op.getLoc(), ScalarT,
+                                          NewResult, Arg);
+      R.replaceOp(Op, NewResult);
     }
     return llvm::success();
   }
 };
+
+struct LowerSum : mlir::OpConversionPattern<SumOp>,
+                  ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        SumOp Op, SumOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type ScalarT = getScalarT();
+    mlir::ValueRange Args = Adaptor.getArgs();
+    mlir::Value Result = Op.getResult();
+    mlir::Type ResultT = Result.getType();
+    if (Args.empty()) {
+      // Return a constant 0.0f.
+      R.replaceOpWithNewOp<arith::ConstantOp>(Op, R.getZeroAttr(ScalarT));
+    } else if (auto MV = dyn_cast<MultivectorLike>(ResultT)) {
+      // Create a tensor.
+      size_t Size = MV.getBlades().size();
+      mlir::Type RT = mlir::RankedTensorType::get(Size, ScalarT);
+      R.replaceOpWithNewOp<tensor::FromElementsOp>(Op, RT, Args);
+    } else {
+      assert(isa<BladeType>(ResultT));
+      // SumOp type inference guarantees like terms here so
+      // this is where we can actually perform addition.
+      mlir::Value NewResult = Args.front();
+      for (mlir::Value Arg : Args.drop_front())
+        NewResult = arith::AddFOp::create(R, Op.getLoc(), NewResult, Arg);
+      R.replaceOp(Op, NewResult);
+    }
+    return llvm::success();
+  }
+};
+
+struct LowerBlade : mlir::OpConversionPattern<BladeOp>,
+                    ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        BladeOp Op, BladeOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type ScalarT = getScalarT();
+    mlir::FloatAttr C = Op.getCoefficientAttr();
+    R.replaceOpWithNewOp<arith::ConstantOp>(Op, ScalarT, C);
+    return llvm::success();
+  }
+};
+
+struct LowerNegate : mlir::OpConversionPattern<NegateOp>,
+                     ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        NegateOp Op, NegateOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type ScalarT = getScalarT();
+    mlir::Value Arg = Adaptor.getArg();
+    R.replaceOpWithNewOp<arith::NegFOp>(Op, Arg);
+    return llvm::success();
+  }
+};
+
+// Lowering Passes
 
 class LowerPass : public geomalg::impl::LowerPassBase<LowerPass> {
   using Base = geomalg::impl::LowerPassBase<LowerPass>;
@@ -93,19 +151,22 @@ class LowerPass : public geomalg::impl::LowerPassBase<LowerPass> {
 
 public:
   using Base::Base;
-  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
-    mlir::RewritePatternSet PS(Ctx);
-    mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
-    PS.add<CMulToMul>(ScalarT, Ctx);
-    Patterns = mlir::FrozenRewritePatternSet(std::move(PS));
-    return llvm::success();
-  }
 
   void runOnOperation() override {
+    mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
     ConversionTarget Target(getContext());
+
+    mlir::RewritePatternSet PS(Ctx);
+    mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
+    // Note that TypeConverter has its pointer captured.
+    ::TypeConverter TC(ScalarT);
+    PS.add<CMulToMul,
+           LowerSum,
+           LowerNegate,
+           LowerBlade>(TC, Ctx);
     mlir::LogicalResult
-      Result = mlir::applyPartialConversion(M, Target, Patterns);
+      Result = mlir::applyPartialConversion(M, Target, std::move(PS));
     if (llvm::failed(Result))
       signalPassFailure();
   }
