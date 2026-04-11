@@ -58,6 +58,7 @@ def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
   let dependentDialects = ["geomalg::GeomalgDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
+                           "mlir::linalg::LinalgDialect",
                            "mlir::tensor::TensorDialect"];
 }
 

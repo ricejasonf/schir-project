@@ -1,10 +1,15 @@
 #include <geomalg/Dialect.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
+
+#ifndef NDEBUG
+#include <mlir/IR/Verifier.h>
+#endif // NDEBUG
 
 // Generated stuff
 namespace geomalg {
@@ -13,21 +18,22 @@ namespace geomalg {
 }
 
 namespace arith = mlir::arith;
+namespace linalg = mlir::linalg;
 namespace tensor = mlir::tensor;
 using namespace geomalg;
 
 namespace {
 // All types will be converted a single scalar type
 // and tensors over said scalar type.
-class TypeConverter : public mlir::TypeConverter {
-  mlir::Type ScalarT;
-public:
+struct TypeConverter : mlir::TypeConverter {
   TypeConverter(mlir::Type ScalarT)
-    : mlir::TypeConverter(),
-      ScalarT(ScalarT)
+    : mlir::TypeConverter()
   {
     addConversion([ScalarT](BladeType BT) { return ScalarT; });
-    // addConversion([](MultivectorLike MV) { return ???; });
+    addConversion([ScalarT](MultivectorLike MV) {
+      size_t Size = MV.getBlades().size();
+      return mlir::RankedTensorType::get(Size, ScalarT);
+    });
   }
 };
 
@@ -38,6 +44,7 @@ struct ConversionTarget : mlir::ConversionTarget {
     // Legalize stuff.
     addLegalDialect<arith::ArithDialect>();
     addLegalDialect<tensor::TensorDialect>();
+    addLegalDialect<linalg::LinalgDialect>();
     //addIllegalDialect<geomalg::GeomalgDialect>();
     addIllegalOp<CMulOp>();
   }
@@ -113,6 +120,32 @@ public:
   }
 };
 
+struct LowerExpand : mlir::OpConversionPattern<ExpandOp>,
+                     ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        ExpandOp Op, ExpandOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    // ExpandOp always "extracts" every element.
+    mlir::Location Loc = Op->getLoc();
+    llvm::SmallVector<mlir::Value, 8> NewResults;
+    mlir::Value InputTensor = Adaptor.getArg();
+    mlir::ValueRange Results = Op.getResults();
+    int64_t Index = 0;
+    for (mlir::Value Result : Results) {
+      mlir::IntegerAttr IndexAttr = R.getIndexAttr(Index);
+      mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
+      mlir::Value
+        NewResult = tensor::ExtractOp::create(R, Loc, InputTensor, Index);
+      NewResults.push_back(NewResult);
+    }
+    R.replaceOp(Op, NewResults);
+    return llvm::success();
+  }
+};
+
 struct LowerBlade : mlir::OpConversionPattern<BladeOp>,
                     ::PatternBase {
 public:
@@ -143,6 +176,31 @@ public:
   }
 };
 
+struct LowerDot : mlir::OpConversionPattern<DotOp>,
+                  ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        DotOp Op, DotOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+    mlir::ValueRange Inputs = Adaptor.getOperands();
+    // The linalg::DotOp "returns" a tensor<f32> so we have to unwrap it.
+    mlir::Value
+      Zero = arith::ConstantOp::create(R, Loc, R.getZeroAttr(ScalarT));
+    mlir::Type TensorT = mlir::RankedTensorType::get({}, ScalarT);
+    mlir::Value Output = tensor::EmptyOp::create(R, Loc, TensorT, mlir::ValueRange{});
+    auto FillOp = linalg::FillOp::create(R, Loc, Zero, Output);
+    Output = FillOp.getResults().front();
+    linalg::DotOp Dot = linalg::DotOp::create(R, Loc, Inputs, Output);
+    mlir::Value DotResult = Dot.getResults().front();
+    R.replaceOpWithNewOp<tensor::ExtractOp>(Op, ScalarT, DotResult);
+    return llvm::success();
+  }
+};
+
 // Lowering Passes
 
 class LowerPass : public geomalg::impl::LowerPassBase<LowerPass> {
@@ -163,10 +221,16 @@ public:
     ::TypeConverter TC(ScalarT);
     PS.add<CMulToMul,
            LowerSum,
+           LowerExpand,
            LowerNegate,
-           LowerBlade>(TC, Ctx);
+           LowerBlade,
+           LowerDot
+           >(TC, Ctx);
+    mlir::ConversionConfig Config;
+    Config.allowPatternRollback = false;
+
     mlir::LogicalResult
-      Result = mlir::applyPartialConversion(M, Target, std::move(PS));
+      Result = mlir::applyPartialConversion(M, Target, std::move(PS), Config);
     if (llvm::failed(Result))
       signalPassFailure();
   }
