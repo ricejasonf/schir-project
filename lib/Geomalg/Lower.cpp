@@ -17,6 +17,12 @@ namespace geomalg {
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
+namespace geomalg {
+// Implemented in Passes.cpp
+mlir::LogicalResult
+applyUpdateReturnPatterns(mlir::Operation* Op);
+}
+
 namespace arith = mlir::arith;
 namespace linalg = mlir::linalg;
 namespace tensor = mlir::tensor;
@@ -201,6 +207,65 @@ public:
   }
 };
 
+struct LowerFuncReturn : mlir::OpConversionPattern<ReturnOp>,
+                         ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        ReturnOp Op, ReturnOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+    mlir::Value Arg = Adaptor.getArg();
+    mlir::Type OrigT = Op.getArg().getType();
+    mlir::Operation* ParentOp = Arg.getParentRegion()->getParentOp();
+    auto FuncOp = dyn_cast<mlir::func::FuncOp>(ParentOp);
+    if (!FuncOp)
+      return llvm::failure();
+
+    mlir::Type FuncResultT = FuncOp.getResultTypes().front();
+
+    // I guess we have to wait for the function signature pass updater thingy.
+    if (FuncResultT == Arg.getType())
+      return llvm::failure();
+
+    // Replace with the proper ReturnOp for FuncOps.
+    R.replaceOpWithNewOp<mlir::func::ReturnOp>(Op, Arg);
+    return llvm::success();
+  }
+};
+
+struct LowerMatmul : mlir::OpConversionPattern<MatmulOp>,
+                     ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        MatmulOp Op, MatmulOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+    mlir::RegionRange Regions = Op.getRegions();
+    llvm::SmallVector<mlir::Value, 8> Columns;
+    for (mlir::Region* Region : Regions) {
+      auto RetOp = cast<ReturnOp>(Region->front().getTerminator());
+      mlir::Value Column = RetOp.getArg();
+      // If Column is a scalar, then we need to lift it to a tensor.
+      if (!isa<mlir::RankedTensorType>(Column.getType())) {
+        mlir::Type RT = mlir::RankedTensorType::get({}, ScalarT);
+        Column = tensor::FromElementsOp::create(R, Loc, RT, Column);
+      }
+      Columns.push_back(Column);
+    }
+    mlir::Value Arg = Op.getArg();
+    // TODO Concatate the columns which should create a matrix
+    //      err... tensor with which to call Matmul on Arg.
+    llvm_unreachable("TODO");
+    return llvm::success();
+  }
+};
+
 // Lowering Passes
 
 class LowerPass : public geomalg::impl::LowerPassBase<LowerPass> {
@@ -213,6 +278,15 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
+
+    // Fix return types of geomalg::ReturnOps.
+    if (llvm::failed(applyUpdateReturnPatterns(M))) {
+      signalPassFailure();
+      return;
+    }
+
+
+    // Do that actual Conversion.
     ConversionTarget Target(getContext());
 
     mlir::RewritePatternSet PS(Ctx);

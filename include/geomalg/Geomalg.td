@@ -494,13 +494,13 @@ def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return", [ReturnLike,
     so we can deduce return types in a subsequent pass.
   }];
 
-  let arguments = (ins Variadic<AnyType>:$operands);
+  let arguments = (ins AnyType:$arg);
 
   let builders = [
     OpBuilder<(ins), [{ build($_builder, $_state, {}); }]>
   ];
 
-  let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
+  let assemblyFormat = "attr-dict $arg `:` type($arg)";
 }
 
 def CallOp : Op<Geomalg_Dialect, "call", []> {

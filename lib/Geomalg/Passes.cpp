@@ -39,6 +39,10 @@ void dumpBlock(mlir::Operation* Op) {
 void dumpBlock(mlir::Value V) {
   V.getParentBlock()->dump();
 }
+
+// For use in Lower.cpp
+llvm::LogicalResult
+applyUpdateReturnPatterns(mlir::Operation* Op);
 }
 
 using namespace geomalg;
@@ -71,6 +75,59 @@ expandMultivector(mlir::PatternRewriter& Rewriter, mlir::Value MV) {
                                          BladeTypes, MV);
   }
   return ExpandOp.getResults();
+}
+
+// This actually lifts to a multivector type, blade type, or zero type.
+// Arg blades should be a subset of TargetT blades.
+static mlir::Value
+liftToMultivector(mlir::PatternRewriter& Rewriter, mlir::Type TargetT,
+                  mlir::Value Arg) {
+  mlir::Location Loc = Arg.getLoc();
+  mlir::Type ArgT = Arg.getType();
+
+  if (isZero(TargetT))
+    return geomalg::BladeOp::create(Rewriter, Loc, TargetT, 0);
+
+  if (ArgT == TargetT || isLikeMultivector(ArgT, TargetT))
+    return Arg;
+
+  llvm::ArrayRef<BladeType> Blades;
+  auto MaybeBT = dyn_cast<BladeType>(TargetT);
+  if (MaybeBT)
+    Blades = MaybeBT;
+  else if (auto MVL = dyn_cast<MultivectorLike>(TargetT))
+    Blades = MVL.getBlades();
+  else
+    llvm_unreachable("expecting blade or multivector type");
+
+  if (MaybeBT && Blades.size() == 1)
+    return Arg;
+
+  mlir::ValueRange Args;
+  if (isa<MultivectorLike>(ArgT))
+    Args = expandMultivector(Rewriter, Arg);
+  else
+    Args = mlir::ValueRange(Arg);
+
+  assert(llvm::all_of(Args, [&](mlir::Value A) {
+        auto BT = dyn_cast<BladeType>(A.getType());
+        bool IsZero = isZero(A.getType());
+        return (!BT && IsZero) || (BT && llvm::is_contained(Blades, BT));
+        }) &&
+      "expecting subset of blades in target");
+
+
+  llvm::SmallVector<mlir::Value, 8> SumArgs(Blades.size());
+  for (auto [BT, SumArg] : llvm::zip(Blades, SumArgs)) {
+    auto Pred = [BT](mlir::Value A) { return A.getType() == BT; };
+    auto Itr = llvm::find_if(Args, Pred);
+    if (Itr != Args.end())
+      SumArg = *Itr;
+    else
+      SumArg = BladeOp::create(Rewriter, Loc, BT, 0.0f);
+  }
+  mlir::Value Result = SumOp::create(Rewriter, Loc, SumArgs);
+  return Result;
 }
 
 static mlir::Type inferReturnType(mlir::InferTypeOpInterface Op) {
@@ -165,6 +222,18 @@ struct ExpandMatmul : mlir::OpTraitRewritePattern<geomalg::Linear> {
 
   llvm::LogicalResult matchAndRewrite(
       mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override;
+};
+
+struct UpdateReturn : mlir::OpRewritePattern<ReturnOp> {
+  using Base = mlir::OpRewritePattern<ReturnOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandMatmul");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      ReturnOp Op, mlir::PatternRewriter& Rewriter) const override;
 };
 
 // If any operand is Zero, then replace the Op
@@ -678,7 +747,7 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   if (isa<MatmulOp>(Op))
     return llvm::failure();
 
-  // A matrix for operations like Negate are not so useful.
+  // A matrix for operations like Negate is not so useful.
   if (Op->getNumOperands() < 2)
     return llvm::failure();
 
@@ -722,6 +791,32 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   Result.setType(inferReturnType(MM));
 
   replaceOp(Rewriter, Op, Result);
+  return llvm::success();
+}
+
+// Update the Region results to match the containing MatmulOp.
+llvm::LogicalResult
+UpdateReturn::matchAndRewrite(ReturnOp Op,
+                              mlir::PatternRewriter& Rewriter) const {
+  // The target result type.
+  mlir::Type ResultT;
+  if (auto MM = dyn_cast<MatmulOp>(Op->getParentOp()))
+    ResultT = MM.getResult().getType();
+  else if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op->getParentOp()))
+    ResultT = FuncOp.getResultTypes().front();
+
+  mlir::Value RetArg = Op.getArg();
+  mlir::Type RetT = RetArg.getType();
+
+  if (!ResultT || isUnknown(ResultT) || isUnknown(RetT) ||
+      RetT == ResultT || isLikeMultivector(ResultT, RetT))
+    return llvm::failure(); // Nothing more to do here
+
+  // Make all region result types the same as the MatmulOp result type.
+  mlir::Value NewArg = liftToMultivector(Rewriter, ResultT, RetArg);
+  if (NewArg == RetArg)
+    return llvm::failure();
+  Rewriter.replaceOpWithNewOp<ReturnOp>(Op, NewArg);
   return llvm::success();
 }
 
@@ -1438,7 +1533,15 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
   return llvm::failure();
 }
 
+llvm::LogicalResult
+geomalg::applyUpdateReturnPatterns(mlir::Operation* Op) {
+  mlir::RewritePatternSet PS(Op->getContext());
+  PS.add<UpdateReturn>(Op->getContext());
+  return mlir::applyPatternsGreedily(Op, std::move(PS));
+}
+
 namespace {
+// TODO Refactor this to populateExpand*Patterns(...).
 class Expander {
   mlir::FrozenRewritePatternSet ExpandPatterns;
   mlir::FrozenRewritePatternSet ExpandSumPatterns;

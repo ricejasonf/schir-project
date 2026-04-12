@@ -56,6 +56,15 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
   return false;
 }
 
+bool isLikeMultivector(mlir::Type A, mlir::Type B) {
+  if (auto MA = dyn_cast<MultivectorLike>(A)) {
+    if (auto MB = dyn_cast<MultivectorLike>(B)) {
+      return llvm::equal(MA.getBlades(), MB.getBlades());
+    }
+  }
+  return false;
+}
+
 // Create a BladeType from a wedge product of basis blades (nonempty).
 mlir::Type createBladeType(llvm::ArrayRef<geomalg::BladeType> BladeTypes) {
   assert(!BladeTypes.empty());

@@ -50,6 +50,8 @@ bool isLikeBlades(mlir::Type A, mlir::Type B) {
   return false;
 }
 
+bool isLikeMultivector(mlir::Type A, mlir::Type B);
+
 inline
 auto compareBladeTypes = [](BladeType const& A, BladeType const& B) {
   return A.getBladeTag() < B.getBladeTag();
