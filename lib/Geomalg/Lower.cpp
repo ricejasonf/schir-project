@@ -24,6 +24,7 @@ applyUpdateReturnPatterns(mlir::Operation* Op);
 }
 
 namespace arith = mlir::arith;
+namespace func = mlir::func;
 namespace linalg = mlir::linalg;
 namespace tensor = mlir::tensor;
 using namespace geomalg;
@@ -52,6 +53,7 @@ struct ConversionTarget : mlir::ConversionTarget {
     addLegalDialect<arith::ArithDialect>();
     addLegalDialect<tensor::TensorDialect>();
     addLegalDialect<linalg::LinalgDialect>();
+    addLegalDialect<func::FuncDialect>();
     //addIllegalDialect<geomalg::GeomalgDialect>();
     addIllegalOp<CMulOp>();
   }
@@ -256,7 +258,8 @@ public:
     for (mlir::Region* Region : Regions) {
       auto RetOp = cast<ReturnOp>(Region->front().getTerminator());
       mlir::Value Column = R.getRemappedValue(RetOp.getArg());
-      assert(Column && "failed to remapvalue");
+      if (!Column)
+        return R.notifyMatchFailure(Op, "failed to remap value");
       Columns.push_back(Column);
       R.eraseOp(RetOp);
       // MatvecOp regions only ever have a single block.
@@ -283,6 +286,42 @@ public:
     mlir::Value Matrix = tensor::ConcatOp::create(R, Loc, /*Dim=*/1, Columns);
     R.replaceOpWithNewOp<linalg::MatvecOp>(Op,
         mlir::ValueRange({Matrix, Vec}), Vec);
+    return llvm::success();
+  }
+};
+
+struct LowerReturn : mlir::OpConversionPattern<ReturnOp>,
+                     ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        ReturnOp Op, ReturnOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+
+    auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op->getParentOp());
+    if (!FuncOp)
+      return llvm::failure();
+
+
+    mlir::Value NewResult = Adaptor.getArg();
+    R.replaceOpWithNewOp<mlir::func::ReturnOp>(Op, NewResult);
+
+    // Update the function signature so the new func::ReturnOp will be valid.
+    // This means replacing the entire FuncOp.
+    mlir::FunctionType FT = FuncOp.getFunctionType();
+    mlir::TypeConverter const* TC = getTypeConverter();
+    mlir::TypeConverter::SignatureConversion SC(FT.getNumInputs());
+    if (llvm::failed(TC->convertSignatureArgs(FT.getInputs(), SC)))
+        return R.notifyMatchFailure(Op,
+            "failed to remap function argument types");
+    mlir::FunctionType NewFT = mlir::FunctionType::get(
+        R.getContext(), SC.getConvertedTypes(), NewResult.getType());
+    FuncOp.setFunctionType(NewFT);
+    R.applySignatureConversion(&FuncOp.getBody().front(), SC);
+
     return llvm::success();
   }
 };
@@ -320,7 +359,8 @@ public:
            LowerNegate,
            LowerBlade,
            LowerDot,
-           LowerMatvec
+           LowerMatvec,
+           LowerReturn
            >(TC, Ctx);
     mlir::ConversionConfig Config;
     Config.allowPatternRollback = false;
