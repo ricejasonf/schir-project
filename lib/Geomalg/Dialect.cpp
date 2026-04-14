@@ -256,7 +256,7 @@ geomalg::InnerProdOp::inferReturnTypes(
 }
 
 llvm::LogicalResult
-geomalg::MatmulOp::inferReturnTypes(
+geomalg::MatvecOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,

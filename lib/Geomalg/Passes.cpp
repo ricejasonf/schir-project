@@ -212,12 +212,12 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
 };
 
 // Convert a linear operation into matrix multiplication.
-struct ExpandMatmul : mlir::OpTraitRewritePattern<geomalg::Linear> {
+struct ExpandMatvec : mlir::OpTraitRewritePattern<geomalg::Linear> {
   using Base = mlir::OpTraitRewritePattern<geomalg::Linear>;
   using Base::OpTraitRewritePattern;
 
   void initialize() {
-    setDebugName("ExpandMatmul");
+    setDebugName("ExpandMatvec");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -229,7 +229,7 @@ struct UpdateReturn : mlir::OpRewritePattern<ReturnOp> {
   using Base::OpRewritePattern;
 
   void initialize() {
-    setDebugName("ExpandMatmul");
+    setDebugName("UpdateReturn");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -739,12 +739,12 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
 }
 
 llvm::LogicalResult
-ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
+ExpandMatvec::matchAndRewrite(mlir::Operation* Op,
                               mlir::PatternRewriter& Rewriter) const {
   mlir::MLIRContext* Ctx = getContext();
   mlir::Location Loc = Op->getLoc();
 
-  if (isa<MatmulOp>(Op))
+  if (isa<MatvecOp>(Op))
     return llvm::failure();
 
   // A matrix for operations like Negate is not so useful.
@@ -768,10 +768,10 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   mlir::Value MV = OpOperand.get();
   auto MVL = cast<MultivectorLike>(MV.getType());
   llvm::ArrayRef<BladeType> Blades = MVL.getBlades();
-  auto MM = MatmulOp::create(Rewriter, Loc, MV,
+  auto MM = MatvecOp::create(Rewriter, Loc, MV,
                              /*NumRegions=*/Blades.size());
 
-  // Instantiate the regions of the new MatmulOp.
+  // Instantiate the regions of the new MatvecOp.
   for (auto&& [Region, BladeT] : llvm::zip(MM.getBodies(), Blades)) {
     // Instantiate body substituting the multivector
     // with the basis element for this blade.
@@ -794,13 +794,13 @@ ExpandMatmul::matchAndRewrite(mlir::Operation* Op,
   return llvm::success();
 }
 
-// Update the Region results to match the containing MatmulOp.
+// Update the Region results to match the containing MatvecOp.
 llvm::LogicalResult
 UpdateReturn::matchAndRewrite(ReturnOp Op,
                               mlir::PatternRewriter& Rewriter) const {
   // The target result type.
   mlir::Type ResultT;
-  if (auto MM = dyn_cast<MatmulOp>(Op->getParentOp()))
+  if (auto MM = dyn_cast<MatvecOp>(Op->getParentOp()))
     ResultT = MM.getResult().getType();
   else if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op->getParentOp()))
     ResultT = FuncOp.getResultTypes().front();
@@ -812,7 +812,7 @@ UpdateReturn::matchAndRewrite(ReturnOp Op,
       RetT == ResultT || isLikeMultivector(ResultT, RetT))
     return llvm::failure(); // Nothing more to do here
 
-  // Make all region result types the same as the MatmulOp result type.
+  // Make all region result types the same as the MatvecOp result type.
   mlir::Value NewArg = liftToMultivector(Rewriter, ResultT, RetArg);
   if (NewArg == RetArg)
     return llvm::failure();
@@ -1554,7 +1554,7 @@ class Expander {
     // Create pattern rewriter thingy.
     mlir::RewritePatternSet PS(Ctx);
     PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
-    PS.add<ExpandMatmul>(Ctx, mlir::PatternBenefit(100));
+    PS.add<ExpandMatvec>(Ctx, mlir::PatternBenefit(100));
     PS.add<ZeroAbsorbToZero,
            SimplifyInverse,
            SimplifyNegate,

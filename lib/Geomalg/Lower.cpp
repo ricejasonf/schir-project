@@ -236,13 +236,13 @@ public:
   }
 };
 
-struct LowerMatmul : mlir::OpConversionPattern<MatmulOp>,
+struct LowerMatvec : mlir::OpConversionPattern<MatvecOp>,
                      ::PatternBase {
 public:
   using Base::Base;
 
   llvm::LogicalResult matchAndRewrite(
-        MatmulOp Op, MatmulOp::Adaptor Adaptor,
+        MatvecOp Op, MatvecOp::Adaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
     mlir::Location Loc = Op->getLoc();
     mlir::Type ScalarT = getScalarT();
@@ -257,7 +257,7 @@ public:
       mlir::Value Column = R.getRemappedValue(RetOp.getArg());
       Columns.push_back(Column);
       R.eraseOp(RetOp);
-      // MatmulOp regions only ever have a single block.
+      // MatvecOp regions only ever have a single block.
       R.mergeBlocks(&Region->front(), StartBlock);
     }
     R.mergeBlocks(SplitBlock, StartBlock);
@@ -318,7 +318,7 @@ public:
            LowerNegate,
            LowerBlade,
            LowerDot,
-           LowerMatmul
+           LowerMatvec
            >(TC, Ctx);
     mlir::ConversionConfig Config;
     Config.allowPatternRollback = false;

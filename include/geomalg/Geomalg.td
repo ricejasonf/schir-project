@@ -259,7 +259,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", [InferredResult]> {
   let results   = (outs Variadic<Geomalg_Blade>:$results);
 }
 
-def Geomalg_MatmulOp : Geomalg_Op<"matmul",
+def Geomalg_MatvecOp : Geomalg_Op<"matvec",
       [Linear, ZeroAbsorb, InferredResult]> {
   let description = [{
     Create a matrix of a linear operator by defining each

@@ -2,7 +2,7 @@
 // RUN:--geomalg-expand="enable-patterns={ExpandVP, DistributeVP}" --cse %s \
 // RUN:| FileCheck %s
 
-// RUN: geomalg-opt --geomalg-expand="metric=cga disable-patterns={ExpandMatmul}" \
+// RUN: geomalg-opt --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" \
 // RUN:             --geomalg-simplify %s \
 // RUN:| FileCheck --check-prefix="CGA"  %s
 
