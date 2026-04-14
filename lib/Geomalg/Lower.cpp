@@ -248,20 +248,39 @@ public:
     mlir::Type ScalarT = getScalarT();
     mlir::RegionRange Regions = Op.getRegions();
     llvm::SmallVector<mlir::Value, 8> Columns;
+    using BlockItrTy = mlir::Block::iterator;
+    mlir::Block* StartBlock = Op->getBlock();
+    mlir::Block* SplitBlock = R.splitBlock(StartBlock, BlockItrTy(Op));
+    // Inline each region and keep things as a single block.
     for (mlir::Region* Region : Regions) {
       auto RetOp = cast<ReturnOp>(Region->front().getTerminator());
-      mlir::Value Column = RetOp.getArg();
-      // If Column is a scalar, then we need to lift it to a tensor.
-      if (!isa<mlir::RankedTensorType>(Column.getType())) {
-        mlir::Type RT = mlir::RankedTensorType::get({}, ScalarT);
-        Column = tensor::FromElementsOp::create(R, Loc, RT, Column);
-      }
+      mlir::Value Column = R.getRemappedValue(RetOp.getArg());
       Columns.push_back(Column);
+      R.eraseOp(RetOp);
+      // MatmulOp regions only ever have a single block.
+      R.mergeBlocks(&Region->front(), StartBlock);
     }
-    mlir::Value Arg = Op.getArg();
-    // TODO Concatate the columns which should create a matrix
-    //      err... tensor with which to call Matmul on Arg.
-    llvm_unreachable("TODO");
+    R.mergeBlocks(SplitBlock, StartBlock);
+
+    // Columns need to be 2-rank tensors so we can concatenate them
+    // into a matrix.
+    int64_t ColDimSize = Columns.size();
+    auto ColRT = mlir::RankedTensorType::get({ColDimSize, 1}, ScalarT);
+    for (mlir::Value& Column : Columns) {
+      if (auto RT = dyn_cast<mlir::RankedTensorType>(Column.getType());
+          RT && RT.getRank() == 1) {
+        Column = tensor::ExpandShapeOp::create(R, Loc, ColRT, Column,
+            mlir::ReassociationIndices{{0, 1}});
+      } else {
+        assert(Column.getType() == ScalarT);
+        Column = tensor::FromElementsOp::create(R, Loc, ColRT, Column);
+      }
+    }
+
+    mlir::Value Vec = Adaptor.getArg();
+    mlir::Value Matrix = tensor::ConcatOp::create(R, Loc, /*Dim=*/1, Columns);
+    R.replaceOpWithNewOp<linalg::MatvecOp>(Op,
+        mlir::ValueRange({Matrix, Vec}), Vec);
     return llvm::success();
   }
 };
@@ -298,7 +317,8 @@ public:
            LowerExpand,
            LowerNegate,
            LowerBlade,
-           LowerDot
+           LowerDot,
+           LowerMatmul
            >(TC, Ctx);
     mlir::ConversionConfig Config;
     Config.allowPatternRollback = false;
