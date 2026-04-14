@@ -30,9 +30,6 @@ class Geomalg_Trait<string name, list<Trait> traits = [],
 // If any operand is Multivector, expand and distribute.
 def Distributive : Geomalg_Trait<"Distributive">;
 
-// Linear in each of its arguments.
-def Linear : Geomalg_Trait<"Linear">;
-
 // If any operand is Zero, result is Zero.
 def ZeroAbsorb : Geomalg_Trait<"ZeroAbsorb">;
 
@@ -260,7 +257,7 @@ def Geomalg_ExpandOp : Geomalg_Op<"expand", [InferredResult]> {
 }
 
 def Geomalg_MatvecOp : Geomalg_Op<"matvec",
-      [Linear, ZeroAbsorb, InferredResult]> {
+      [ZeroAbsorb, InferredResult]> {
   let description = [{
     Create a matrix of a linear operator by defining each
     column vector with its own region.
@@ -279,7 +276,7 @@ def Geomalg_MatvecOp : Geomalg_Op<"matvec",
 }
 
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
-      [Linear, Distributive, ZeroAbsorb, InferredResult, IsMul]> {
+      [Distributive, ZeroAbsorb, InferredResult, IsMul]> {
   let description = [{
     Map two multivectors to a multivector by their
     wedge product.
@@ -291,7 +288,7 @@ def Geomalg_OuterProdOp : Geomalg_Op<"oprod",
 }
 
 def Geomalg_InnerProdOp : Geomalg_Op<"iprod",
-      [Linear, Distributive, ZeroAbsorb, IsMul, InferredResult]> {
+      [Distributive, ZeroAbsorb, IsMul, InferredResult]> {
   let description = [{
     Map two multivectors to a scalar by their interior product.
   }];
@@ -301,7 +298,7 @@ def Geomalg_InnerProdOp : Geomalg_Op<"iprod",
   let results   = (outs Geomalg_Value:$result);
 }
 
-def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Linear, Distributive, ZeroAbsorb]> {
+def Geomalg_GeomProdOp : Geomalg_Op<"gprod", [Distributive, ZeroAbsorb]> {
   let description = [{
     Map two multivectors to the sum of their interior
     and exterior products which produces a multivector.
@@ -331,7 +328,7 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", [InferredResult]> {
 }
 
 def Geomalg_ReverseOp : Geomalg_Op<"reverse",
-      [Linear, Distributive, InferredResult]> {
+      [Distributive, InferredResult]> {
   let description = [{
     Take the reverse of a k-blade that swaps vectors
     in the wedge product until the vectors are in reverse sorted
@@ -344,7 +341,7 @@ def Geomalg_ReverseOp : Geomalg_Op<"reverse",
 }
 
 def Geomalg_GradeInvoOp : Geomalg_Op<"grade_invo",
-      [Linear, Distributive, InferredResult]> {
+      [Distributive, InferredResult]> {
   let description = [{
     Perform grade involution on a k-blade which will
     negate elements when 2k + 1 ≅ 0 (mod 2).
@@ -355,7 +352,7 @@ def Geomalg_GradeInvoOp : Geomalg_Op<"grade_invo",
 }
 
 def Geomalg_NegateOp : Geomalg_Op<"negate",
-      [Linear, Distributive, ZeroAbsorb, InferredResult]> {
+      [Distributive, ZeroAbsorb, InferredResult]> {
   let description = [{
     Apply scalar multiplication of -1 to a blade. This is used
     explicitly in place of grade involution and also when folding
@@ -469,7 +466,7 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   }];
 }
 
-def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Linear, ZeroAbsorb]> {
+def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [ZeroAbsorb]> {
   let description = [{
     Given an ordered set of invertible blades, construct a versor
     and its inverse applying it to an operand using the

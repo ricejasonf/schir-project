@@ -212,8 +212,8 @@ struct Distribute : mlir::OpTraitRewritePattern<geomalg::Distributive> {
 };
 
 // Convert a linear operation into matrix multiplication.
-struct ExpandMatvec : mlir::OpTraitRewritePattern<geomalg::Linear> {
-  using Base = mlir::OpTraitRewritePattern<geomalg::Linear>;
+struct ExpandMatvec : mlir::OpTraitRewritePattern<geomalg::Distributive> {
+  using Base = mlir::OpTraitRewritePattern<geomalg::Distributive>;
   using Base::OpTraitRewritePattern;
 
   void initialize() {

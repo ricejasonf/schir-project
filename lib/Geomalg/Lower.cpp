@@ -36,6 +36,7 @@ struct TypeConverter : mlir::TypeConverter {
     : mlir::TypeConverter()
   {
     addConversion([ScalarT](BladeType BT) { return ScalarT; });
+    addConversion([ScalarT](ZeroType ZT) { return ScalarT; });
     addConversion([ScalarT](MultivectorLike MV) {
       size_t Size = MV.getBlades().size();
       return mlir::RankedTensorType::get(Size, ScalarT);
@@ -255,6 +256,7 @@ public:
     for (mlir::Region* Region : Regions) {
       auto RetOp = cast<ReturnOp>(Region->front().getTerminator());
       mlir::Value Column = R.getRemappedValue(RetOp.getArg());
+      assert(Column && "failed to remapvalue");
       Columns.push_back(Column);
       R.eraseOp(RetOp);
       // MatvecOp regions only ever have a single block.
