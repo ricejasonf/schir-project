@@ -744,9 +744,6 @@ ExpandMatvec::matchAndRewrite(mlir::Operation* Op,
   mlir::MLIRContext* Ctx = getContext();
   mlir::Location Loc = Op->getLoc();
 
-  if (isa<MatvecOp>(Op))
-    return llvm::failure();
-
   // A matrix for operations like Negate is not so useful.
   if (Op->getNumOperands() < 2)
     return llvm::failure();
@@ -794,7 +791,8 @@ ExpandMatvec::matchAndRewrite(mlir::Operation* Op,
   return llvm::success();
 }
 
-// Update the Region results to match the containing MatvecOp.
+// Update the Region results to match the containing MatvecOp
+// or explicitly specified function return type.
 llvm::LogicalResult
 UpdateReturn::matchAndRewrite(ReturnOp Op,
                               mlir::PatternRewriter& Rewriter) const {

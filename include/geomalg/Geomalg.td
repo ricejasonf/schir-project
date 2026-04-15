@@ -273,6 +273,21 @@ def Geomalg_MatvecOp : Geomalg_Op<"matvec",
   let regions = (region VariadicRegion<AnyRegion>:$bodies);
   let arguments = (ins Geomalg_Value: $arg);
   let results = (outs Geomalg_Value: $result);
+
+  let extraClassDeclaration = [{
+    // Get number of rows in matrix.
+    int64_t getRowDimSize() {
+      if (auto MV = dyn_cast<MultivectorLike>(getResult().getType()))
+        return MV.getBlades().size();
+      else
+        return 1;
+    }
+
+    // Get number of columns in matrix.
+    int64_t getColDimSize() {
+      return getBodies().size();
+    }
+  }];
 }
 
 def Geomalg_OuterProdOp : Geomalg_Op<"oprod",

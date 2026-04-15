@@ -143,8 +143,8 @@ public:
     mlir::Value InputTensor = Adaptor.getArg();
     mlir::ValueRange Results = Op.getResults();
     int64_t Index = 0;
-    for (mlir::Value Result : Results) {
-      mlir::IntegerAttr IndexAttr = R.getIndexAttr(Index);
+    for (int64_t I = 0; I < Results.size(); I++) {
+      mlir::IntegerAttr IndexAttr = R.getIndexAttr(I);
       mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
       mlir::Value
         NewResult = tensor::ExtractOp::create(R, Loc, InputTensor, Index);
@@ -200,7 +200,8 @@ public:
     mlir::Value
       Zero = arith::ConstantOp::create(R, Loc, R.getZeroAttr(ScalarT));
     mlir::Type TensorT = mlir::RankedTensorType::get({}, ScalarT);
-    mlir::Value Output = tensor::EmptyOp::create(R, Loc, TensorT, mlir::ValueRange{});
+    mlir::Value Output = tensor::EmptyOp::create(R, Loc, TensorT,
+                                                 mlir::ValueRange{});
     auto FillOp = linalg::FillOp::create(R, Loc, Zero, Output);
     Output = FillOp.getResults().front();
     linalg::DotOp Dot = linalg::DotOp::create(R, Loc, Inputs, Output);
@@ -269,23 +270,45 @@ public:
 
     // Columns need to be 2-rank tensors so we can concatenate them
     // into a matrix.
-    int64_t ColDimSize = Columns.size();
-    auto ColRT = mlir::RankedTensorType::get({ColDimSize, 1}, ScalarT);
     for (mlir::Value& Column : Columns) {
       if (auto RT = dyn_cast<mlir::RankedTensorType>(Column.getType());
           RT && RT.getRank() == 1) {
+        auto ColRT = mlir::RankedTensorType::get({RT.getDimSize(0), 1},
+                                                 ScalarT);
         Column = tensor::ExpandShapeOp::create(R, Loc, ColRT, Column,
             mlir::ReassociationIndices{{0, 1}});
       } else {
         assert(Column.getType() == ScalarT);
+        auto ColRT = mlir::RankedTensorType::get({1, 1}, ScalarT);
         Column = tensor::FromElementsOp::create(R, Loc, ColRT, Column);
       }
     }
 
     mlir::Value Vec = Adaptor.getArg();
     mlir::Value Matrix = tensor::ConcatOp::create(R, Loc, /*Dim=*/1, Columns);
-    R.replaceOpWithNewOp<linalg::MatvecOp>(Op,
-        mlir::ValueRange({Matrix, Vec}), Vec);
+
+    // Create the OutputVec.
+    int64_t NumRows = Op.getRowDimSize();
+    mlir::Type OuputVecT = mlir::RankedTensorType::get({NumRows}, ScalarT);
+    mlir::Value OutputVec = tensor::EmptyOp::create(R, Loc, OuputVecT,
+                                                    mlir::ValueRange{});
+    mlir::Value Zero = arith::ConstantOp::create(R, Loc,
+                                                 R.getZeroAttr(ScalarT));
+    auto FillOp = linalg::FillOp::create(R, Loc, Zero, OutputVec);
+    OutputVec = FillOp.getResults().front();
+
+    linalg::MatvecOp NewOp = linalg::MatvecOp::create(R, Loc,
+          mlir::ValueRange({Matrix, Vec}), OutputVec);
+
+    mlir::Value NewResult = NewOp.getResults().front();
+    // If expecting a scalar result, extract it.
+    if (NumRows == 1) {
+      mlir::IntegerAttr IndexAttr = R.getIndexAttr(0);
+      mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
+      NewResult = tensor::ExtractOp::create(R, Loc, NewResult, Index);
+    }
+
+    R.replaceOp(Op, NewResult);
     return llvm::success();
   }
 };
@@ -344,7 +367,6 @@ public:
       signalPassFailure();
       return;
     }
-
 
     // Do that actual Conversion.
     ConversionTarget Target(getContext());
