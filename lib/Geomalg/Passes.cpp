@@ -1539,60 +1539,78 @@ geomalg::applyUpdateReturnPatterns(mlir::Operation* Op) {
 }
 
 namespace {
-// TODO Refactor this to populateExpand*Patterns(...).
-class Expander {
+void populateDistributePatterns(mlir::RewritePatternSet& PS) {
+  mlir::MLIRContext* Ctx = PS.getContext();
+  PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
+  PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
+}
+
+void populateMatvecPatterns(mlir::RewritePatternSet& PS) {
+  mlir::MLIRContext* Ctx = PS.getContext();
+  PS.add<ExpandMatvec>(Ctx, mlir::PatternBenefit(100));
+}
+
+void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
+  // Populate all patterns related to expanding the
+  // algebra operations except for distribution.
+  mlir::MLIRContext* Ctx = PS.getContext();
+  PS.add<ZeroAbsorbToZero,
+         SimplifyInverse,
+         SimplifyNegate,
+         SimplifyDot>(Ctx, mlir::PatternBenefit(10));
+  PS.add<ExpandLC,
+         ExpandGP,
+         RemoveExpand,
+         RemoveCast,
+         ExpandInverse,
+         ExpandReverse,
+         ExpandGradeInvo,
+         ExpandConvert,
+         UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
+  PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
+  if (MK != MetricKind::unknown) {
+    PS.add<ApplyMetric>(geomalg::Metric::get(MK), Ctx,
+                        mlir::PatternBenefit(10));
+  }
+}
+
+void populateExpandSumPatterns(mlir::RewritePatternSet& PS) {
+  // Populate all patterns related to expanding the
+  // algebra operations except for distribution.
+  mlir::MLIRContext* Ctx = PS.getContext();
+  PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
+}
+
+class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
+  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
   mlir::FrozenRewritePatternSet ExpandPatterns;
   mlir::FrozenRewritePatternSet ExpandSumPatterns;
 
-  static
-  mlir::FrozenRewritePatternSet initExpandPatterns(
-      mlir::MLIRContext* Ctx, MetricKind MK,
-      llvm::ArrayRef<std::string> disabledPatterns,
-      llvm::ArrayRef<std::string> enabledPatterns) {
-    // Create pattern rewriter thingy.
-    mlir::RewritePatternSet PS(Ctx);
-    PS.add<Distribute>(Ctx, mlir::PatternBenefit(1));
-    PS.add<ExpandMatvec>(Ctx, mlir::PatternBenefit(100));
-    PS.add<ZeroAbsorbToZero,
-           SimplifyInverse,
-           SimplifyNegate,
-           SimplifyDot>(Ctx, mlir::PatternBenefit(10));
-    PS.add<ExpandLC,
-           ExpandGP,
-           RemoveExpand,
-           RemoveCast,
-           ExpandInverse,
-           ExpandReverse,
-           ExpandGradeInvo,
-           ExpandConvert,
-           UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
-    PS.add<DistributeVP>(Ctx, mlir::PatternBenefit(0));
-    PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
-    if (MK != MetricKind::unknown) {
-      PS.add<ApplyMetric>(geomalg::Metric::get(MK), Ctx,
-                          mlir::PatternBenefit(10));
-    }
-    return mlir::FrozenRewritePatternSet(std::move(PS),
-                            disabledPatterns,
-                            enabledPatterns);
-  }
-
-  static mlir::FrozenRewritePatternSet initExpandSumPatterns(
-                                        mlir::MLIRContext* Ctx) {
-    mlir::RewritePatternSet PS(Ctx);
-    PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
-    return mlir::FrozenRewritePatternSet(std::move(PS));
-  }
-
 public:
-  Expander() = default;
-  Expander(mlir::MLIRContext* Ctx, MetricKind MK,
-           llvm::ArrayRef<std::string> disabledPatterns,
-           llvm::ArrayRef<std::string> enabledPatterns)
-    : ExpandPatterns(initExpandPatterns(Ctx, MK, disabledPatterns,
-                                        enabledPatterns)),
-      ExpandSumPatterns(initExpandSumPatterns(Ctx))
-  { }
+  using Base::Base;
+
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    {
+      mlir::RewritePatternSet PS(Ctx);
+      populateExpandPatterns(PS, metric);
+      populateMatvecPatterns(PS);
+      populateDistributePatterns(PS);
+      ExpandPatterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                              disabledPatterns,
+                              enabledPatterns);
+    }
+    {
+      mlir::RewritePatternSet PS(Ctx);
+      populateExpandSumPatterns(PS);
+      ExpandSumPatterns = mlir::FrozenRewritePatternSet(std::move(PS));
+    }
+    return llvm::success();
+  }
+
+  void runOnOperation() override {
+    if (llvm::failed(run(getOperation())))
+      signalPassFailure();
+  }
 
   llvm::LogicalResult run(mlir::func::FuncOp FuncOp) const {
     mlir::MLIRContext* Ctx = FuncOp->getContext();
@@ -1627,24 +1645,6 @@ public:
       }
       AnyIRChanged |= IRChanged;
     }
-    return llvm::success();
-  }
-};
-
-class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
-  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
-  mlir::FrozenRewritePatternSet Patterns;
-  ::Expander Expander;
-
-public:
-  using Base::Base;
-  void runOnOperation() override {
-    if (llvm::failed(Expander.run(getOperation())))
-      signalPassFailure();
-  }
-
-  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
-    Expander = ::Expander(Ctx, metric, disabledPatterns, enabledPatterns);
     return llvm::success();
   }
 };
