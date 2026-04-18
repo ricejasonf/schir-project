@@ -51,9 +51,21 @@ def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
 }
 
 def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
-  let summary = "Lower Geomalg to Arith and Sparse dialects.";
+  let summary = "Lower Geomalg to Arith and other dialects.";
   let description = [{
     Lower to dialects that themselves can lower to LLVM or SPIRV.
+  }];
+  let dependentDialects = ["geomalg::GeomalgDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::func::FuncDialect",
+                           "mlir::linalg::LinalgDialect",
+                           "mlir::tensor::TensorDialect"];
+}
+
+def LowerToSPIRVPass : Pass<"geomalg-spirv", "mlir::ModuleOp"> {
+  let summary = "Lower Geomalg to Arith and SPIRV dialect.";
+  let description = [{
+    Lower to SPIRV dialect.
   }];
   let dependentDialects = ["geomalg::GeomalgDialect",
                            "mlir::arith::ArithDialect",

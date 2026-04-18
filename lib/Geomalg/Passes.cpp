@@ -182,6 +182,18 @@ struct ExpandConvert : mlir::OpRewritePattern<geomalg::ConvertOp> {
       geomalg::ConvertOp Op, mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct RemoveConvert : mlir::OpRewritePattern<geomalg::ConvertOp> {
+  using Base = mlir::OpRewritePattern<geomalg::ConvertOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("RemoveConvert");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::ConvertOp Op, mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct ExpandSum : mlir::OpRewritePattern<geomalg::SumOp> {
   using Base = mlir::OpRewritePattern<geomalg::SumOp>;
   using Base::OpRewritePattern;
@@ -608,8 +620,27 @@ ExpandConvert::matchAndRewrite(geomalg::ConvertOp Op,
     return llvm::success();
   }
 
-  Op.emitError("no known conversion");
+  // ConvertOps must eventually be removed or expanded, but not
+  // necessarily at this point. (See RemoveConvert.)
   return llvm::failure();
+}
+
+// Remove ConvertOps or throw an error if there is not conversion.
+llvm::LogicalResult
+RemoveConvert::matchAndRewrite(geomalg::ConvertOp Op,
+                               mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = Op.getLoc();
+  mlir::Value Arg = Op.getArg();
+  mlir::Value Result = Op.getResult();
+  mlir::Type ArgT = Arg.getType();
+  mlir::Type ResultT = Result.getType();
+
+  if (ArgT == ResultT) {
+    replaceOp(Rewriter, Op, Arg);
+    return llvm::success();
+  }
+
+  return Rewriter.notifyMatchFailure(Op, "no known conversion");
 }
 
 llvm::LogicalResult
@@ -1531,6 +1562,7 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
   return llvm::failure();
 }
 
+// Do greedy pattern stuff to get ready for lowering.
 llvm::LogicalResult
 geomalg::applyUpdateReturnPatterns(mlir::Operation* Op) {
   mlir::RewritePatternSet PS(Op->getContext());
@@ -1562,6 +1594,7 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          ExpandGP,
          RemoveExpand,
          RemoveCast,
+         RemoveConvert,
          ExpandInverse,
          ExpandReverse,
          ExpandGradeInvo,
@@ -1682,7 +1715,9 @@ public:
            SimplifySum,
            SimplifyInverse,
            SimplifyNegate,
-           SimplifyDot
+           SimplifyDot,
+           RemoveExpand,
+           RemoveConvert
            >(Ctx);
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                           disabledPatterns,
@@ -1690,5 +1725,4 @@ public:
     return llvm::success();
   }
 };
-
 } // namespace

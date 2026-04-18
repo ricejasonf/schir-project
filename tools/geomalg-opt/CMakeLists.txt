@@ -13,6 +13,7 @@ target_link_libraries(geomalg-opt
   MLIRSupport
 
   MLIRRegisterAllDialects
+  MLIRRegisterAllPasses
   GeomalgDialect
   )
 

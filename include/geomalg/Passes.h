@@ -31,6 +31,8 @@ inline bool isUnitBlade(mlir::Value V) {
   }
   return false;
 }
+
+void registerGeomalgToSPIRV();
 }  // namespace geomalg
 
 #endif  // GEOMALG_PASSES_H

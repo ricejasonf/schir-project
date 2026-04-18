@@ -5,7 +5,11 @@
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/DialectConversion.h>
+#include <mlir/Transforms/Passes.h>
+#include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/STLExtras.h>
 
 #ifndef NDEBUG
 #include <mlir/IR/Verifier.h>
@@ -14,6 +18,7 @@
 // Generated stuff
 namespace geomalg {
 #define GEN_PASS_DEF_LOWERPASS
+#define GEN_PASS_DEF_LOWERTOSPIRVPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
@@ -30,6 +35,23 @@ namespace tensor = mlir::tensor;
 using namespace geomalg;
 
 namespace {
+// Expand a 1-d tensor to its contained values.
+void expandTensor(mlir::RewriterBase& R, mlir::Location Loc,
+                  mlir::Value InputTensor,
+                  llvm::SmallVectorImpl<mlir::Value>& Results) {
+  auto RT = dyn_cast<mlir::RankedTensorType>(InputTensor.getType());
+  assert(RT && RT.getRank() == 1 &&
+      "expecting a 1-d tensor");
+  int64_t Index = 0;
+  for (int64_t I = 0; I < RT.getDimSize(0); I++) {
+    mlir::IntegerAttr IndexAttr = R.getIndexAttr(I);
+    mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
+    mlir::Value
+      NewResult = tensor::ExtractOp::create(R, Loc, InputTensor, Index);
+    Results.push_back(NewResult);
+  }
+}
+
 // All types will be converted a single scalar type
 // and tensors over said scalar type.
 struct TypeConverter : mlir::TypeConverter {
@@ -141,15 +163,7 @@ public:
     mlir::Location Loc = Op->getLoc();
     llvm::SmallVector<mlir::Value, 8> NewResults;
     mlir::Value InputTensor = Adaptor.getArg();
-    mlir::ValueRange Results = Op.getResults();
-    int64_t Index = 0;
-    for (int64_t I = 0; I < Results.size(); I++) {
-      mlir::IntegerAttr IndexAttr = R.getIndexAttr(I);
-      mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
-      mlir::Value
-        NewResult = tensor::ExtractOp::create(R, Loc, InputTensor, Index);
-      NewResults.push_back(NewResult);
-    }
+    expandTensor(R, Loc, InputTensor, NewResults);
     R.replaceOp(Op, NewResults);
     return llvm::success();
   }
@@ -185,7 +199,7 @@ public:
   }
 };
 
-struct LowerDot : mlir::OpConversionPattern<DotOp>,
+struct DotToLinalg : mlir::OpConversionPattern<DotOp>,
                   ::PatternBase {
 public:
   using Base::Base;
@@ -207,6 +221,35 @@ public:
     linalg::DotOp Dot = linalg::DotOp::create(R, Loc, Inputs, Output);
     mlir::Value DotResult = Dot.getResults().front();
     R.replaceOpWithNewOp<tensor::ExtractOp>(Op, ScalarT, DotResult);
+    return llvm::success();
+  }
+};
+
+struct DotToArith : mlir::OpConversionPattern<DotOp>,
+                    ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        DotOp Op, DotOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+    mlir::Value LHSTensor = Adaptor.getLHS();
+    mlir::Value RHSTensor = Adaptor.getRHS();
+    llvm::SmallVector<mlir::Value, 8> LHSs;
+    llvm::SmallVector<mlir::Value, 8> RHSs;
+    llvm::SmallVector<mlir::Value, 8> MulResults;
+    expandTensor(R, Loc, LHSTensor, LHSs);
+    expandTensor(R, Loc, RHSTensor, RHSs);
+    assert(LHSs.size() == RHSs.size() && LHSs.size() != 0);
+    for (auto [LHS, RHS] : llvm::zip(LHSs, RHSs))
+      MulResults.push_back(arith::MulFOp::create(R, Loc, LHS, RHS));
+    mlir::ValueRange MR = mlir::ValueRange(MulResults);
+    mlir::Value NewResult = MR.front();
+    for (mlir::Value V : MR.drop_front())
+      NewResult = arith::AddFOp::create(R, Loc, NewResult, V);
+    R.replaceOp(Op, NewResult);
     return llvm::success();
   }
 };
@@ -240,7 +283,7 @@ public:
   }
 };
 
-struct LowerMatvec : mlir::OpConversionPattern<MatvecOp>,
+struct MatvecToLinalg : mlir::OpConversionPattern<MatvecOp>,
                      ::PatternBase {
 public:
   using Base::Base;
@@ -349,6 +392,20 @@ public:
   }
 };
 
+void populateLowerPasses(mlir::RewritePatternSet& PS,
+                         ::TypeConverter const* TC) {
+  mlir::MLIRContext* Ctx = PS.getContext();
+  PS.add<CMulToMul,
+         LowerSum,
+         LowerExpand,
+         LowerNegate,
+         LowerBlade,
+         DotToArith,
+         MatvecToLinalg,
+         LowerReturn
+         >(*TC, Ctx);
+}
+
 // Lowering Passes
 
 class LowerPass : public geomalg::impl::LowerPassBase<LowerPass> {
@@ -375,15 +432,8 @@ public:
     mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
     // Note that TypeConverter has its pointer captured.
     ::TypeConverter TC(ScalarT);
-    PS.add<CMulToMul,
-           LowerSum,
-           LowerExpand,
-           LowerNegate,
-           LowerBlade,
-           LowerDot,
-           LowerMatvec,
-           LowerReturn
-           >(TC, Ctx);
+    populateLowerPasses(PS, &TC);
+
     mlir::ConversionConfig Config;
     Config.allowPatternRollback = false;
 
@@ -393,4 +443,42 @@ public:
       signalPassFailure();
   }
 };
+
+class LowerToSPIRVPass : public geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
+  using Base = geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+
+  void runOnOperation() override {
+    mlir::MLIRContext* Ctx = &getContext();
+    mlir::ModuleOp M = getOperation();
+
+    // Fix return types of geomalg::ReturnOps.
+    if (llvm::failed(applyUpdateReturnPatterns(M))) {
+      signalPassFailure();
+      return;
+    }
+
+    // TODO Programmatically add rewriters instead of relying on commandline
+    //      arguments. (See geomalg-lower-spirv.mlir.)
+  }
+};
+
+}  // namespace
+
+namespace geomalg {
+void registerGeomalgToSPIRV() {
+  auto BuildFn = [](mlir::OpPassManager& PM) {
+    //PM.addNestedPass<mlir::func::FuncOp>(
+    PM.addPass(createLowerPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
+  };
+
+  mlir::PassPipelineRegistration<>("geomalg-to-spirv",
+                                   "Lower Geomalg to SPIRV",
+                                   BuildFn);
 }
+} // namespace geomalg

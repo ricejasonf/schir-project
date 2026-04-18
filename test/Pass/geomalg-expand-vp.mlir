@@ -155,6 +155,7 @@ func.func @point_refl_e1(%arg0: !vec3)
 // CGA-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CGA-NOT: "geomalg.inverse"
 // CGA-NOT: "geomalg.dot"([[ARG0]], [[ARG0]])
+// CGA-NOT: "geomalg.convert"
 // CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>>
 func.func @point_refl_e1_simplified(%arg0: !vec3)
     -> !geomalg.multivector<<1>, <2>, <4>> {
@@ -166,7 +167,7 @@ func.func @point_refl_e1_simplified(%arg0: !vec3)
   %6 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !e1
   %7 = "geomalg.vprod"(%5, %6)
     : (!geomalg.unknown, !e1) -> !geomalg.unknown
-  %8 = "geomalg.cast"(%7) : (!geomalg.unknown)
+  %8 = "geomalg.convert"(%7) : (!geomalg.unknown)
     -> !geomalg.multivector<!e1, !e2, !e3, !no, !ni>
   %9:5 = "geomalg.expand"(%8) : (!geomalg.multivector<!e1, !e2, !e3, !no, !ni>)
     -> (!e1, !e2, !e3, !no, !ni)
