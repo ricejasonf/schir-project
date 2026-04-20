@@ -1,15 +1,7 @@
 // RUN: geomalg-opt \
 // RUN: --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" \
 // RUN: --geomalg-simplify \
-// RUN: --geomalg-lower \
-// RUN: --cse \
-// RUN: --canonicalize \
-// COM: --convert-tensor-to-spirv \
-// RUN: --one-shot-bufferize="bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" \
-// RUN: --buffer-results-to-out-params="modify-public-functions=true hoist-static-allocs=true" \
-// RUN: --convert-arith-to-spirv \
-// RUN: --convert-memref-to-spirv \
-// RUN: --convert-func-to-spirv \
+// RUN: --geomalg-spirv \
 // RUN: %s | FileCheck %s
 
 !s = !geomalg.blade<0>
@@ -25,12 +17,16 @@
 !uvec3 = !geomalg.unit_vector<<1>, <2>, <4>>
 !point = !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
 
-// Converting memref to spirv is not working out for the function arguments.
-// (We don't really need function arguments for shaders I don't think.)
+// CHECK-LABEL: spirv.func @rotate_point(
+// CHECK-SAME: %[[ARG0:arg[0-9]*]]: vector<3xf32>
+// CHECK-SAME: %[[ARG1:arg[0-9]*]]: vector<3xf32>
+// CHECK-SAME: %[[ARG2:arg[0-9]*]]: vector<3xf32>
+// CHECK-COUNT-30: spirv.FMul
+// CHECK-NOT: spirv.FMul
+// CHECK-COUNT-18: spirv.FAdd
+// CHECK-NOT: spirv.FAdd
 // CHECK: spirv.Return
-module attributes {
-  spirv.target_env = #spirv.target_env<#spirv.vce<v1.0, [], []>, #spirv.resource_limits<>>
-} {
+module {
 func.func @rotate_point(%arg0: !vec3, %arg1: !uvec3, %arg2: !uvec3)
         -> !geomalg.unknown {
   %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no

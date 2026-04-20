@@ -1,7 +1,13 @@
 #include <geomalg/Dialect.h>
+#include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
+#include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
+#include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
-#include <mlir/Dialect/Tensor/IR/Tensor.h>
+#include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
+#include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
+#include <mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h>
+#include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
@@ -31,25 +37,20 @@ applyUpdateReturnPatterns(mlir::Operation* Op);
 namespace arith = mlir::arith;
 namespace func = mlir::func;
 namespace linalg = mlir::linalg;
+namespace spirv = mlir::spirv;
 namespace tensor = mlir::tensor;
+namespace vector = mlir::vector;
 using namespace geomalg;
 
 namespace {
-// Expand a 1-d tensor to its contained values.
-void expandTensor(mlir::RewriterBase& R, mlir::Location Loc,
-                  mlir::Value InputTensor,
-                  llvm::SmallVectorImpl<mlir::Value>& Results) {
-  auto RT = dyn_cast<mlir::RankedTensorType>(InputTensor.getType());
-  assert(RT && RT.getRank() == 1 &&
-      "expecting a 1-d tensor");
-  int64_t Index = 0;
-  for (int64_t I = 0; I < RT.getDimSize(0); I++) {
-    mlir::IntegerAttr IndexAttr = R.getIndexAttr(I);
-    mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
-    mlir::Value
-      NewResult = tensor::ExtractOp::create(R, Loc, InputTensor, Index);
-    Results.push_back(NewResult);
-  }
+mlir::ValueRange expandVector(mlir::RewriterBase& R, mlir::Location Loc,
+                              mlir::Value InputVector) {
+  auto VT = dyn_cast<mlir::VectorType>(InputVector.getType());
+  assert(VT && VT.getRank() == 1 &&
+      "expecting a 1-d vector");
+  assert(R.getContext()->getLoadedDialect<vector::VectorDialect>());
+  auto NewOp = vector::ToElementsOp::create(R, Loc, InputVector);
+  return NewOp.getResults();
 }
 
 // All types will be converted a single scalar type
@@ -61,8 +62,9 @@ struct TypeConverter : mlir::TypeConverter {
     addConversion([ScalarT](BladeType BT) { return ScalarT; });
     addConversion([ScalarT](ZeroType ZT) { return ScalarT; });
     addConversion([ScalarT](MultivectorLike MV) {
-      size_t Size = MV.getBlades().size();
-      return mlir::RankedTensorType::get(Size, ScalarT);
+      int64_t Size = MV.getBlades().size();
+      return mlir::VectorType::get(Size, ScalarT);
+      //return mlir::RankedTensorType::get(Size, ScalarT);
     });
   }
 };
@@ -73,11 +75,9 @@ struct ConversionTarget : mlir::ConversionTarget {
   {
     // Legalize stuff.
     addLegalDialect<arith::ArithDialect>();
-    addLegalDialect<tensor::TensorDialect>();
     addLegalDialect<linalg::LinalgDialect>();
     addLegalDialect<func::FuncDialect>();
-    //addIllegalDialect<geomalg::GeomalgDialect>();
-    addIllegalOp<CMulOp>();
+    addLegalDialect<vector::VectorDialect>();
   }
 };
 
@@ -118,7 +118,7 @@ struct CMulToMul : mlir::OpConversionPattern<CMulOp>,
   }
 };
 
-struct LowerSum : mlir::OpConversionPattern<SumOp>,
+struct SumToTensor : mlir::OpConversionPattern<SumOp>,
                   ::PatternBase {
 public:
   using Base::Base;
@@ -151,8 +151,41 @@ public:
   }
 };
 
-struct LowerExpand : mlir::OpConversionPattern<ExpandOp>,
+struct SumToVector : mlir::OpConversionPattern<SumOp>,
                      ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        SumOp Op, SumOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type ScalarT = getScalarT();
+    mlir::ValueRange Args = Adaptor.getArgs();
+    mlir::Value Result = Op.getResult();
+    mlir::Type ResultT = Result.getType();
+    if (Args.empty()) {
+      // Return a constant 0.0f.
+      R.replaceOpWithNewOp<arith::ConstantOp>(Op, R.getZeroAttr(ScalarT));
+    } else if (auto MV = dyn_cast<MultivectorLike>(ResultT)) {
+      // Create a vector.
+      int64_t Size = MV.getBlades().size();
+      mlir::Type RT = mlir::VectorType::get({Size}, ScalarT);
+      R.replaceOpWithNewOp<vector::FromElementsOp>(Op, RT, Args);
+    } else {
+      assert(isa<BladeType>(ResultT));
+      // SumOp type inference guarantees like terms here so
+      // this is where we can actually perform addition.
+      mlir::Value NewResult = Args.front();
+      for (mlir::Value Arg : Args.drop_front())
+        NewResult = arith::AddFOp::create(R, Op.getLoc(), NewResult, Arg);
+      R.replaceOp(Op, NewResult);
+    }
+    return llvm::success();
+  }
+};
+
+struct ExpandToVector : mlir::OpConversionPattern<ExpandOp>,
+                        ::PatternBase {
 public:
   using Base::Base;
 
@@ -161,9 +194,8 @@ public:
         mlir::ConversionPatternRewriter& R) const override {
     // ExpandOp always "extracts" every element.
     mlir::Location Loc = Op->getLoc();
-    llvm::SmallVector<mlir::Value, 8> NewResults;
-    mlir::Value InputTensor = Adaptor.getArg();
-    expandTensor(R, Loc, InputTensor, NewResults);
+    mlir::Value InputVector = Adaptor.getArg();
+    mlir::ValueRange NewResults = expandVector(R, Loc, InputVector);
     R.replaceOp(Op, NewResults);
     return llvm::success();
   }
@@ -235,14 +267,12 @@ public:
         mlir::ConversionPatternRewriter& R) const override {
     mlir::Location Loc = Op->getLoc();
     mlir::Type ScalarT = getScalarT();
-    mlir::Value LHSTensor = Adaptor.getLHS();
-    mlir::Value RHSTensor = Adaptor.getRHS();
-    llvm::SmallVector<mlir::Value, 8> LHSs;
-    llvm::SmallVector<mlir::Value, 8> RHSs;
-    llvm::SmallVector<mlir::Value, 8> MulResults;
-    expandTensor(R, Loc, LHSTensor, LHSs);
-    expandTensor(R, Loc, RHSTensor, RHSs);
+    mlir::Value LHSVector = Adaptor.getLHS();
+    mlir::Value RHSVector = Adaptor.getRHS();
+    mlir::ValueRange LHSs = expandVector(R, Loc, LHSVector);
+    mlir::ValueRange RHSs = expandVector(R, Loc, RHSVector);
     assert(LHSs.size() == RHSs.size() && LHSs.size() != 0);
+    llvm::SmallVector<mlir::Value, 8> MulResults;
     for (auto [LHS, RHS] : llvm::zip(LHSs, RHSs))
       MulResults.push_back(arith::MulFOp::create(R, Loc, LHS, RHS));
     mlir::ValueRange MR = mlir::ValueRange(MulResults);
@@ -310,25 +340,7 @@ public:
       R.mergeBlocks(&Region->front(), StartBlock);
     }
     R.mergeBlocks(SplitBlock, StartBlock);
-
-    // Columns need to be 2-rank tensors so we can concatenate them
-    // into a matrix.
-    for (mlir::Value& Column : Columns) {
-      if (auto RT = dyn_cast<mlir::RankedTensorType>(Column.getType());
-          RT && RT.getRank() == 1) {
-        auto ColRT = mlir::RankedTensorType::get({RT.getDimSize(0), 1},
-                                                 ScalarT);
-        Column = tensor::ExpandShapeOp::create(R, Loc, ColRT, Column,
-            mlir::ReassociationIndices{{0, 1}});
-      } else {
-        assert(Column.getType() == ScalarT);
-        auto ColRT = mlir::RankedTensorType::get({1, 1}, ScalarT);
-        Column = tensor::FromElementsOp::create(R, Loc, ColRT, Column);
-      }
-    }
-
     mlir::Value Vec = Adaptor.getArg();
-    mlir::Value Matrix = tensor::ConcatOp::create(R, Loc, /*Dim=*/1, Columns);
 
     // Create the OutputVec.
     int64_t NumRows = Op.getRowDimSize();
@@ -340,15 +352,22 @@ public:
     auto FillOp = linalg::FillOp::create(R, Loc, Zero, OutputVec);
     OutputVec = FillOp.getResults().front();
 
-    linalg::MatvecOp NewOp = linalg::MatvecOp::create(R, Loc,
-          mlir::ValueRange({Matrix, Vec}), OutputVec);
-
-    mlir::Value NewResult = NewOp.getResults().front();
-    // If expecting a scalar result, extract it.
-    if (NumRows == 1) {
+    // If Columns are a scalar then this should become a single dot product.
+    mlir::Value NewResult;
+    if (Columns.front().getType() == ScalarT) {
+      mlir::Value Vec2 = vector::FromElementsOp::create(R, Loc, ScalarT,
+                                                       Columns);
+      linalg::DotOp NewOp = linalg::DotOp::create(R, Loc,
+            mlir::ValueRange({Vec2, Vec}), OutputVec);
+      // Extract the scalar.
       mlir::IntegerAttr IndexAttr = R.getIndexAttr(0);
       mlir::Value Index = arith::ConstantOp::create(R, Loc, IndexAttr);
       NewResult = tensor::ExtractOp::create(R, Loc, NewResult, Index);
+    } else {
+      mlir::Value Matrix = tensor::ConcatOp::create(R, Loc, /*Dim=*/1, Columns);
+      linalg::MatvecOp NewOp = linalg::MatvecOp::create(R, Loc,
+            mlir::ValueRange({Matrix, Vec}), OutputVec);
+      NewResult = NewOp.getResults().front();
     }
 
     R.replaceOp(Op, NewResult);
@@ -396,14 +415,33 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
                          ::TypeConverter const* TC) {
   mlir::MLIRContext* Ctx = PS.getContext();
   PS.add<CMulToMul,
-         LowerSum,
-         LowerExpand,
+         SumToVector,
+         ExpandToVector,
          LowerNegate,
          LowerBlade,
          DotToArith,
-         MatvecToLinalg,
          LowerReturn
          >(*TC, Ctx);
+}
+
+llvm::LogicalResult
+applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::Operation* Op) {
+  // Fix return types of geomalg::ReturnOps.
+  if (llvm::failed(applyUpdateReturnPatterns(Op)))
+    return llvm::failure();
+
+  // Do that actual Conversion.
+  ::ConversionTarget Target(*Ctx);
+
+  mlir::RewritePatternSet PS(Ctx);
+  mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
+  // Note that TypeConverter has its pointer captured.
+  ::TypeConverter TC(ScalarT);
+  populateLowerPasses(PS, &TC);
+
+  mlir::ConversionConfig Config;
+  Config.allowPatternRollback = false;
+  return mlir::applyPartialConversion(Op, Target, std::move(PS), Config);
 }
 
 // Lowering Passes
@@ -419,31 +457,13 @@ public:
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
 
-    // Fix return types of geomalg::ReturnOps.
-    if (llvm::failed(applyUpdateReturnPatterns(M))) {
-      signalPassFailure();
-      return;
-    }
-
-    // Do that actual Conversion.
-    ConversionTarget Target(getContext());
-
-    mlir::RewritePatternSet PS(Ctx);
-    mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
-    // Note that TypeConverter has its pointer captured.
-    ::TypeConverter TC(ScalarT);
-    populateLowerPasses(PS, &TC);
-
-    mlir::ConversionConfig Config;
-    Config.allowPatternRollback = false;
-
-    mlir::LogicalResult
-      Result = mlir::applyPartialConversion(M, Target, std::move(PS), Config);
+    llvm::LogicalResult Result = applyLowerPatterns(Ctx, M);
     if (llvm::failed(Result))
       signalPassFailure();
   }
 };
 
+// This pass is to be run on lower dialects (ie after geomalg-lower.)
 class LowerToSPIRVPass : public geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
   using Base = geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass>;
   mlir::FrozenRewritePatternSet Patterns;
@@ -455,14 +475,25 @@ public:
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
 
-    // Fix return types of geomalg::ReturnOps.
-    if (llvm::failed(applyUpdateReturnPatterns(M))) {
+    if (llvm::failed(applyLowerPatterns(Ctx, M)))
       signalPassFailure();
-      return;
-    }
 
-    // TODO Programmatically add rewriters instead of relying on commandline
-    //      arguments. (See geomalg-lower-spirv.mlir.)
+    spirv::TargetEnvAttr TEA = spirv::lookupTargetEnvOrDefault(M);
+    mlir::SPIRVTypeConverter STC = mlir::SPIRVTypeConverter(TEA);
+    std::unique_ptr<mlir::SPIRVConversionTarget>
+      Target = mlir::SPIRVConversionTarget::get(TEA);
+
+    mlir::RewritePatternSet PS(Ctx);
+    // SPIRV conversion patterns
+    arith::populateArithToSPIRVPatterns(STC, PS);
+    mlir::populateFuncToSPIRVPatterns(STC, PS);
+    mlir::populateBuiltinFuncToSPIRVPatterns(STC, PS);
+    mlir::populateVectorToSPIRVPatterns(STC, PS);
+
+    mlir::LogicalResult
+      Result = mlir::applyPartialConversion(M, *Target, std::move(PS));
+    if (llvm::failed(Result))
+      signalPassFailure();
   }
 };
 

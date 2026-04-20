@@ -58,6 +58,7 @@ def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
   let dependentDialects = ["geomalg::GeomalgDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
+                           "mlir::vector::VectorDialect",
                            "mlir::linalg::LinalgDialect",
                            "mlir::tensor::TensorDialect"];
 }
@@ -70,8 +71,8 @@ def LowerToSPIRVPass : Pass<"geomalg-spirv", "mlir::ModuleOp"> {
   let dependentDialects = ["geomalg::GeomalgDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
-                           "mlir::linalg::LinalgDialect",
-                           "mlir::tensor::TensorDialect"];
+                           "mlir::vector::VectorDialect",
+                           "mlir::spirv::SPIRVDialect"];
 }
 
 #endif  // GEOMALG_DIALECT_PASSES_TD
