@@ -12,15 +12,6 @@
 #include <mlir/Transforms/Passes.h>
 #include <string>
 
-namespace {
-struct GeomalgFullExpandOptions
-        : public mlir::PassPipelineOptions<GeomalgFullExpandOptions> {
-  Option<geomalg::MetricKind> MetricName{*this, "metric",
-    llvm::cl::desc("A metric determines the result of certain operations"),
-    geomalg::getMetricKindEnumValues()};
-};
-}
-
 int main(int argc, char ** argv) {
   mlir::DialectRegistry DialectRegistry;
   DialectRegistry.insert<geomalg::GeomalgDialect>();
@@ -31,13 +22,7 @@ int main(int argc, char ** argv) {
   DialectRegistry.insert<mlir::pdl_interp::PDLInterpDialect>();
 
   geomalg::registerGeomalgPasses();
-
-  mlir::PassPipelineRegistration<GeomalgFullExpandOptions>(
-    "full-expand",
-    "Full expand and optimize using a metric",
-    [](mlir::OpPassManager& PM, GeomalgFullExpandOptions const& Opts) {
-      llvm_unreachable("TODO");
-    });
+  geomalg::registerGeomalgToSPIRV();
 
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "geomalg optimizer driver\n", DialectRegistry));

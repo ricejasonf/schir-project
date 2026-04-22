@@ -7,8 +7,10 @@
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Parser/Parser.h>
+#include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/CSE.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <mlir/Transforms/Passes.h>
 #include <cassert>
 #include <string>
 
@@ -1725,4 +1727,33 @@ public:
     return llvm::success();
   }
 };
+
+// Since 'unknown' is mainly for testing, default to
+// 'cga' for the metric.
+struct GeomalgToSPIRVOptions
+        : public mlir::PassPipelineOptions<GeomalgToSPIRVOptions> {
+  Option<geomalg::MetricKind> MetricName{*this, "metric",
+    llvm::cl::desc("A metric determines the result of certain operations"),
+    ::llvm::cl::init(geomalg::MetricKind::cga), // Default to cga.
+    geomalg::getMetricKindEnumValues()};
+};
 } // namespace
+
+// Do the complete compilation down to SPIRV functions.
+// The module will likely have to be created explicitly.
+void geomalg::registerGeomalgToSPIRV() {
+  auto BuildFn = [](mlir::OpPassManager& PM,
+                    GeomalgToSPIRVOptions const& Options) {
+    geomalg::ExpandPassOptions EPO{.metric = Options.MetricName,
+                                   .disabledPatterns = {"ExpandMatvec"}};
+    PM.addNestedPass<mlir::func::FuncOp>(createExpandPass(EPO));
+    PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
+    PM.addPass(createLowerPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
+    PM.addPass(createLowerToSPIRVPass());
+  };
+
+  mlir::PassPipelineRegistration<GeomalgToSPIRVOptions>(
+        "geomalg-to-spirv", "Convert Geomalg to SPIRV (cga)", BuildFn);
+}

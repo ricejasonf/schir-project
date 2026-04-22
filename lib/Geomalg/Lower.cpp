@@ -1,4 +1,5 @@
 #include <geomalg/Dialect.h>
+#include <geomalg/Metric.h>
 #include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
 #include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
 #include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
@@ -16,6 +17,7 @@
 #include <mlir/Transforms/Passes.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/Support/CommandLine.h>
 
 #ifndef NDEBUG
 #include <mlir/IR/Verifier.h>
@@ -172,7 +174,8 @@ public:
       mlir::Type RT = mlir::VectorType::get({Size}, ScalarT);
       R.replaceOpWithNewOp<vector::FromElementsOp>(Op, RT, Args);
     } else {
-      assert(isa<BladeType>(ResultT));
+      if (!isa<BladeType>(ResultT))
+        return R.notifyMatchFailure(Op, "expecting blade type for sum operand");
       // SumOp type inference guarantees like terms here so
       // this is where we can actually perform addition.
       mlir::Value NewResult = Args.front();
@@ -463,7 +466,7 @@ public:
   }
 };
 
-// This pass is to be run on lower dialects (ie after geomalg-lower.)
+// This pass is to be run on the lower dialects (ie after geomalg-lower.)
 class LowerToSPIRVPass : public geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
   using Base = geomalg::impl::LowerToSPIRVPassBase<LowerToSPIRVPass>;
   mlir::FrozenRewritePatternSet Patterns;
@@ -474,9 +477,6 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
-
-    if (llvm::failed(applyLowerPatterns(Ctx, M)))
-      signalPassFailure();
 
     spirv::TargetEnvAttr TEA = spirv::lookupTargetEnvOrDefault(M);
     mlir::SPIRVTypeConverter STC = mlir::SPIRVTypeConverter(TEA);
@@ -496,20 +496,5 @@ public:
       signalPassFailure();
   }
 };
-
 }  // namespace
 
-namespace geomalg {
-void registerGeomalgToSPIRV() {
-  auto BuildFn = [](mlir::OpPassManager& PM) {
-    //PM.addNestedPass<mlir::func::FuncOp>(
-    PM.addPass(createLowerPass());
-    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
-    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
-  };
-
-  mlir::PassPipelineRegistration<>("geomalg-to-spirv",
-                                   "Lower Geomalg to SPIRV",
-                                   BuildFn);
-}
-} // namespace geomalg

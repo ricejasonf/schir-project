@@ -63,7 +63,7 @@ def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
                            "mlir::tensor::TensorDialect"];
 }
 
-def LowerToSPIRVPass : Pass<"geomalg-spirv", "mlir::ModuleOp"> {
+def LowerToSPIRVPass : Pass<"geomalg-lower-to-spirv", "mlir::ModuleOp"> {
   let summary = "Lower Geomalg to Arith and SPIRV dialect.";
   let description = [{
     Lower to SPIRV dialect.

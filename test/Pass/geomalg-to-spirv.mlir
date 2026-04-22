@@ -1,7 +1,5 @@
 // RUN: geomalg-opt \
-// RUN: --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" \
-// RUN: --geomalg-simplify \
-// RUN: --geomalg-spirv \
+// RUN: --geomalg-to-spirv \
 // RUN: %s | FileCheck %s
 
 !s = !geomalg.blade<0>
@@ -16,18 +14,31 @@
 !uvec2 = !geomalg.unit_vector<<1>, <2>>
 !uvec3 = !geomalg.unit_vector<<1>, <2>, <4>>
 !point = !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
-
-// CHECK-LABEL: spirv.func @rotate_point(
+module {
+// CHECK-LABEL: spirv.func @gprod
 // CHECK-SAME: %[[ARG0:arg[0-9]*]]: vector<3xf32>
 // CHECK-SAME: %[[ARG1:arg[0-9]*]]: vector<3xf32>
-// CHECK-SAME: %[[ARG2:arg[0-9]*]]: vector<3xf32>
-// CHECK-COUNT-30: spirv.FMul
+// CHECK-COUNT-9: spirv.FMul
+// CHECK-NOT: spirv.FMul
+// CHECK-COUNT-5: spirv.FAdd
+// CHECK-NOT: spirv.FAdd
+// CHECK: spirv.Return
+func.func @gprod(%arg0: !vec3, %arg1: !vec3)
+        -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%arg0, %arg1)
+    : (!vec3, !vec3) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// CHECK-LABEL: spirv.func @reflect_point
+// CHECK-SAME: %[[ARG0:arg[0-9]*]]: vector<3xf32>
+// CHECK-SAME: %[[ARG1:arg[0-9]*]]: vector<3xf32>
+// CHECK-COUNT-21: spirv.FMul
 // CHECK-NOT: spirv.FMul
 // CHECK-COUNT-18: spirv.FAdd
 // CHECK-NOT: spirv.FAdd
 // CHECK: spirv.Return
-module {
-func.func @rotate_point(%arg0: !vec3, %arg1: !uvec3, %arg2: !uvec3)
+func.func @reflect_point(%arg0: !vec3, %arg1: !uvec3)
         -> !geomalg.unknown {
   %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
   %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !s
