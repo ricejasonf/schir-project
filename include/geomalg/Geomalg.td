@@ -455,7 +455,7 @@ def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 
-def Geomalg_BladeOp : Geomalg_Op<"blade", [ConstantLike]> {
+def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   let description = [{
     Construct a basis blade or zero with a constant coefficient.
   }];
