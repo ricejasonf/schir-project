@@ -455,7 +455,7 @@ def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
   let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
 }
 
-def Geomalg_BladeOp : Geomalg_Op<"blade"> {
+def Geomalg_BladeOp : Geomalg_Op<"blade", [ConstantLike]> {
   let description = [{
     Construct a basis blade or zero with a constant coefficient.
   }];
@@ -466,8 +466,13 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
   let builders = [
     // Default to 1.0 for the coefficient.
     OpBuilder<(ins "::mlir::Type":$resultType, CArg<"float", "1.0f">:$val), [{
-        //$_state.addAttribute("attr", $_builder.getF32FloatAttr(val));
         build($_builder, $_state, resultType,
+              $_builder.getF32FloatAttr(val));
+      }]>,
+    OpBuilder<(ins CArg<"float">:$val), [{
+        mlir::Type ScalarT
+          = geomalg::BladeType::get($_builder.getContext(), 0);
+        build($_builder, $_state, ScalarT,
               $_builder.getF32FloatAttr(val));
       }]>
   ];

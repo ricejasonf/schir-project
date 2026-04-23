@@ -58,9 +58,10 @@ public:
     llvm::SmallVector<BladeTag, 6> B_factors;
     A.factorize(A_factors);
     B.factorize(B_factors);
-    for (auto a : A_factors)
-      for (auto b : B_factors)
-        if (dotProduct(a, b) != 0)
+    // Factors can be scalar.
+    for (BladeTag a : A_factors)
+      for (BladeTag b : B_factors)
+        if (a.getGrade() == 1 && b.getGrade() == 1 && dotProduct(a, b) != 0)
           return false;
     return true;
   }

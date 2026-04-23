@@ -11,7 +11,9 @@
 #include <mlir/Transforms/CSE.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <mlir/Transforms/Passes.h>
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <string>
 
 // Generated stuff
@@ -467,12 +469,25 @@ struct SimplifyMul : mlir::OpTraitRewritePattern<geomalg::IsMul> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyDoubling : mlir::OpRewritePattern<SumOp> {
+  using Base = mlir::OpRewritePattern<SumOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyDoubling");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      SumOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct SimplifySum : mlir::OpRewritePattern<geomalg::SumOp> {
   using Base = mlir::OpRewritePattern<geomalg::SumOp>;
   using Base::OpRewritePattern;
 
   void initialize() {
-    setDebugName("SimplifyMul");
+    setDebugName("SimplifySum");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -893,6 +908,17 @@ llvm::LogicalResult RemoveExpand::matchAndRewrite(
     return llvm::success();
   }
 
+  // Replace Expand of Cast. (e.g. Expanding cast to unit_vector)
+  if (auto COp = ExpandOp.getArg().getDefiningOp<CastOp>()) {
+    auto AMV = dyn_cast<MultivectorLike>(COp.getArg().getType());
+    auto RMV = dyn_cast<MultivectorLike>(COp.getResult().getType());
+    if (AMV && RMV && llvm::equal(AMV.getBlades(), RMV.getBlades())) {
+      replaceOpWithNewOp<geomalg::ExpandOp>(Rewriter,
+                                    ExpandOp, COp.getArg());
+      return llvm::success();
+    }
+  }
+
   if (isa<MultivectorLike>(ExpandOp.getArg().getType()))
     return llvm::failure();
 
@@ -1028,6 +1054,11 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   if (Versors.empty()) {
     replaceOp(Rewriter, VP, VP.getArg());
     return llvm::success();
+  }
+
+  for (mlir::Value V : Versors) {
+    if (isUnknown(V))
+      return llvm::failure();
   }
 
   mlir::Location Loc = VP.getLoc();
@@ -1231,6 +1262,13 @@ llvm::LogicalResult SimplifyInverse::matchAndRewrite(
     }
   }
 
+  // Inverse of a constant is a constant.
+  if (auto B = Arg.getDefiningOp<BladeOp>()) {
+    replaceOpWithNewOp<BladeOp>(Rewriter, InvOp, B.getResult().getType(),
+                                                 1.0f / B.getFloat());
+    return llvm::success();
+  }
+
   return llvm::failure();
 }
 
@@ -1375,6 +1413,39 @@ template <typename T>
 auto GetDefiningOp = [](mlir::Value V) -> T {
   return V.getDefiningOp<T>();
 };
+
+// Maybe this is overkill.
+llvm::LogicalResult SimplifyDoubling::matchAndRewrite(
+    SumOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = Op->getLoc();
+  // For any sum with two of the same operand, replace
+  // those with a single term that multiplies by 2.
+  // We expect a sorted list of operands where duplicates
+  // are adjacent.
+  if (!isa<BladeType>(Op.getResult().getType()))
+    return llvm::failure();
+  mlir::ValueRange Operands = Op->getOperands();
+  auto Itr = std::adjacent_find(Operands.begin(), Operands.end());
+  if (Itr == Operands.end())
+    return llvm::failure();
+
+  mlir::ValueRange SubOperands(Itr, Operands.end());
+  mlir::Value Term = *Itr;
+  auto Count = llvm::count(SubOperands, Term);
+  auto EvenCount = (Count / 2) * 2; // Get highest even count.
+  mlir::Value CountV = BladeOp::create(Rewriter, Loc,
+                                       static_cast<float>(Count));
+  mlir::Value Mul = CMulOp::create(Rewriter, Loc, Term.getType(),
+                                   {CountV, Term});
+
+  llvm::SmallVector<mlir::Value, 8> NewOperands;
+  llvm::append_range(NewOperands, Operands.drop_back(SubOperands.size()));
+  NewOperands.push_back(Mul);
+  llvm::append_range(NewOperands, SubOperands.drop_front(EvenCount));
+  replaceOpWithNewOp<SumOp>(Rewriter, Op, NewOperands);
+  return llvm::success();
+}
 
 llvm::LogicalResult SimplifyMul::matchAndRewrite(
     mlir::Operation* Op,
@@ -1561,6 +1632,33 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
     replaceOpWithNewOp<BladeOp>(Rewriter, Op, ScalarT, 1.0f);
     return llvm::success();
   }
+
+  // Expand Dot product of constants. (The user created it probably.)
+  // TODO Maybe we should have a ConstantSumOp or something.
+  if (auto Sum1 = LHS.getDefiningOp<SumOp>()) {
+    if (auto Sum2 = RHS.getDefiningOp<SumOp>()) {
+      if (Sum1.getArgs().size() == Sum2.getArgs().size()) {
+        mlir::Location Loc = Op->getLoc();
+        float Dot = 0.0f;
+        // Create a constant... duh!
+        for (auto [V1, V2] : llvm::zip(Sum1.getArgs(), Sum2.getArgs())) {
+          auto B1 = V1.getDefiningOp<BladeOp>();
+          auto B2 = V1.getDefiningOp<BladeOp>();
+          if (B1 && B2) {
+            Dot += B1.getFloat() * B2.getFloat();
+          } else {
+            Dot = NAN;
+            break;
+          }
+        }
+        if (!std::isnan(Dot)) {
+          replaceOpWithNewOp<BladeOp>(Rewriter, Op, Dot);
+          return llvm::success();
+        }
+      }
+    }
+  }
+
   return llvm::failure();
 }
 
@@ -1713,6 +1811,7 @@ public:
     // Create pattern rewriter thingy.
     mlir::RewritePatternSet PS(Ctx);
     PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
+    PS.add<SimplifyDoubling>(Ctx, mlir::PatternBenefit(0));
     PS.add<SimplifyMul,
            SimplifySum,
            SimplifyInverse,
@@ -1720,7 +1819,7 @@ public:
            SimplifyDot,
            RemoveExpand,
            RemoveConvert
-           >(Ctx);
+           >(Ctx, mlir::PatternBenefit(1));
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                           disabledPatterns,
                           enabledPatterns);
@@ -1748,9 +1847,10 @@ void geomalg::registerGeomalgToSPIRV() {
                                    .disabledPatterns = {"ExpandMatvec"}};
     PM.addNestedPass<mlir::func::FuncOp>(createExpandPass(EPO));
     PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
+    //PM.addPass(mlir::createSCCPPass());
     PM.addPass(createLowerPass());
-    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
     PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
     PM.addPass(createLowerToSPIRVPass());
   };
 

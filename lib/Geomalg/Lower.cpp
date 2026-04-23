@@ -47,6 +47,9 @@ using namespace geomalg;
 namespace {
 mlir::ValueRange expandVector(mlir::RewriterBase& R, mlir::Location Loc,
                               mlir::Value InputVector) {
+  // If the vector is defined "from_elements" then just use the operands
+  if (auto DefOp = InputVector.getDefiningOp<vector::FromElementsOp>())
+    return DefOp.getElements();
   auto VT = dyn_cast<mlir::VectorType>(InputVector.getType());
   assert(VT && VT.getRank() == 1 &&
       "expecting a 1-d vector");
@@ -287,6 +290,42 @@ public:
   }
 };
 
+struct InverseToArith : mlir::OpConversionPattern<InverseOp>,
+                        ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        InverseOp Op, InverseOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::Type ScalarT = getScalarT();
+    mlir::Value One = arith::ConstantOp::create(R, Loc, R.getOneAttr(ScalarT));
+    R.replaceOpWithNewOp<arith::DivFOp>(Op, One, Adaptor.getArg());
+    return llvm::success();
+  }
+};
+
+struct LowerCast : mlir::OpConversionPattern<CastOp>,
+                        ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        CastOp Op, CastOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    // Remove casts that map to the same (converted) type.
+    mlir::Type ResultT = Op.getResult().getType();
+    mlir::Type ConvertedResultT = getTypeConverter()->convertType(ResultT);
+    if (Adaptor.getArg().getType() == ConvertedResultT) {
+      R.replaceOp(Op, Adaptor.getArg());
+      return llvm::success();
+    }
+
+    return llvm::failure();
+  }
+};
+
 struct LowerFuncReturn : mlir::OpConversionPattern<ReturnOp>,
                          ::PatternBase {
 public:
@@ -423,6 +462,8 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
          LowerNegate,
          LowerBlade,
          DotToArith,
+         InverseToArith,
+         LowerCast,
          LowerReturn
          >(*TC, Ctx);
 }

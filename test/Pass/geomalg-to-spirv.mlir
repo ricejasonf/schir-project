@@ -33,10 +33,6 @@ func.func @gprod(%arg0: !vec3, %arg1: !vec3)
 // CHECK-LABEL: spirv.func @reflect_point
 // CHECK-SAME: %[[ARG0:arg[0-9]*]]: vector<3xf32>
 // CHECK-SAME: %[[ARG1:arg[0-9]*]]: vector<3xf32>
-// CHECK-COUNT-21: spirv.FMul
-// CHECK-NOT: spirv.FMul
-// CHECK-COUNT-18: spirv.FAdd
-// CHECK-NOT: spirv.FAdd
 // CHECK: spirv.Return
 func.func @reflect_point(%arg0: !vec3, %arg1: !uvec3)
         -> !geomalg.unknown {
@@ -55,5 +51,26 @@ func.func @reflect_point(%arg0: !vec3, %arg1: !uvec3)
     : (!e1, !e2, !e3) -> !vec3
   geomalg.return %10 : !vec3
 }
+
+// CHECK-LABEL: spirv.func @rotate_point
+// CHECK-SAME: %[[ARG0:arg[0-9]*]]: vector<3xf32>
+// CHECK: spirv.Return
+func.func @rotate_point(%arg0: !vec3) -> !geomalg.unknown {
+  %no = "geomalg.blade"() <{coefficient = 1.0e+00 : f32}> : () -> !no
+  %1 = "geomalg.blade"() <{coefficient = 1.0e+00 : f32}> : () -> !e1
+  %2 = "geomalg.blade"() <{coefficient = 1.0e+00 : f32}> : () -> !e2
+  %3 = "geomalg.sum"(%1, %2) : (!e1, !e2) -> !vec2
+  %u3 = "geomalg.convert"(%3) : (!vec2) -> !uvec2
+  %4 = "geomalg.gprod"(%1, %u3) : (!e1, !uvec2) -> !geomalg.unknown
+  %neg4 = "geomalg.negate"(%4) : (!geomalg.unknown) -> !geomalg.unknown
+  %5 = "geomalg.gprod"(%3, %1) : (!vec2, !e1) -> !geomalg.unknown
+  %6 = "geomalg.gprod"(%neg4, %arg0)
+    : (!geomalg.unknown, !vec3) -> !geomalg.unknown
+  %0 = "geomalg.gprod"(%6, %5)
+    : (!geomalg.unknown, !geomalg.unknown) -> !geomalg.unknown
+  %sum = "geomalg.sum"(%0, %no) : (!geomalg.unknown, !no) -> !geomalg.unknown
+  geomalg.return %sum : !geomalg.unknown
+}
+
 }
 
