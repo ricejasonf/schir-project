@@ -24,11 +24,6 @@ namespace geomalg {
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
-// PDLL Junk
-namespace geomalg::simplify {
-#include "geomalg/Transforms/Simplify.h.inc"
-}
-
 namespace geomalg {
 // Because lldb cannot look at mlir::Operation, ...
 void dumpOp(mlir::Operation* Op) {
