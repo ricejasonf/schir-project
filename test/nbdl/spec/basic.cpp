@@ -6,7 +6,8 @@
 //
 
 namespace foo {
-heavy_scheme {
+#pragma heavy_scheme
+{
   (import (heavy clang))
   (write-lexer "
     struct woof {
@@ -14,7 +15,7 @@ heavy_scheme {
     };"
   )
 }
-}
+} // namespace foo
 
 int main()
 {

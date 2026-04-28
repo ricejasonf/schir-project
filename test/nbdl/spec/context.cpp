@@ -9,7 +9,8 @@
 
 namespace {
 namespace foo {
-heavy_scheme {
+#pragma heavy_scheme
+{
   (import (nbdl spec))
   (context 'my_context (arg1 arg2)
    (member: '.foo 'int

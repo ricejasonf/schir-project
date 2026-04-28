@@ -19,7 +19,8 @@ namespace my {
 
 using fav_games = std::unordered_map<std::string, std::string>;
 
-heavy_scheme {
+#pragma heavy_scheme
+{
   (import (heavy base)
           (nbdl spec))
 

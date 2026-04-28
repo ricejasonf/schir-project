@@ -13,7 +13,8 @@
 
 namespace {
 namespace foo {
-heavy_scheme {
+#pragma heavy_scheme
+{
   (import (nbdl spec))
 
   (define (>= a b)
