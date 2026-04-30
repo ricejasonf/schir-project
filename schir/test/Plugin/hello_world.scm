@@ -1,7 +1,7 @@
 ; RUN: schir-scheme --module-path=%schir_module_path %s | FileCheck %s
 (import (schir base))
 
-(load-plugin "libschirHelloWorld.so")
+(load-plugin "libSchirHelloWorld.so")
 (define my-write
   (load-builtin "schir_hello_world_my_write"))
 

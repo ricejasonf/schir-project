@@ -11,7 +11,7 @@
   (import (schir builtins)
           (schir clang))
   (begin
-    (load-plugin "libschirHelloWorld.so")
+    (load-plugin "libSchirHelloWorld.so")
     (define my-write
       (load-builtin "schir_hello_world_my_write"))
     (define get-ultimate-answer

@@ -11,10 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "schir/Builtins.h"
+#include "schir/CharInfo.h"
 #include "schir/Context.h"
 #include "schir/Lexer.h"
 #include "schir/Parser.h"
-#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallVector.h"
@@ -28,6 +28,7 @@ using schir::Context;
 using schir::Parser;
 using schir::ValueResult;
 using llvm::StringRef;
+namespace charinfo = schir::charinfo;
 
 namespace {
   // Returns true on an invalid number prefix notation
@@ -480,8 +481,8 @@ bool Parser::ParseLiteralImpl() {
           break;
         }
         default: {
-          if (clang::isWhitespace(TokenSpan[0])) {
-            TokenSpan = TokenSpan.drop_while(clang::isWhitespace);
+          if (charinfo::isWhitespace(TokenSpan[0])) {
+            TokenSpan = TokenSpan.drop_while(charinfo::isWhitespace);
             continue;
           } else {
             // Default to using the escaped character.

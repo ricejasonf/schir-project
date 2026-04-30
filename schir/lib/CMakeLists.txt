@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.13.4)
 
-add_schir_library(schir
+add_library(schir
   Builtins.cpp
+  CharInfo.cpp
   Context.cpp
   Dialect.cpp
   Dialect/Passes.cpp
@@ -16,39 +17,37 @@ add_schir_library(schir
   Parser.cpp
   Quasiquote.cpp
   SourceFileStorage.cpp
-  SourceManager.cpp
-  Nbdl.cpp
-  Nbdl/NbdlDialect.cpp
-  Nbdl/NbdlWriter.cpp
-  # TODO Do not use Clangs CharInfo.
-  ${CLANG_LIB_DIR}/Basic/CharInfo.cpp
+  SourceManager.cpp)
 
-  LINK_COMPONENTS
-    Core
-    Support
+# To support plugins
+set_property(TARGET schir PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-  LINK_LIBS
-    MLIRAnalysis
-    MLIRBytecodeReader
-    MLIRBytecodeWriter
-    MLIRFuncDialect
-    MLIRIR
-    MLIRParser
-    MLIRPass
-    MLIRSideEffectInterfaces
-    MLIRSupport
-    MLIRTransforms
+# Include TableGen generated files.
+target_include_directories(schir
+  PRIVATE
+  ${CMAKE_BINARY_DIR}/schir/include)
 
-    MLIRRegisterAllDialects
-    MLIRRegisterAllPasses
-    MLIRRegisterAllExtensions
-    ${MLIR_DIALECT_LIBS}
-    ${MLIR_CONVERSION_LIBS}
-    ${MLIR_EXTENSION_LIBS}
+add_dependencies(schir
+  SchirDialectIncGen
+  SchirPassesIncGen)
 
-  DEPENDS
-    SchirDialectIncGen
-    SchirPassesIncGen
-    NbdlOpsIncGen
-    MLIRFuncOpsIncGen
-  )
+target_link_libraries(schir
+  LLVMCore
+  LLVMSupport
+  MLIRAnalysis
+  MLIRBytecodeReader
+  MLIRBytecodeWriter
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRPass
+  MLIRSideEffectInterfaces
+  MLIRSupport
+  MLIRTransforms
+
+  MLIRRegisterAllDialects
+  MLIRRegisterAllPasses
+  MLIRRegisterAllExtensions
+  ${MLIR_DIALECT_LIBS}
+  ${MLIR_CONVERSION_LIBS}
+  ${MLIR_EXTENSION_LIBS})

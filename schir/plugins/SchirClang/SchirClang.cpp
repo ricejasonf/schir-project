@@ -8,6 +8,7 @@
 #include <clang/AST/Expr.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Basic/SourceManager.h>
+#include <clang/Lex/Pragma.h>
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Parse/Parser.h>
 #include <utility>
@@ -145,7 +146,7 @@ public:
   }
 };
 
-
+using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
 public:
   SchirSchemePragmaHandler()

@@ -4,7 +4,9 @@
 from lit import llvm
 
 config.schir_module_path = "@SCHIR_MODULE_PATH@"
+config.schir_tools_dir = "@CMAKE_BINARY_DIR@/bin"
 config.llvm_tools_dir = "@LLVM_TOOLS_DIR@"
+config.schir_lib_dir = "@CMAKE_BINARY_DIR@/lib"
 config.test_exec_root = "@CMAKE_CURRENT_BINARY_DIR@"
 
 llvm.initialize(lit_config, config)

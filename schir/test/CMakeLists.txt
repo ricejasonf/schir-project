@@ -6,6 +6,6 @@ configure_lit_site_cfg(
   )
 
 add_lit_testsuite(check-schir "Running Schir tests"
-  ${CMAKE_CURRENT_SOURCE_DIR}
-  DEPENDS schir-scheme schir-opt SchirClang FileCheck
+  ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS schir-scheme schir-opt SchirClang SchirHelloWorld FileCheck
 )

@@ -1,6 +1,7 @@
 include(AddLLVM)
 include(LLVMDistributionSupport)
 
+# DEPRECATED (just use add_library)
 function(add_schir_library name)
   set(options "")
   set(one_value_args "")
@@ -20,6 +21,7 @@ function(add_schir_library name)
 endfunction(add_schir_library)
 
 # Create a scheme module that is compiled as a dynamically loaded library.
+# DEPRECATED (just use add_library MODULE)
 function(add_schir_scheme_plugin name filename)
   set(options "")
   set(one_value_args "")

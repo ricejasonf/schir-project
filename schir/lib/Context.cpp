@@ -16,7 +16,6 @@
 #include "schir/Lexer.h"
 #include "schir/Mangle.h"
 #include "schir/Mlir.h"
-#include "schir/Nbdl.h"
 #include "schir/OpGen.h"
 #include "schir/Parser.h"
 #include "schir/Source.h"
@@ -103,7 +102,6 @@ Context::Context()
                   _SCHIR_load_module);
   RegisterModule(SCHIR_BASE_LIB_STR, SCHIR_BASE_LOAD_MODULE);
   RegisterModule(SCHIR_MLIR_LIB_STR, SCHIR_MLIR_LOAD_MODULE);
-  RegisterModule(SCHIR_NBDL_LIB_STR, SCHIR_NBDL_LOAD_MODULE);
   SCHIR_BASE_INIT(*this);
 }
 

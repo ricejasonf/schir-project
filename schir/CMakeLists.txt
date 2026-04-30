@@ -11,13 +11,11 @@ endif()
 
 set(SCHIR_GEN_INC ${CMAKE_BINARY_DIR}/tools/schir/include)
 set(SCHIR_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(CLANG_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../clang/lib)
 include_directories(BEFORE
                     ${CMAKE_CURRENT_SOURCE_DIR}/include
                     ${CMAKE_CURRENT_SOURCE_DIR}/../mlir/include
                     ${CMAKE_BINARY_DIR}/tools/mlir/include
-                    ${SCHIR_GEN_INC}
-                    ../clang/include)
+                    ${SCHIR_GEN_INC})
 
 # FIXME Copy tablegen headers for dialects
 install(DIRECTORY include/schir
@@ -53,7 +51,6 @@ add_subdirectory(tools/schir-scheme)
 add_subdirectory(tools/schir-opt)
 add_subdirectory(test)
 add_subdirectory(unittests)
-add_subdirectory(include/nbdl_gen)
 add_subdirectory(plugins/HelloWorld)
 add_subdirectory(plugins/SchirClang)
 

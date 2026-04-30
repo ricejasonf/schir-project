@@ -11,13 +11,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "schir/CharInfo.h"
 #include "schir/Lexer.h"
 #include "schir/Source.h"
-#include "clang/Basic/CharInfo.h"
 #include "llvm/ADT/StringRef.h"
 #include <cassert>
 
 using namespace schir;
+namespace charinfo = schir::charinfo;
 
 namespace {
 // Check if char is <initial> for <identifier>.
@@ -114,6 +115,7 @@ bool Lexer::isExtendedAlphabet(char c) {
   // TODO
   // We could make a table similar to clang::charinfo::InfoTable
   // for more efficient processing here and possibly elsewhere.
+  // (See include/schir/CharInfo.h)
   switch(c) {
   case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G':
   case 'H': case 'I': case 'J': case 'K': case 'L': case 'M': case 'N':
@@ -145,7 +147,7 @@ bool Lexer::isDelimiter(char c) {
     return true;
   }
 
-  if (clang::isWhitespace(c)) {
+  if (schir::charinfo::isWhitespace(c)) {
     return true;
   }
 
@@ -364,16 +366,16 @@ void Lexer::ProcessWhitespace(const char *&CurPtr) {
   // adds whitespace flags to Tok if needed
   char c = *CurPtr;
 
-  if (!clang::isWhitespace(c)) {
+  if (!charinfo::isWhitespace(c)) {
     return;
   }
 
   while (true) {
-    while (clang::isHorizontalWhitespace(c)) {
+    while (charinfo::isHorizontalWhitespace(c)) {
       c = ConsumeChar(CurPtr);
     }
 
-    if (!clang::isVerticalWhitespace(c)) {
+    if (!charinfo::isVerticalWhitespace(c)) {
       break;
     }
 
@@ -409,7 +411,7 @@ bool Lexer::TryProcessComment(const char *&CurPtr) {
   char c = *CurPtr;
   if (c == ';') {
     // Skip until new line
-    while (!clang::isVerticalWhitespace(c)) {
+    while (!charinfo::isVerticalWhitespace(c)) {
       c = ConsumeChar(CurPtr);
     }
     return true;
