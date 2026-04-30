@@ -1,0 +1,484 @@
+//===--- Context.h - Classes for representing declarations ----*- C++ -*---===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+//  This file defines schir::Context.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_SCHIR_CONTEXT_H
+#define LLVM_SCHIR_CONTEXT_H
+
+#include "schir/ContinuationStack.h"
+#include "schir/Heap.h"
+#include "schir/Source.h"
+#include "schir/Value.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Compiler.h"
+#include "llvm/Support/raw_ostream.h"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <unordered_map>
+#include <utility>
+
+namespace mlir {
+  class MLIRContext;
+  class DialectRegistry;
+}
+
+namespace schir {
+using llvm::ArrayRef;
+using llvm::StringRef;
+using llvm::cast;
+using llvm::cast_or_null;
+using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
+using llvm::isa;
+
+class SourceManager;
+class OpGen;
+class Context;
+
+void compile(Context&, Value V, Value Env, Value Handler);
+void eval(Context&, Value V, Value Env);
+void write(llvm::raw_ostream&, Value);
+void opEval(mlir::Operation*);
+
+class OpEvalImpl;
+struct OpEvalDeleter {
+  void operator()(OpEvalImpl*) const;
+};
+using OpEvalPtr = std::unique_ptr<OpEvalImpl, OpEvalDeleter>;
+
+class ContextLocalLookup {
+public:
+  llvm::DenseMap<uintptr_t, Value> LookupTable;
+};
+
+void registerModuleVar(schir::Context& C,
+                       schir::Module* M,
+                       llvm::StringRef VarSymbol,
+                       llvm::StringRef VarId);
+
+class Context : public ContinuationStack<Context>,
+                public ContextLocalLookup,
+                public IdTable,
+                protected Heap<Context>
+{
+  friend class OpGen;
+  friend class OpEvalImpl;
+  friend class SchirScheme;
+  friend class Heap<Context>;
+  friend void* allocate(Context& C, size_t Size, size_t Alignment);
+  friend void initModuleNames(schir::Context&, llvm::StringRef MangledName,
+                              ModuleInitListTy InitList);
+  friend void registerModuleVar(schir::Context& C,
+                                schir::Module* M,
+                                llvm::StringRef VarSymbol,
+                                llvm::StringRef VarId);
+
+  static constexpr size_t MiB = 1024 * 1024;
+
+  llvm::StringMap<std::unique_ptr<Module>> Modules;
+  llvm::DenseMap<String*, Value> KnownAddresses;
+
+  // DefaultEnv participates in garbage collection.
+  std::unique_ptr<schir::Environment> DefaultEnv;
+
+  // MaxMemHint
+  //         - The threshold used to determine if a garbage
+  //           collection run is needed. This value is not a
+  //           hard limit and the limit is increased when a
+  //           collection run yields a low return. The limit
+  //           may also increase with the allocation of a large
+  //           object.
+  size_t MaxMemHint;
+
+  // EnvStack
+  //  - an improper list ending with an Environment
+  //  - Calls to procedures or eval will set the EnvStack
+  //    and swap it back upon completion (via RAII)
+  //  - TODO EnvStack et al. could probably be moved to OpGen.
+  Value EnvStack;
+  Environment* GetTopLevelEnvironment(Value Env = nullptr);
+  void EnsureEnvFrame() {
+    if (isa<Environment>(EnvStack))
+      PushEnvFrame();
+  }
+
+public: // Provide access in lib/Mlir bindings.
+  std::unique_ptr<mlir::DialectRegistry> DialectRegistry;
+  std::unique_ptr<mlir::MLIRContext> MLIRContext;
+private:
+  SourceLocation Loc = {}; // last known location for errors
+  Value Err = nullptr; // FIXME Remove Context.Err I think.
+  Value ExceptionHandlers = schir::Empty();
+  mlir::Operation* ModuleOp = nullptr;
+
+public:
+  schir::SourceManager* SourceManager = nullptr;
+  schir::OpGen* OpGen = nullptr;
+  schir::OpEvalPtr OpEval;
+
+
+  // Work around DidCallContinuation being set with compiler errors.
+  bool CheckError();
+
+  // SetErrorHandler - Set the bottom most exception handler to handle
+  //                   hard errors including uncaught exceptions.
+  void SetErrorHandler(Value Handler);
+  void WithExceptionHandlers(Value NewHandlers, Value Thunk);
+  void WithExceptionHandler(Value Handler, Value Thunk);
+  void Raise(Value Obj);
+  void RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs);
+  void RaiseError(llvm::StringRef Msg, llvm::ArrayRef<Value> IrrArgs = {}) {
+    RaiseError(CreateString(Msg), IrrArgs);
+  }
+
+  using Heap<Context>::MaybeCollectGarbage;
+  void CollectGarbage();
+
+  // WithEnv - Call a thunk with an environment and the ability to clean up
+  //           the environment object if necessary.
+  void WithEnv(std::unique_ptr<schir::Environment> E, schir::Environment* Env,
+               Value Thunk);
+  void WithEnv(std::unique_ptr<schir::Environment> EnvPtr, Value Thunk) {
+    schir::Environment* Env = EnvPtr.get();
+    WithEnv(std::move(EnvPtr), Env, Thunk);
+  }
+
+  // RunSync - Run in a nested loop. This breaks
+  //           when the callee finishes or on
+  //           exception so the parent loop can
+  //           finish execution such as clean up.
+  Value RunSync(Value Callee, ValueRefs Args);
+
+  void InitModule(Symbol* MangledName);
+  mlir::Operation* getModuleOp();
+  void printModuleOp();
+  void verifyModule();
+  bool OutputModule(llvm::StringRef MangledName, llvm::StringRef ModulePath);
+
+  // Return true on invalid kind
+  bool CheckKind(ValueKind VK, Value V);
+  bool CheckNumber(Value V);
+  template <typename T>
+  bool CheckKind(Value V) {
+    return CheckKind(T::getKind(), V);
+  }
+
+  Value getEnvironment() {
+    return EnvStack;
+  }
+  void setEnvironment(Value E) {
+    assert((isa<Environment, Pair, EnvFrame, Empty>(E)) &&
+        "invalid environment specifier");
+    EnvStack = E;
+  }
+
+  EnvFrame* GetLocalEnvFrame(Value Stack, bool IsLambdaScope = false);
+  Value& GetLocalEnvStack(Value Stack = nullptr);
+  // Provide a hashable value for checking for duplicate identifiers.
+  std::pair<uintptr_t, uintptr_t> GetIdentifierUniqueId(Value V);
+
+  Module* RegisterModule(llvm::StringRef MangledName,
+                         schir::ModuleLoadNamesFn* LoadNames = nullptr);
+
+  void AddKnownAddress(llvm::StringRef MangledName, schir::Value Value);
+  Value GetKnownValue(llvm::StringRef MangledName);
+
+  // Import - Apply an ImportSet to an Environment checking
+  //          for name collisions. Use the current environment
+  //          by default.
+  //          Return true on Error
+  void Import(schir::ImportSet* ImportSet);
+
+  // CreateEnvironment - Create a non-garbage collected instance of
+  //                     Environment. The unique_ptr may contain nullptr
+  //                     if the import operation fails.
+  std::unique_ptr<Environment> CreateEnvironment(schir::ImportSet* ImportSet);
+
+  // LoadModule - Idempotently load a library by its mangled name.
+  void LoadModule(schir::Symbol* MangledName, bool IsFileLoaded = false);
+  void LoadExports(schir::Module* M, mlir::Operation* ModuleOp);
+  void PushModuleCleanup(llvm::StringRef MangledName, Value Fn);
+  void IncludeModuleFile(schir::SourceLocation Loc, schir::String* Filename,
+                         schir::Symbol* ModuleMangledName);
+  bool TryLoadPrebuiltModule(schir::SourceLocation Loc,
+                             schir::String* Filename);
+
+
+  Context();
+  ~Context();
+
+  // Lookup
+  //  - Takes a Symbol
+  //  - Returns a matching Binder or nullptr
+  EnvEntry Lookup(Value Id) {
+    return Lookup(Id, EnvStack);
+  }
+  EnvEntry Lookup(Value Id, Value Stack);
+
+  EnvEntry GetSyntax(EnvEntry Entry);
+
+  // PushEnvFrame - Creates and pushes an EnvFrame to the
+  //                current environment (EnvStack)
+  EnvFrame* PushEnvFrame(llvm::ArrayRef<Value> Names = {},
+                         bool IsLambdaScope = false);
+  void PopEnvFrame(EnvFrame*);
+  void PushLocalBinding(Binding* B);
+  void PushEnv(Value V, Value Env);
+
+  // PushLambdaFormals - Check formals, create an EnvFrame,
+  //                     and push it onto the EnvStack
+  //                     Return the pushed EnvFrame or nullptr.
+  EnvFrame* PushLambdaFormals(Value Formals, bool& HasRestParam);
+
+private:
+  bool CheckLambdaFormals(Value Formals,
+                          llvm::SmallVectorImpl<Value>& Names,
+                          bool& HasRestParam);
+public:
+
+  void EmitStackSpaceError();
+
+  void Apply(SourceLocation CallLoc, Value Callee, ValueRefs Args) {
+    setLoc(CallLoc);
+    ContinuationStack<Context>::Apply(Callee, Args);
+  }
+  using ContinuationStack<Context>::Apply;
+
+protected:
+  void ManagedObjectWind(void* Ptr, DestructorTy Destructor,
+                         Value Before, Value Thunk, Value After);
+
+public:
+  using ContinuationStack::DynamicWind;
+
+  template <typename T>
+  void DynamicWind(std::unique_ptr<T> ManagedPtr, Value Before,
+                            Value Thunk, Value After) {
+    T* Ptr = ManagedPtr.release();
+    DestructorTy Destructor = [](void* Ptr) {
+      delete static_cast<T*>(Ptr);
+    };
+    ManagedObjectWind(Ptr, Destructor, Before, Thunk, After);
+  }
+
+  template <typename T>
+  void DynamicWind(std::unique_ptr<T> ManagedPtr, Value Thunk) {
+    auto Noop = CreateLambda([](Context& C, ValueRefs) {
+      C.Cont();
+    });
+    DynamicWind(std::move(ManagedPtr), Noop, Thunk, Noop);
+  }
+
+
+  void setLoc(SourceLocation L) {
+    if (L.isValid()) {
+      Loc = L;
+    }
+  }
+
+  Value setLoc(Value V) {
+    setLoc(V.getSourceLocation());
+    return V;
+  }
+
+  SourceLocation getLoc() const { return Loc; }
+
+  SourceLocation getErrorLocation() {
+    assert(Err && "requires an error be set");
+    SourceLocation L = Err.getSourceLocation();
+    if (L.isValid()) return L;
+    return Loc;
+  }
+
+  StringRef getErrorMessage() {
+    assert(Err && "requires an error be set");
+    if (Error* E = dyn_cast_or_null<Error>(Err)) {
+      return E->getErrorMessage();
+    } else {
+      return "Unknown error (invalid error type)";
+    }
+  }
+
+  Value RebuildLiteral(Value V, Value Env = nullptr);
+
+  Heap<Context>& getAllocator() { return *this; }
+
+  // Factory functions should only be concerned with
+  // allocating the objects.
+  Undefined   CreateUndefined() { return {}; }
+  Bool        CreateBool(bool V) { return V; }
+  Char        CreateChar(uint32_t V) { return V; }
+  Int         CreateInt(int32_t x) { return Int(x); }
+  Empty       CreateEmpty() { return {}; }
+  BigInt*     CreateBigInt(llvm::APInt V) {
+    return new (*this) BigInt(V);
+  }
+  BigInt*     CreateBigInt(int64_t X) {
+    llvm::APInt Val(64, X, /*IsSigned=*/true);
+    return CreateBigInt(Val);
+  }
+  Float*      CreateFloat(double Double) {
+    return CreateFloat(llvm::APFloat(Double));
+  }
+  Float*      CreateFloat(llvm::APFloat V);
+  Pair*       CreatePair(Value V1, Value V2) {
+    return new (*this) Pair(V1, V2);
+  }
+  Pair*       CreatePair(Value V1) {
+    return new (*this) Pair(V1, CreateEmpty());
+  }
+  Pair* CreatePair(Value V1, Value V2, schir::SourceLocation MaybeLoc) {
+    // Try to preserve source locations.
+    if (MaybeLoc.isValid())
+      return CreatePairWithSource(V1, V2, MaybeLoc);
+    else
+      return CreatePair(V1, V2);
+  }
+  Pair* CreatePair(Value V1, Value V2, Value MaybeSource) {
+    schir::SourceLocation Loc = MaybeSource.getSourceLocation();
+    return CreatePair(V1, V2, Loc);
+  }
+  PairWithSource* CreatePairWithSource(Value V1, Value V2,
+                                       SourceLocation Loc) {
+    return new (*this) PairWithSource(V1, V2, Loc);
+  }
+  Value       CreateList(llvm::ArrayRef<Value> Vs);
+  String*     CreateString(unsigned Length, char InitChar);
+  String*     CreateString(StringRef S);
+  String*     CreateString(StringRef S1, StringRef S2);
+  String*     CreateString(StringRef, StringRef, StringRef);
+  String*     CreateString(StringRef, StringRef, StringRef, StringRef);
+  String*     CreateFormatted(llvm::StringRef Fmt,
+                              llvm::ArrayRef<Value> Values);
+  String*     CreateFormatted(Error* Err);
+  Vector*     CreateVector(ArrayRef<Value> Xs);
+  Vector*     CreateVector(unsigned N, Value Default = Undefined());
+  ByteVector* CreateByteVector(llvm::ArrayRef<Value> Xs);
+  EnvFrame*   CreateEnvFrame(llvm::ArrayRef<Value> Names, bool IsLambdaScope);
+  EnvFrame*   CreateEnvFrame(unsigned N, bool IsLambdaScope = false);
+
+  template <typename T>
+  Any* CreateAny(T Obj) {
+    static_assert(alignof(T) <= alignof(Value),
+      "object storage alignment is too large");
+    static_assert(std::is_trivially_copyable<T>::value,
+      "F must be trivially_copyable");
+    llvm::StringRef ObjData(reinterpret_cast<char const*>(&Obj), sizeof(Obj));
+    void* Mem = Any::allocate(getAllocator(), ObjData);
+    void const* TypeId = &AnyTypeId<T>::Id;
+    Any* New = new (Mem) Any(TypeId, ObjData);
+
+    return New;
+  }
+
+  template <typename F>
+  Lambda* CreateLambda(F Fn, llvm::ArrayRef<schir::Value> Captures) {
+    OpaqueFn FnData = createOpaqueFn(Fn);
+    void* Mem = Lambda::allocate(getAllocator(), FnData, Captures);
+    Lambda* New = new (Mem) Lambda(FnData, Captures);
+
+    return New;
+  }
+
+  template <typename F>
+  Lambda* CreateLambda(F Fn) {
+    return CreateLambda(Fn, {});
+  }
+
+  template <typename F>
+  Syntax* CreateSyntax(F Fn) {
+    auto FnData = createOpaqueFn(Fn);
+    void* Mem = Syntax::allocate(getAllocator(), FnData);
+    Syntax* New = new (Mem) Syntax(FnData);
+
+    return New;
+  }
+
+  Builtin* CreateBuiltin(ValueFn Fn) {
+    return new (*this) Builtin(Fn);
+  }
+
+  BuiltinSyntax* CreateBuiltinSyntax(SyntaxFn Fn) {
+    return new (*this) BuiltinSyntax(Fn);
+  }
+
+  Value CreateSyntaxClosure(SourceLocation Loc, Value Node, Value Env);
+  SyntaxClosure* CreateSyntaxClosure(SourceLocation Loc, Symbol* S,
+                                     Value Env);
+  Value UnwrapSyntaxClosure(Value V);
+
+  SourceValue* CreateSourceValue(SourceLocation Loc) {
+    return new (*this) SourceValue(Loc);
+  }
+
+  Error* CreateError(SourceLocation Loc, Value Message, Value Irritants) {
+    return new (*this) Error(Loc, Message, Irritants);
+  }
+  Error* CreateError(SourceLocation Loc, StringRef Str, Value Irritants) {
+    return CreateError(Loc, CreateString(Str), Irritants);
+  }
+
+  ExternName* CreateExternName(SourceLocation Loc, String* Str) {
+    return new (*this) ExternName(Str, Loc);
+  }
+
+  ExternName* CreateExternName(SourceLocation Loc, llvm::StringRef Name) {
+    String* Str = CreateIdTableEntry(Name);
+    return CreateExternName(Loc, Str);
+  }
+
+  Exception* CreateException(Value V) {
+    return new (*this) Exception(V);
+  }
+
+  Binding* CreateBinding(Value Id, Value V) {
+    assert(!isa<Binding>(V) && "restrict nested bindings");
+    return new (*this) Binding(Id, V);
+  }
+
+  // CreateImportSet - Call CC with created ImportSet.
+  void CreateImportSet(Value Spec);
+
+  Binding* CreateBinding(Value V) {
+    // TODO create Binding class with no symbol maybe?
+    Symbol* S = CreateSymbol("NONAME");
+    return CreateBinding(S, V);
+  }
+
+
+  Symbol* CreateSymbol(llvm::StringRef S,
+                       SourceLocation Loc = SourceLocation()) {
+    String* Str = CreateIdTableEntry(S);
+    return new (*this) Symbol(Str, Loc);
+  }
+
+  Value ParseLiteral(llvm::StringRef Expr);
+
+  // These accessors help track the location
+  // so it is convenient to overwrite a variable
+  Value car(Value V) { return setLoc(V).car(); }
+  Value cdr(Value V) { return setLoc(V).cdr(); }
+  Value cadr(Value V) { return setLoc(V).cadr(); }
+  Value cddr(Value V) { return setLoc(V).cddr(); }
+};
+
+}  // end namespace schir
+
+#endif

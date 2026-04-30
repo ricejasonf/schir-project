@@ -1,0 +1,2274 @@
+//===---- Value.h - Classes for representing declarations ----*- C++ ----*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+//  This file defines SchirScheme decalarations for schir::Value.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_SCHIR_VALUE_H
+#define LLVM_SCHIR_VALUE_H
+
+#include "schir/Source.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/PointerEmbeddedInt.h"
+#include "llvm/ADT/PointerSumType.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/bit.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/FormatAdapters.h"
+#include "llvm/Support/PointerLikeTypeTraits.h"
+#include "llvm/Support/TrailingObjects.h"
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+namespace mlir {
+  class Value;
+  class Operation;
+}
+
+namespace schir {
+using llvm::cast;
+using llvm::cast_or_null;
+using llvm::dyn_cast;
+using llvm::dyn_cast_or_null;
+using llvm::isa;
+using llvm::isa_and_nonnull;
+using mlir::Operation;
+struct ContArg { ContArg() = delete; };
+
+// ExternValue - Stores a concrete value in an aligned storage
+//               with a Value that points to it. Via StandardLayout,
+//               we can have a single symbol point to the value with a
+//               way of accessing its storage for initialization.
+//               This should be useful for hand coding Scheme
+//               modules in C++
+template <size_t StorageLen, size_t Alignment = alignof(void*)>
+struct ExternValue;
+
+template <typename DerivedT>
+void* allocate(llvm::AllocatorBase<DerivedT>& Allocator,
+               size_t Size, size_t Alignment) {
+  return static_cast<DerivedT&>(Allocator).Allocate(Size, Alignment);
+}
+
+template <size_t MaxSize, size_t MaxAlignment>
+void* allocate(ExternValue<MaxSize, MaxAlignment>& Val,
+//void* allocate(std::aligned_storage_t<MaxSize, MaxAlignment>& Storage,
+               size_t Size, size_t Alignment) {
+  assert(Size <= MaxSize && "allocation out of bounds for storage");
+  assert(MaxAlignment % Alignment == 0 && "improper alignment for storage");
+  return &(Val.Storage);
+}
+
+// Value - A result of evaluation. This derives from
+//         an llvm::PointerSumType to point to values
+//         on the heap as well as store small values
+//         like integers in an object the size of a pointer.
+class Value;
+
+// other forward decls
+class OpGen;
+class Context;
+class ContextLocalLookup;
+class Pair;
+class Binding;
+class Symbol;
+class Environment;
+class Module;
+class ImportSet;
+using ValueRefs   = llvm::MutableArrayRef<schir::Value>;
+using ValueFnTy   = void (Context&, ValueRefs);
+using ValueFn     = ValueFnTy*;
+using SyntaxFn    = mlir::Value (*)(OpGen&, Pair*);
+using TransformFn = Value (*)(Context&, Pair*);
+using OpaqueFnPtrTy = void(*)(void*, Context&, ValueRefs);
+struct OpaqueFn {
+  OpaqueFnPtrTy CallFn;
+  llvm::StringRef Storage;
+};
+template <typename F>
+static OpaqueFn createOpaqueFn(F& Fn);
+
+// Used for writing to external lexer. ie Clang integration.
+using LexerWriterFn = void(schir::SourceLocation Loc, llvm::StringRef);
+using LexerWriterFnRef = llvm::function_ref<LexerWriterFn>;
+
+enum class ValueKind {
+  Undefined = 0,
+  BigInt,
+  Binding,
+  Bool,
+  Builtin,
+  BuiltinSyntax,
+  ByteVector,
+  Char,
+  ContArg,
+  Empty,
+  EnvFrame,
+  Environment,
+  Error,
+  Exception,
+  ExternName,
+  Float,
+  ForwardRef,
+  Int,
+  ImportSet,
+  Lambda,
+  Module,
+  Operation,
+  Pair,
+  PairWithSource,
+  Quote,
+  SourceValue,
+  String,
+  Symbol,
+  Syntax,
+  SyntaxClosure,
+  Any,
+  Vector,
+};
+
+class alignas(void*) ValueBase {
+  friend class Context;
+  ValueKind VKind;
+  bool IsMutable = false;
+
+protected:
+  ValueBase(ValueKind VK)
+    : VKind(VK)
+  { }
+
+public:
+  bool isMutable() const { return IsMutable; }
+  ValueKind getKind() const { return VKind; }
+  SourceLocation getSourceLocation();
+  llvm::StringRef getStringRef();
+  void dump();
+};
+
+// Value types that will be members of Value
+class Undefined {
+  friend class Value;
+  // Allow tracking where the undefined value came
+  // from for better error messages.
+  ValueBase* Tracer = nullptr;
+
+  public:
+
+  Undefined() = default;
+
+  Undefined(ValueBase* VB)
+    : Tracer(VB)
+  { }
+
+  Undefined(Value const& V);
+
+  Value getTracer() const;
+
+  static bool classof(Value);
+  static ValueKind getKind() { return ValueKind::Undefined; }
+};
+
+struct Empty {
+  static bool classof(Value);
+  static ValueKind getKind() { return ValueKind::Empty; }
+};
+
+struct Int : llvm::PointerEmbeddedInt<int32_t> {
+  using Base = llvm::PointerEmbeddedInt<int32_t>;
+  using Value = schir::Value;
+  using Base::PointerEmbeddedInt;
+
+  // why doesn't the above using-declaration work for this
+  Int(Base B) : Base(B) { }
+
+  static bool classof(Value);
+  static ValueKind getKind() { return ValueKind::Int; }
+};
+
+struct Bool : llvm::PointerEmbeddedInt<bool> {
+  using Base = llvm::PointerEmbeddedInt<bool>;
+  using Value = schir::Value;
+  using Base::PointerEmbeddedInt;
+
+  Bool(Base B) : Base(B) { }
+
+  static bool classof(Value);
+  static ValueKind getKind() { return ValueKind::Bool; }
+};
+
+struct Char : llvm::PointerEmbeddedInt<uint32_t> {
+  using Base = llvm::PointerEmbeddedInt<uint32_t>;
+  using Value = schir::Value;
+  using Base::PointerEmbeddedInt;
+
+  Char(Base B) : Base(B) { }
+
+  static bool classof(Value);
+  static ValueKind getKind() { return ValueKind::Char; }
+};
+
+}
+
+namespace schir { namespace detail {
+template <typename T>
+struct StatelessPointerTraitBase {
+  static_assert(std::is_empty<T>::value, "must be empty type");
+  static void* getAsVoidPointer(T) { return nullptr; }
+  static T getFromVoidPointer(void* P) { return {}; }
+
+  // all the bits??
+  static constexpr int NumLowBitsAvailable =
+      llvm::ConstantLog2<alignof(void*)>();
+};
+}}
+
+namespace llvm {
+template <>
+struct PointerLikeTypeTraits<schir::Empty>
+  : schir::detail::StatelessPointerTraitBase<schir::Empty>
+{ };
+
+#if 0
+template <>
+struct PointerLikeTypeTraits<schir::Undefined>
+  : schir::detail::StatelessPointerTraitBase<schir::Undefined>
+{ };
+#endif
+
+template <>
+struct PointerLikeTypeTraits<schir::Int>
+  : PointerLikeTypeTraits<schir::Int::Base>
+{ };
+
+template <>
+struct PointerLikeTypeTraits<schir::Bool>
+  : PointerLikeTypeTraits<schir::Bool::Base>
+{ };
+
+template <>
+struct PointerLikeTypeTraits<schir::Char>
+  : PointerLikeTypeTraits<schir::Char::Base>
+{ };
+}
+
+namespace schir {
+
+struct ValueSumType {
+  enum SumKind {
+    ValueBase = 0,
+    Int,
+    Bool,
+    Char,
+    Empty,
+    Undefined,
+    Operation,
+    ContArg,
+  };
+
+  // mlir::Operation* is incomplete so we have to assume
+  // its alignment and verify later (in Dialect.h)
+  struct OperationTraits {
+    static inline void *getAsVoidPointer(mlir::Operation* P) {
+      return reinterpret_cast<void *>(P);
+    }
+    static inline mlir::Operation* getFromVoidPointer(void *P) {
+      return reinterpret_cast<mlir::Operation*>(P);
+    }
+
+    static constexpr int NumLowBitsAvailable =
+      llvm::ConstantLog2<alignof(void*)>();
+  };
+
+  struct ContArgTraits {
+    static inline void *getAsVoidPointer(schir::ContArg* P) {
+      return reinterpret_cast<void *>(P);
+    }
+    static inline schir::ContArg* getFromVoidPointer(void *P) {
+      return reinterpret_cast<schir::ContArg*>(P);
+    }
+
+    static constexpr int NumLowBitsAvailable =
+      llvm::ConstantLog2<alignof(void*)>();
+  };
+
+  using type = llvm::PointerSumType<SumKind,
+    llvm::PointerSumTypeMember<ValueBase,  schir::ValueBase*>,
+    llvm::PointerSumTypeMember<Int,        schir::Int>,
+    llvm::PointerSumTypeMember<Bool,       schir::Bool>,
+    llvm::PointerSumTypeMember<Char,       schir::Char>,
+    llvm::PointerSumTypeMember<Empty,      schir::Empty>,
+    llvm::PointerSumTypeMember<Undefined,  schir::ValueBase*>,
+    llvm::PointerSumTypeMember<Operation,  mlir::Operation*, OperationTraits>,
+    llvm::PointerSumTypeMember<ContArg,    schir::ContArg*, ContArgTraits>>;
+};
+
+using ValuePtrBase = typename ValueSumType::type;
+
+class ListIterator;
+
+class Value : ValuePtrBase {
+public:
+  Value() = default;
+
+  // Prevent const* conversion to bool.
+  Value(ValueBase const* V) = delete;
+  Value(ValueBase* V)
+    : ValuePtrBase(create<ValueSumType::ValueBase>(V))
+  { }
+
+  Value(std::nullptr_t)
+    : ValuePtrBase(create<ValueSumType::ValueBase>(nullptr))
+  { }
+
+  Value(Undefined U)
+    : ValuePtrBase(create<ValueSumType::Undefined>(U.Tracer))
+  {
+    assert(*this);
+  }
+
+  Value(Empty)
+    : ValuePtrBase(create<ValueSumType::Empty>({}))
+  {
+    assert(*this);
+  }
+
+  Value(Int I)
+    : ValuePtrBase(create<ValueSumType::Int>(I))
+  {
+    assert(*this);
+  }
+
+  Value(Bool B)
+    : ValuePtrBase(create<ValueSumType::Bool>(B))
+  {
+    assert(*this);
+  }
+
+  Value(Char C)
+    : ValuePtrBase(create<ValueSumType::Char>(C))
+  {
+    assert(*this);
+  }
+
+  Value(ContArg* C)
+    : ValuePtrBase(create<ValueSumType::ContArg>(C))
+  {
+    assert(*this);
+  }
+
+  Value(mlir::Operation* Op)
+    : ValuePtrBase(create<ValueSumType::Operation>(Op))
+  { }
+
+  using ValuePtrBase::getTag;
+  using ValuePtrBase::is;
+  using ValuePtrBase::get;
+  using ValuePtrBase::getOpaqueValue;
+
+  bool operator==(Value V) const {
+    return getOpaqueValue() == V.getOpaqueValue();
+  }
+  bool operator!=(Value V) const {
+    return getOpaqueValue() != V.getOpaqueValue();
+  }
+
+
+  // We want this to behave like a pointer so that embedded
+  // values are considered true.
+  explicit operator bool() const {
+    switch (getTag()) {
+      case ValueSumType::Int:
+      case ValueSumType::Bool:
+      case ValueSumType::Char:
+      case ValueSumType::Empty:
+      case ValueSumType::Undefined:
+        return true;
+      default:
+        return ValuePtrBase::operator bool();
+    }
+  }
+
+  ValueKind getKind() const {
+    switch (getTag()) {
+    case ValueSumType::ValueBase:
+      return get<ValueSumType::ValueBase>()->getKind();
+    case ValueSumType::Int:
+      return ValueKind::Int;
+    case ValueSumType::Bool:
+      return ValueKind::Bool;
+    case ValueSumType::Char:
+      return ValueKind::Char;
+    case ValueSumType::Empty:
+      return ValueKind::Empty;
+    case ValueSumType::Undefined:
+      return ValueKind::Undefined;
+    case ValueSumType::Operation:
+      return ValueKind::Operation;
+    case ValueSumType::ContArg:
+      return ValueKind::ContArg;
+    }
+    llvm_unreachable("cannot get here");
+  }
+
+  bool isNumber() const {
+    return getTag() == ValueSumType::Int ||
+           getKind() == ValueKind::Float;
+  }
+
+  bool isEmpty() const {
+    return getKind() == ValueKind::Empty;
+  }
+
+  bool isTrue() const {
+    // returns true for everything except
+    // explicit #f (per r7rS)
+    if (is<ValueSumType::Bool>())
+     return get<ValueSumType::Bool>();
+    return true;
+  }
+
+  SourceLocation getSourceLocation() const {
+    if (is<ValueSumType::ValueBase>()) {
+      return get<ValueSumType::ValueBase>()
+        ->getSourceLocation();
+    } else if (is<ValueSumType::Operation>()) {
+      return getSourceLocation(get<ValueSumType::Operation>());
+    }
+    return SourceLocation();
+  }
+
+  static SourceLocation getSourceLocation(mlir::Operation* Op);
+
+  llvm::StringRef getStringRef() const {
+    if (is<ValueSumType::ValueBase>()) {
+      return get<ValueSumType::ValueBase>()
+        ->getStringRef();
+    }
+    return llvm::StringRef();
+  }
+
+  // The car/cdr et al  return nullptr if any
+  // value is invalid for that accessor
+  Value car();
+  Value cdr();
+  Value cadr();
+  Value cddr();
+
+  inline ListIterator begin() const;
+  inline ListIterator end() const;
+
+  void dump();
+};
+
+
+inline bool Undefined::classof(Value V) {
+  return V.getTag() == ValueSumType::Undefined;
+}
+
+inline bool Empty::classof(Value V) {
+  return V.getTag() == ValueSumType::Empty;
+}
+
+inline bool Int::classof(Value V) {
+  return V.getTag() == ValueSumType::Int;
+}
+
+inline bool Bool::classof(Value V) {
+  return V.getTag() == ValueSumType::Bool;
+}
+
+inline bool Char::classof(Value V) {
+  return V.getTag() == ValueSumType::Char;
+}
+
+inline Undefined::Undefined(Value const& V)
+  : Tracer(V.is<ValueSumType::ValueBase>()
+              ? V.get<ValueSumType::ValueBase>()
+              : nullptr)
+{ }
+
+inline Value Undefined::getTracer() const {
+  return Tracer;
+}
+
+}
+
+namespace llvm {
+template <typename T>
+struct isa_impl<T, ::schir::Value> {
+  static inline bool doit(::schir::Value V) {
+    assert(V && "value cannot be null");
+    return T::classof(V);
+  }
+};
+
+template <>
+struct isa_impl<::mlir::Operation, ::schir::Value> {
+  static inline bool doit(::schir::Value V) {
+    return V.is<::schir::ValueSumType::Operation>();
+  }
+};
+
+template <>
+struct isa_impl<::schir::ContArg, ::schir::Value> {
+  static inline bool doit(::schir::Value V) {
+    return V.is<::schir::ValueSumType::ContArg>();
+  }
+};
+
+template <typename T>
+struct cast_retty_impl<T, ::schir::Value> {
+  using ret_type = std::conditional_t<
+    std::is_base_of<::schir::ValueBase, T>::value, T*, T>;
+};
+
+template <>
+struct cast_retty_impl<::mlir::Operation, ::schir::Value> {
+  using ret_type = ::mlir::Operation*;
+};
+
+template <>
+struct cast_retty_impl<::schir::ContArg, ::schir::Value> {
+  using ret_type = ::schir::ContArg*;
+};
+
+template <typename T>
+struct cast_convert_val<T, ::schir::Value,
+                           ::schir::Value> {
+  static T* doit(::schir::Value V) {
+    static_assert(std::is_base_of<::schir::ValueBase, T>::value,
+      "should be converting to an instance of ValueBase here");
+    return static_cast<T*>(V.get<schir::ValueSumType::ValueBase>());
+  }
+};
+
+template <>
+struct cast_convert_val<mlir::Operation, ::schir::Value,
+                                         ::schir::Value> {
+  static mlir::Operation* doit(::schir::Value V) {
+    return V.get<schir::ValueSumType::Operation>();
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::ContArg, ::schir::Value,
+                                          ::schir::Value> {
+  static ::schir::ContArg* doit(::schir::Value V) {
+    return V.get<schir::ValueSumType::ContArg>();
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::Int, ::schir::Value,
+                                      ::schir::Value> {
+  static auto doit(::schir::Value V) {
+    return V.get<schir::ValueSumType::Int>();
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::Char, ::schir::Value,
+                                      ::schir::Value> {
+  static auto doit(::schir::Value V) {
+    return V.get<schir::ValueSumType::Char>();
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::Bool, ::schir::Value,
+                                       ::schir::Value> {
+  static auto doit(::schir::Value V) {
+    return V.get<schir::ValueSumType::Bool>();
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::Undefined, ::schir::Value,
+                                            ::schir::Value> {
+  static auto doit(::schir::Value V) {
+    return ::schir::Undefined{V.get<schir::ValueSumType::Undefined>()};
+  }
+};
+
+template <>
+struct cast_convert_val<::schir::Empty, ::schir::Value,
+                                        ::schir::Value> {
+  static auto doit(::schir::Value V) {
+    return ::schir::Empty{};
+  }
+};
+
+
+// overloading these gets around annoying
+// const& situations that don't allow
+// non-simplified types
+template <typename T>
+inline auto cast(::schir::Value V) {
+  // gets around annoying const& situations
+  // that don't allow non-simplified types
+  assert(isa<T>(V) && "value must be of compatible type");
+  return cast_convert_val<T, ::schir::Value,
+                             ::schir::Value>::doit(V);
+}
+
+template <typename T>
+inline T* dyn_cast(::schir::Value V) {
+  // gets around annoying const& situations
+  // that don't allow non-simplified types
+  assert(V && "value cannot be null");
+  return isa<T>(V) ? cast<T>(V) : nullptr;
+}
+
+template <typename T>
+inline T* dyn_cast_or_null(::schir::Value V) {
+  return (V && isa<T>(V)) ? cast<T>(V) : nullptr;
+}
+
+template <typename T>
+inline T* cast_or_null(::schir::Value V) {
+  if (!V) return nullptr;
+  return cast<T>(V);
+}
+
+template <>
+struct DenseMapInfo<::schir::Value> {
+  static ::schir::Value getEmptyKey() {
+    return DenseMapInfo<::schir::ValueBase*>::getEmptyKey();
+  }
+  static ::schir::Value getTombstoneKey() {
+    return DenseMapInfo<::schir::ValueBase*>::getTombstoneKey();
+  }
+
+  static unsigned getHashValue(::schir::Value Arg) {
+    uintptr_t OpaqueValue = Arg.getOpaqueValue();
+    return DenseMapInfo<uintptr_t>::getHashValue(OpaqueValue);
+  }
+
+  static bool isEqual(::schir::Value LHS, ::schir::Value RHS) {
+    return LHS == RHS;
+  }
+};
+
+}
+
+namespace schir {
+
+template <typename To>
+using cast_ty = typename llvm::cast_retty<To, Value>::ret_type;
+
+// ValueWithSource
+//  - A base class to supplement a Value with
+//    source information and to make it immutable
+//    (The source location may still be invalid)
+class ValueWithSource {
+  SourceLocation Loc;
+public:
+  ValueWithSource(SourceLocation L)
+    : Loc(L)
+  { }
+
+  SourceLocation getSourceLocation() const {
+    return Loc;
+  }
+};
+
+// SourceValue
+//  - A standalone value to pass source locations around
+//    in scheme to prevent forcing the use of syntax
+//    to propagate source locations all over the place.
+//    (For doing run-time programming in compilers.)
+class SourceValue : public ValueBase,
+                    public ValueWithSource {
+  public:
+    SourceValue(SourceLocation L)
+      : ValueBase(ValueKind::SourceValue),
+        ValueWithSource(L)
+  { }
+
+  using ValueWithSource::getSourceLocation;
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::SourceValue;
+  }
+  static ValueKind getKind() { return ValueKind::SourceValue; }
+};
+
+// Concrete Values
+
+class Error: public ValueBase,
+             public ValueWithSource {
+  Value Message;
+  Value Irritants;
+public:
+
+  Error(SourceLocation L, Value M, Value I)
+    : ValueBase(ValueKind::Error)
+    , ValueWithSource(L)
+    , Message(M)
+    , Irritants(I)
+  { }
+
+  llvm::StringRef getErrorMessage();
+  Value getMessage() { return Message; }
+  Value getIrritants() { return Irritants; }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Error;
+  }
+  static ValueKind getKind() { return ValueKind::Error; }
+};
+
+class Exception: public ValueBase {
+public:
+  Value Val;
+  Exception(Value Val)
+    : ValueBase(ValueKind::Exception)
+    , Val(Val)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Exception;
+  }
+  static ValueKind getKind() { return ValueKind::Exception; }
+};
+
+// Base class for Numeric types (other than Int)
+class Float;
+// TODO Deprecate Number and break out the
+//      static function predicates
+class Number : public ValueBase {
+protected:
+  Number(ValueKind K)
+    : ValueBase(K)
+  { }
+
+public:
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::BigInt ||
+           V.getKind() == ValueKind::Float;
+  }
+
+  static bool isExact(Value V) {
+    switch(V.getKind()) {
+    case ValueKind::BigInt:
+    case ValueKind::Int:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  static bool isExactZero(schir::Value);
+  static ValueKind CommonKind(Value X, Value Y);
+  static double getAsDouble(Value V);
+};
+
+// BigInt currently assumes 64 bits
+class BigInt : public Number {
+  friend class Number;
+  friend struct NumberOp;
+  friend class CopyCollector;
+  llvm::APInt Val;
+
+public:
+  BigInt(llvm::APInt V)
+    : Number(ValueKind::BigInt)
+    , Val(V)
+  { }
+
+  auto getVal() { return Val; }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::BigInt;
+  }
+  static ValueKind getKind() { return ValueKind::BigInt; }
+};
+
+class Float : public ValueBase {
+  friend struct NumberOp;
+  llvm::APFloat Val;
+
+public:
+  Float(llvm::APFloat V)
+    : ValueBase(ValueKind::Float)
+    , Val(V)
+  { }
+
+  auto const& getVal() { return Val; }
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Float;
+  }
+  static ValueKind getKind() { return ValueKind::Float; }
+};
+
+inline ValueKind Number::CommonKind(Value X, Value Y) {
+  ValueKind XK = X.getKind();
+  ValueKind YK = Y.getKind();
+  if (XK == ValueKind::Float ||
+      YK == ValueKind::Float) {
+    return ValueKind::Float;
+  }
+
+  if (XK == ValueKind::BigInt ||
+      YK == ValueKind::BigInt) {
+    return ValueKind::BigInt;
+  }
+
+  return ValueKind::Int;
+}
+
+inline bool Number::isExactZero(Value V) {
+  if (!Number::isExact(V)) return false;
+  if (BigInt* I = dyn_cast<BigInt>(V)) {
+    return I->Val == 0;
+  }
+  return cast<Int>(V) == 0;
+}
+
+inline double Number::getAsDouble(Value V) {
+  switch(V.getKind()) {
+  case ValueKind::Float:
+    return cast<Float>(V)->getVal().convertToDouble();
+  case ValueKind::Int:
+    return double{cast<Int>(V) + 0.0};
+  default:
+    return {};
+  }
+}
+
+class String final
+  : public ValueBase,
+    private llvm::TrailingObjects<String, char> {
+  friend class Context;
+  friend class llvm::TrailingObjects<String, char>;
+
+  unsigned Len = 0;
+  size_t numTrailingObjects(OverloadToken<char> const) const {
+    return Len;
+  }
+
+public:
+  static constexpr bool IsNullTerminated = true;
+
+  String(unsigned Length, char InitChar)
+    : ValueBase(ValueKind::String),
+      Len(Length)
+  {
+    std::memset(getTrailingObjects(), InitChar, Len);
+    // Set trailing null byte.
+    *(getTrailingObjects() + Len) = '\0';
+  }
+
+  String(llvm::StringRef S)
+    : ValueBase(ValueKind::String),
+      Len(S.size())
+  {
+    std::memcpy(getTrailingObjects(), S.data(), S.size());
+    // Set trailing null byte.
+    *(getTrailingObjects() + Len) = '\0';
+  }
+
+  template <typename ...StringRefs>
+  String(unsigned TotalLen, StringRefs ...Ss)
+    : ValueBase(ValueKind::String),
+      Len(TotalLen)
+  {
+    std::array<llvm::StringRef, sizeof...(Ss)> Arr = {Ss...};
+    char* StrData = getTrailingObjects();
+    for (llvm::StringRef S : Arr) {
+      std::memcpy(StrData, S.data(), S.size());
+      StrData += S.size();
+    }
+    // Set trailing null byte.
+    *(getTrailingObjects() + Len) = '\0';
+  }
+
+  static constexpr size_t sizeToAlloc(unsigned Length) {
+    // Allocate an extra byte for trailing null byte.
+    return totalSizeToAlloc<char>(Length) + 1;
+  }
+
+  unsigned size() const { return Len; }
+
+  llvm::StringRef getView() const {
+    return llvm::StringRef(getTrailingObjects(), Len);
+  }
+
+  llvm::MutableArrayRef<char> getMutableView() {
+    return llvm::MutableArrayRef(getTrailingObjects(), Len);
+  }
+
+  bool Equiv(String* S) const {
+    return getView() == S->getView();
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::String;
+  }
+  static ValueKind getKind() { return ValueKind::String; }
+};
+
+// Store lookup results from an Environment list.
+struct EnvEntry {
+  schir::Value Value;
+  String* MangledName = nullptr;
+
+  operator bool() const { return bool(Value); }
+};
+// Map Identifier to MangledName.
+using EnvBucket = std::pair<String*, String*>;
+
+class ByteVector : public ValueBase {
+  String* Val;
+
+public:
+  ByteVector(String* V)
+    : ValueBase(ValueKind::ByteVector)
+    , Val(V)
+  { }
+
+  llvm::StringRef getView() const { return Val->getView(); }
+  String* getString() const { return Val; }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::ByteVector;
+  }
+  static ValueKind getKind() { return ValueKind::ByteVector; }
+};
+
+// Symbol - Is an identifier with source information
+//          and a String which can be unique via an
+//          identifier table.
+class Symbol : public ValueBase,
+               public ValueWithSource {
+  String* Val;
+
+public:
+  Symbol(String* V, SourceLocation L = SourceLocation())
+    : ValueBase(ValueKind::Symbol)
+    , ValueWithSource(L)
+    , Val(V)
+  { }
+
+  using ValueWithSource::getSourceLocation;
+
+  // TODO Deprecate getVal to getView to be consistent.
+  llvm::StringRef getVal() const { return Val->getView(); }
+  llvm::StringRef getView() const { return Val->getView(); }
+  String* getString() const { return Val; }
+
+  bool Equiv(llvm::StringRef Str) const { return getVal() == Str; }
+  bool Equiv(Symbol* S) const {
+    // Compare the String* since they are uniqued.
+    return Val == S->Val;
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Symbol;
+  }
+  static ValueKind getKind() { return ValueKind::Symbol; }
+};
+
+// ExternName - Represent the name of a global variable in terms
+//              of its linkage symbol. This is used for the
+//              "effective renaming" of variables used in top
+//              level syntax functions.
+class ExternName : public ValueBase,
+                   public ValueWithSource {
+  String* Name;
+
+  public:
+
+  ExternName(String* V, SourceLocation L = SourceLocation())
+    : ValueBase(ValueKind::ExternName)
+    , ValueWithSource(L)
+    , Name(V)
+  { }
+
+  using ValueWithSource::getSourceLocation;
+
+  String* getName() const {
+    return Name;
+  }
+
+  llvm::StringRef getView() const {
+    return Name->getView();
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::ExternName;
+  }
+  static ValueKind getKind() { return ValueKind::ExternName; }
+};
+
+
+class Pair : public ValueBase {
+public:
+  Value Car;
+  Value Cdr;
+
+  Pair(Value First, Value Second)
+    : ValueBase(ValueKind::Pair)
+    , Car(First)
+    , Cdr(Second)
+  { }
+
+  Pair(ValueKind K, Value First, Value Second)
+    : ValueBase(K)
+    , Car(First)
+    , Cdr(Second)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Pair ||
+           V.getKind() == ValueKind::PairWithSource;
+  }
+  static ValueKind getKind() { return ValueKind::Pair; }
+};
+
+class PairWithSource : public Pair,
+                       public ValueWithSource {
+
+public:
+  PairWithSource(Value First, Value Second, SourceLocation L)
+    : Pair(ValueKind::PairWithSource, First, Second)
+    , ValueWithSource(L)
+  { }
+
+  // returns the character that opens the pair
+  // ( | \{ | [
+  char getBraceType() {
+    // TODO
+    return '(';
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::PairWithSource;
+  }
+  static ValueKind getKind() { return ValueKind::PairWithSource; }
+};
+
+class Builtin : public ValueBase {
+public:
+  ValueFn Fn;
+
+  Builtin(ValueFn F)
+    : ValueBase(ValueKind::Builtin)
+    , Fn(F)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Builtin;
+  }
+  static ValueKind getKind() { return ValueKind::Builtin; }
+};
+
+class BuiltinSyntax : public ValueBase {
+public:
+  SyntaxFn Fn;
+
+  BuiltinSyntax(SyntaxFn F)
+    : ValueBase(ValueKind::BuiltinSyntax)
+    , Fn(F)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::BuiltinSyntax;
+  }
+  static ValueKind getKind() { return ValueKind::BuiltinSyntax; }
+};
+
+class Lambda final
+  : public ValueBase,
+    private llvm::TrailingObjects<Lambda, Value, char> {
+
+public:
+  friend class llvm::TrailingObjects<Lambda, Value, char>;
+  friend Context;
+
+private:
+  OpaqueFnPtrTy FnPtr;
+  unsigned short NumCaptures;
+  unsigned short StorageLen;
+
+  size_t numTrailingObjects(OverloadToken<Value> const) const {
+    return NumCaptures;
+  }
+
+  size_t numTrailingObjects(OverloadToken<char> const) const {
+    return StorageLen;
+  }
+
+  void* getStoragePtr() { return getTrailingObjects<char>(); }
+
+public:
+  Lambda(OpaqueFn FnData, llvm::ArrayRef<Value> Captures)
+    : ValueBase(ValueKind::Lambda),
+      FnPtr(FnData.CallFn),
+      NumCaptures(Captures.size()),
+      StorageLen(FnData.Storage.size())
+  {
+    // Storage
+    void const* OrigStorage = FnData.Storage.data();
+    size_t StorageLen       = FnData.Storage.size();
+    void* StoragePtr = getStoragePtr();
+    std::memcpy(StoragePtr, OrigStorage, StorageLen);
+
+    // Captures
+    auto CapturesItr = Captures.begin();
+    for (schir::Value& V : getCaptures()) {
+      V = *CapturesItr;
+      ++CapturesItr;
+    }
+  }
+
+  // Accessor for copying.
+  OpaqueFn getFnData() {
+    return OpaqueFn{FnPtr, llvm::StringRef(
+        static_cast<char const*>(getStoragePtr()), StorageLen)};
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Lambda;
+  }
+  static ValueKind getKind() { return ValueKind::Lambda; }
+
+  static size_t sizeToAlloc(OpaqueFn const& FnData,
+                            unsigned short NumCaptures) {
+    return totalSizeToAlloc<Value, char>(NumCaptures,
+                                         FnData.Storage.size());
+  }
+
+  static constexpr size_t sizeToAlloc(unsigned short NumCaptures,
+                                      size_t FnStorageLen) {
+    return totalSizeToAlloc<Value, char>(NumCaptures,
+                                         FnStorageLen);
+  }
+
+  template <typename Allocator>
+  static void* allocate(Allocator& Alloc, OpaqueFn,
+                        llvm::ArrayRef<schir::Value> Captures);
+
+  size_t getObjectSize() {
+    return totalSizeToAlloc<Value, char>(NumCaptures, StorageLen);
+  }
+
+  void call(Context& C, ValueRefs Args) {
+    return FnPtr(getStoragePtr(), C, Args);
+  }
+
+  Value& getCapture(unsigned I) {
+    return getCaptures()[I];
+  }
+
+  llvm::MutableArrayRef<Value> getCaptures() {
+    return llvm::MutableArrayRef<Value>(
+        getTrailingObjects<Value>(), NumCaptures);
+  }
+};
+
+class Quote : public ValueBase {
+public:
+  Value Val;
+  Quote(Value V)
+    : ValueBase(ValueKind::Quote)
+    , Val(V)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Quote;
+  }
+  static ValueKind getKind() { return ValueKind::Quote; }
+};
+
+class Syntax final
+  : public ValueBase,
+    private llvm::TrailingObjects<Syntax, char> {
+  friend class llvm::TrailingObjects<Syntax, char>;
+  friend Context;
+
+  OpaqueFnPtrTy FnPtr;
+  unsigned StorageLen;
+
+  void* getStoragePtr() { return getTrailingObjects(); }
+
+public:
+  Syntax(OpaqueFn FnData)
+    : ValueBase(ValueKind::Syntax),
+      FnPtr(FnData.CallFn),
+      StorageLen(FnData.Storage.size())
+  {
+    // Storage
+    void const* OrigStorage = FnData.Storage.data();
+    size_t StorageLen       = FnData.Storage.size();
+    void* StoragePtr = getStoragePtr();
+    std::memcpy(StoragePtr, OrigStorage, StorageLen);
+  }
+
+  // Accessor for copying.
+  OpaqueFn getFnData() {
+    return OpaqueFn{FnPtr, llvm::StringRef(
+        static_cast<char const*>(getStoragePtr()), StorageLen)};
+  }
+
+  void call(Context& C, ValueRefs Args) {
+    return FnPtr(getStoragePtr(), C, Args);
+  }
+
+  static size_t sizeToAlloc(OpaqueFn const& FnData) {
+    return totalSizeToAlloc<char>(FnData.Storage.size());
+  }
+  static constexpr size_t sizeToAlloc(size_t FnStorageLen) {
+    return totalSizeToAlloc<char>(FnStorageLen);
+  }
+
+  template <typename Allocator>
+  static void* allocate(Allocator& Alloc, OpaqueFn);
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Syntax;
+  }
+  static ValueKind getKind() { return ValueKind::Syntax; }
+};
+
+// SyntaxClosure - Wraps an AST node with a captured environment
+//                 to lookup names when compiling.
+//                 Objects of this type are meant to be
+//                 ephemeral and used only during syntax
+//                 transformation.
+//                 The SourceLocation is the location of the
+//                 PairWithSource from substitution.
+class EnvFrame;
+class SyntaxClosure : public ValueBase,
+                      public ValueWithSource {
+public:
+  Value Env;
+  Value Node;
+
+  SyntaxClosure(SourceLocation L, Value Env, Value Node)
+    : ValueBase(ValueKind::SyntaxClosure),
+      ValueWithSource(L),
+      Env(Env),
+      Node(Node)
+  { }
+
+  // For SC on the stack.
+  SyntaxClosure()
+    : SyntaxClosure({}, Value(), Value())
+  { }
+
+  using ValueWithSource::getSourceLocation;
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::SyntaxClosure;
+  }
+  static ValueKind getKind() { return ValueKind::SyntaxClosure; }
+};
+
+inline bool isIdentifier(Value V) {
+  if (auto* SC = dyn_cast<SyntaxClosure>(V))
+    V = SC->Node;
+
+  return isa<Symbol>(V);
+}
+
+class Vector final
+  : public ValueBase,
+    private llvm::TrailingObjects<Vector, Value> {
+
+  friend class Context;
+  friend class CopyCollector;
+  friend class llvm::TrailingObjects<Vector, Value>;
+
+  unsigned Len = 0;
+  size_t numTrailingObjects(OverloadToken<Value> const) const {
+    return Len;
+  }
+
+public:
+  Vector(llvm::ArrayRef<Value> Vs)
+    : ValueBase(ValueKind::Vector),
+      Len(Vs.size())
+  {
+    std::memcpy(getTrailingObjects(), Vs.data(),
+                Len * sizeof(Value));
+  }
+
+  Vector(Value V, unsigned N)
+    : ValueBase(ValueKind::Vector),
+      Len(N)
+  {
+    Value* Xs = getTrailingObjects();
+    for (unsigned i = 0; i < Len; ++i) {
+      Xs[i] = V;
+    }
+  }
+
+  template <typename Allocator>
+  void* operator new(size_t, Allocator& Heap, unsigned N) {
+    size_t Size = Vector::sizeToAlloc(N);
+    void* Mem = Heap.Allocate(Size, alignof(Vector));
+    return ::operator new (Size, Mem);
+  }
+
+  template <typename Allocator>
+  void* operator new(size_t, Allocator& Heap, llvm::ArrayRef<Value> Xs) {
+    // Copy the list of Value to our heap
+    size_t Size = Vector::sizeToAlloc(Xs.size());
+    void* Mem = Heap.Allocate(Size, alignof(Vector));
+    return ::operator new (Size, Mem);
+  }
+
+  Value& get(unsigned I) {
+    assert(I < Len && "invalid index for vector");
+    return *(getTrailingObjects() + I);
+  }
+
+  llvm::ArrayRef<Value> getElements() const {
+    return llvm::ArrayRef<Value>(
+        getTrailingObjects(), Len);
+  }
+
+  llvm::MutableArrayRef<Value> getElements() {
+    return llvm::MutableArrayRef<Value>(
+        getTrailingObjects(), Len);
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Vector;
+  }
+  static ValueKind getKind() { return ValueKind::Vector; }
+
+  static size_t sizeToAlloc(unsigned Length) {
+    return totalSizeToAlloc<Value>(Length);
+  }
+
+};
+
+
+template <typename T>
+struct AnyTypeId {
+  static constexpr int Id = 0;
+};
+template <typename T>
+constexpr int AnyTypeId<T>::Id;
+
+class Any final :
+        public ValueBase,
+        private llvm::TrailingObjects<Any, char> {
+
+  friend class llvm::TrailingObjects<Any, char>;
+  friend class CopyCollector;
+  friend Context;
+
+  void const* TypeId;
+  size_t StorageLen = 0;
+
+  size_t numTrailingObjects(OverloadToken<char> const) const {
+    return StorageLen;
+  }
+
+  size_t getObjectSize() {
+    return totalSizeToAlloc<char>(StorageLen);
+  }
+
+public:
+  Any(void const* TypeId, llvm::StringRef ObjData)
+    : ValueBase(ValueKind::Any),
+      TypeId(TypeId),
+      StorageLen(ObjData.size())
+  {
+    // Storage
+    void const* OrigStorage = ObjData.data();
+    size_t StorageLen       = ObjData.size();
+    void* StoragePtr = getOpaquePtr();
+    std::memcpy(StoragePtr, OrigStorage, StorageLen);
+  }
+
+  // Note that for stored pointers, this will return a pointer to a pointer.
+  void* getOpaquePtr() { return getTrailingObjects(); }
+
+  llvm::StringRef getObjData() {
+    return llvm::StringRef(static_cast<char*>(getOpaquePtr()), getObjectSize());
+  };
+
+  bool equal(Any* Other) {
+    return TypeId == Other->TypeId &&
+           StorageLen == Other->StorageLen &&
+           getObjData() == Other->getObjData();
+  }
+
+  template <typename T>
+  bool isa() {
+    return TypeId == &AnyTypeId<T>::Id;
+  }
+
+  // DEPRECATED use schir::any_cast
+  template <typename T>
+  T* cast() {
+    assert(isa<T>() && "should be a T");
+    return static_cast<T*>(getOpaquePtr());
+  }
+
+  template <typename Allocator>
+  static void* allocate(Allocator& Alloc, llvm::StringRef ObjData);
+
+  static constexpr size_t sizeToAlloc(size_t StorageLen) {
+    return totalSizeToAlloc<char>(StorageLen);
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Any;
+  }
+  static ValueKind getKind() { return ValueKind::Any; }
+};
+
+template <typename T>
+T any_cast(schir::Value V) {
+  if (auto* Any = dyn_cast<schir::Any>(V))
+    if (Any->isa<T>())
+      return *Any->cast<T>();
+  return T{};
+}
+
+template <typename T>
+T* any_cast(schir::Value const* VP) {
+  schir::Value V = *VP;
+  if (auto* Any = dyn_cast<schir::Any>(V))
+    if (Any->isa<T>())
+      return Any->cast<T>();
+  return nullptr;
+}
+
+class Binding : public ValueBase {
+  friend class Context;
+  Value Identifier;
+  Value Val;
+
+public:
+
+  Binding(Value Id, Value V)
+    : ValueBase(ValueKind::Binding)
+    , Identifier(Id)
+    , Val(V)
+  { }
+
+  Value getIdentifier() {
+    return Identifier;
+  }
+
+  SourceLocation getSourceLocation() {
+    return Identifier.getSourceLocation();
+  }
+
+  bool isNull() { return bool(Val); }
+
+  Value getValue() {
+    // A binding with a null value is used to represent
+    // unbound symbols (particularly in pattern matching)
+    assert(Val && "binding value should not be null");
+    return Val;
+  }
+
+  void setValue(Value V) {
+    assert(!isa<Binding>(V) && "bindings may not nest bindings");
+    Val = V;
+  }
+
+  // Compare the binding to an equivalent symbol or syntax closure.
+  EnvEntry Lookup(Value LookupId) {
+    assert(Val && "null binding should not be a part of lookup");
+
+    Symbol* Name1 = nullptr;
+    Symbol* Name2 = nullptr;
+    Value Env;
+    if (auto* SC1 = dyn_cast<SyntaxClosure>(Identifier)) {
+      if (auto* SC2 = dyn_cast<SyntaxClosure>(LookupId)) {
+        if (SC1->Env == SC2->Env) {
+          Name1 = dyn_cast<Symbol>(SC1->Node);
+          Name2 = dyn_cast<Symbol>(SC2->Node);
+        }
+      }
+    } else {
+      Name1 = dyn_cast<Symbol>(Identifier);
+      Name2 = dyn_cast<Symbol>(LookupId);
+    }
+
+    if (Name1 && Name2 && Name1->Equiv(Name2)) {
+      auto Result = EnvEntry{Value(this)};
+      if (auto* E = dyn_cast<ExternName>(Val))
+        Result.MangledName = E->getName();
+      return Result;
+    }
+
+    return EnvEntry{};
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Binding;
+  }
+  static ValueKind getKind() { return ValueKind::Binding; }
+};
+
+// EnvFrame - Represents a local scope that introduces variables
+//          - This should be used exclusively at compile time
+//            (unless we go the route of capturing entire scopes
+//             to keep values alive)
+class EnvFrame final
+  : public ValueBase,
+    private llvm::TrailingObjects<EnvFrame, Binding*> {
+
+  friend class llvm::TrailingObjects<EnvFrame, Binding*>;
+  friend class Context;
+  friend class CopyCollector;
+
+  bool IsLambdaScope;
+  unsigned NumBindings;
+  size_t numTrailingObjects(OverloadToken<Binding*> const) const {
+    return NumBindings;
+  }
+
+  // Store shadow scopes.
+  Value LocalStack;
+
+public:
+
+  EnvFrame(unsigned NumBindings, bool IsLambdaScope)
+    : ValueBase(ValueKind::EnvFrame),
+      IsLambdaScope(IsLambdaScope),
+      NumBindings(NumBindings),
+      LocalStack(Empty())
+  { }
+
+  bool isLambdaScope() const { return IsLambdaScope; }
+
+  llvm::ArrayRef<Binding*> getBindings() const {
+    return llvm::ArrayRef<Binding*>(
+        getTrailingObjects(), NumBindings);
+  }
+
+  llvm::MutableArrayRef<Binding*> getBindings() {
+    return llvm::MutableArrayRef<Binding*>(
+        getTrailingObjects(), NumBindings);
+  }
+
+  Value getLocalStack() const { return LocalStack; }
+
+  static size_t sizeToAlloc(unsigned NumBindings) {
+    return totalSizeToAlloc<Binding*>(NumBindings);
+  }
+
+  EnvEntry LookupBindings(Value Id) const {
+    for (Binding* B : getBindings()) {
+      if (EnvEntry Result = B->Lookup(Id))
+        return Result;
+    }
+    return {};
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::EnvFrame;
+  }
+  static ValueKind getKind() { return ValueKind::EnvFrame; }
+};
+
+// ForwardRef - used for garbage collection
+class ForwardRef : public ValueBase {
+public:
+  Value Val;
+
+  ForwardRef(Value V)
+    : ValueBase(ValueKind::ForwardRef),
+      Val(V)
+  { }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::ForwardRef;
+  }
+  static ValueKind getKind() { return ValueKind::ForwardRef; }
+};
+
+// ModuleLoadNamesFn - customization point for dynamically initializing a
+//                  module and loading its lookup table for the compiler
+using ModuleLoadNamesFn = void(schir::Context&);
+// initModuleNames - Creates a compile-time name/value lookup for importing modules
+//                   This should be called by the module's import function.
+//                   (for precompiled modules)
+using ModuleInitListPairTy = std::pair<llvm::StringRef, schir::Value>;
+using ModuleInitListTy     = std::initializer_list<ModuleInitListPairTy>;
+void initModuleNames(schir::Context&, llvm::StringRef MangledName,
+                ModuleInitListTy InitList);
+void registerModuleVar(schir::Context& C,
+                       schir::Module* M,
+                       llvm::StringRef VarSymbol,
+                       llvm::StringRef VarId,
+                       Value Val);
+
+class Module : public ValueBase {
+  friend class Context;
+  friend class CopyCollector;
+  // Map Identifier to Mangled name.
+  using MapTy = llvm::DenseMap<String*, String*>;
+  using MapIteratorTy  = typename MapTy::iterator;
+  schir::Context& Context; // for String lookup
+  schir::ModuleLoadNamesFn* LoadNamesFn; // for lazy importing
+  // Store global cleanups. Requires garbage collection.
+  schir::Lambda* Cleanup = nullptr;
+  MapTy Map;
+public:
+  bool IsInitialized = false;
+
+  Module(schir::Context& C, schir::ModuleLoadNamesFn* LoadNamesFn = nullptr)
+    : ValueBase(ValueKind::Module),
+      Context(C),
+      LoadNamesFn(LoadNamesFn),
+      Map()
+  { }
+
+  ~Module();
+  void PushCleanup(schir::Lambda* CleanupFn);
+
+  schir::Context& getContext() { return Context; }
+  // LoadNames - Idempotently loads names into module
+  //             (for external, precompiled modules)
+  void LoadNames() {
+    if (!LoadNamesFn) return;
+    LoadNamesFn(Context);
+    LoadNamesFn = nullptr;
+  }
+
+  void Insert(String* Id, String* MangledName) {
+    // assert(!MangledName->getStringRef().empty());
+    Map[Id] = MangledName;
+  }
+
+  EnvEntry Lookup(schir::Context& C, String* IdName);
+  EnvEntry Lookup(schir::Context& C, Symbol* IdName) {
+    return Lookup(C, IdName->getString());
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Module;
+  }
+  static ValueKind getKind() { return ValueKind::Module; }
+
+  using iterator = typename MapTy::iterator;
+  // Used by ImportSet::Iterator
+  auto begin() { return Map.begin(); }
+  auto end() { return Map.end(); }
+};
+
+class ImportSet : public ValueBase {
+public:
+  enum class ImportKind {
+    Library,
+    Only,
+    Except,
+    Prefix,
+    Rename,
+  };
+
+private:
+  // Parent - Parent may be nullptr in the case of Library
+  ImportSet* Parent = nullptr;
+  // Specifier - Refers directly to a subset of the AST for the
+  //             import set syntax. Its representation is specific
+  //             to the ImportKind and documented in Lookup.
+  schir::Value Specifier;
+  ImportKind Kind;
+
+  // FilterName - used for iteration of Module members
+  //              filtered by import sets
+  String* FilterFromPairs(schir::Context& C, String* S);
+  String* FilterName(schir::Context&, String*);
+  EnvEntry LookupFromPairs(schir::Context& C, Symbol* S);
+
+  // recurse to the Library import set
+  Module* getModule() {
+    if (!Parent) return cast<Module>(Specifier);
+    return Parent->getModule();
+  }
+
+public:
+  ImportSet(ImportKind Kind, ImportSet* Parent, Value Specifier)
+    : ValueBase(ValueKind::ImportSet),
+      Parent(Parent),
+      Specifier(Specifier),
+      Kind(Kind)
+  {
+    assert((Specifier && Parent && Kind != ImportKind::Library)
+      && "parent cannot be null unless it is a library");
+  }
+
+  ImportSet(Module* M)
+    : ValueBase(ValueKind::ImportSet),
+      Parent(nullptr),
+      Specifier(M),
+      Kind(ImportKind::Library)
+  { }
+
+  // Accessors used for the CopyCollector
+  ImportKind getImportKind() const { return Kind; }
+  schir::Value getParent() const { return Parent; }
+  schir::Value getSpecifier() const { return Specifier; }
+
+  EnvEntry Lookup(schir::Context& C, Symbol* S);
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::ImportSet;
+  }
+  static ValueKind getKind() { return ValueKind::ImportSet; }
+
+  bool isInIdentiferList(String* S) {
+    Value Current = Specifier;
+    while (Pair* P = dyn_cast<Pair>(Current)) {
+      String* S2 = cast<Symbol>(P->Car)->getString();
+      if (S == S2) return true;
+      Current = P->Cdr;
+    }
+    return false;
+  }
+
+  bool isInIdentiferList(Symbol* S) {
+    return isInIdentiferList(S->getString());
+  }
+
+  // The String* member of EnvBucket will
+  // be modified to reflect the possibly renamed
+  // value or nullptr if it was filtered out.
+  // (this should eliminate redundant calls
+  // to filter name and having to store the end()
+  // of the map)
+  class Iterator : public llvm::iterator_facade_base<
+                                              Iterator,
+                                              std::forward_iterator_tag,
+                                              EnvBucket>
+  {
+    friend class ImportSet;
+    using ItrTy = typename Module::iterator;
+    schir::Context& Context; // for String lookup
+    ImportSet& Filter;
+    ItrTy Itr;
+
+    Iterator(schir::Context& C, ItrTy I, ImportSet& Filter)
+      : Context(C),
+        Filter(Filter),
+        Itr(I)
+    { }
+
+    // returns the possibly renamed key
+    // or nullptr if it is filtered
+    String* getName() const {
+      String* Orig = (*Itr).getFirst();
+      return Filter.FilterName(Context, Orig);
+    }
+
+    EnvBucket getValue() const {
+      return EnvBucket{getName(), (*Itr).getSecond()};
+    }
+
+  public:
+    Iterator& operator=(Iterator const& R) {
+      //Context = R.Context
+      Filter = R.Filter;
+      Itr = R.Itr;
+      return *this;
+    }
+
+    bool operator==(Iterator const& R) const { return Itr == R.Itr; }
+    EnvBucket operator*() const { return getValue(); }
+    Iterator& operator++() { ++Itr; return *this; }
+  };
+
+  Iterator begin() {
+    // recurse to get the Module to get the iterator
+    Module* M = getModule();
+    schir::Context& C = M->getContext();
+    return Iterator(C, M->begin(), *this);
+  }
+
+  Iterator end() {
+    Module* M = getModule();
+    schir::Context& C = M->getContext();
+    return Iterator(C, M->end(), *this);
+  }
+};
+
+// Environment
+//  - EnvMap is where we put all imported variables
+//  - EnvStack allows shadowed underlying layers such as
+//    core syntax or embedded environments
+//  - Represents an Environment Specifier created with (environment ...)
+//    or the default or embedded environments
+//  - Adding top level definitions that shadow names in EnvMap
+//    is forbidden
+class Environment : public ValueBase {
+  friend class Context;
+  friend class CopyCollector;
+
+private:
+  // Map Id to MangledName.
+  using MapTy = llvm::DenseMap<String*, String*>;
+
+  std::unique_ptr<schir::OpGen> OpGen;
+  MapTy EnvMap;
+
+public:
+  // Implemented in Context.cpp
+  Environment(schir::Context& C, schir::Symbol* ModulePrefix = {});
+  ~Environment();
+
+  schir::OpGen* getOpGen() {
+    assert(OpGen && "environment should have OpGen");
+    return OpGen.get();
+  }
+
+  // Returns nullptr if not found
+  EnvEntry Lookup(Context& C, Symbol* Str);
+
+  static BuiltinSyntax* getImportSyntax();
+
+  bool ImportValue(String* Name, String* MangledName);
+
+  // Add a named location or syntax keyword.
+  void Insert(Symbol* S, String* MangledName) {
+    assert(!MangledName->getStringRef().empty());
+    EnvMap[S->getString()] = MangledName;
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Environment;
+  }
+  static ValueKind getKind() { return ValueKind::Environment; }
+};
+
+// isSymbol - For matching symbols in syntax builtins
+inline bool isSymbol(Value V , llvm::StringRef Str) {
+  if (Symbol* S = dyn_cast<Symbol>(V)) {
+    return S->Equiv(Str);
+  }
+  return false;
+}
+inline bool isSymbolAux(Value V , llvm::StringRef Str) {
+  if (auto* SC = dyn_cast<SyntaxClosure>(V))
+    V = SC->Node;
+  return isSymbol(V, Str);
+}
+
+inline SourceLocation ValueBase::getSourceLocation() {
+  Value Self(this);
+  ValueWithSource* VS = nullptr;
+  switch (getKind()) {
+  case ValueKind::Error:
+    VS = cast<Error>(Self);
+    break;
+  case ValueKind::SourceValue:
+    VS = cast<SourceValue>(Self);
+    break;
+  case ValueKind::Symbol:
+    VS = cast<Symbol>(Self);
+    break;
+  case ValueKind::SyntaxClosure:
+    VS = cast<SyntaxClosure>(Self);
+    break;
+  case ValueKind::PairWithSource:
+    VS = cast<PairWithSource>(Self);
+    break;
+  default:
+    return SourceLocation();
+  }
+  return VS->getSourceLocation();
+}
+
+// Get string view for String or Symbol, or
+// get an empty string view
+inline llvm::StringRef ValueBase::getStringRef() {
+  Value Self(this);
+  switch (getKind()) {
+  case ValueKind::String:
+    return cast<String>(Self)->getView();
+  case ValueKind::Symbol:
+    return cast<Symbol>(Self)->getView();
+  case ValueKind::SyntaxClosure:
+    return cast<SyntaxClosure>(Self)->Node.getStringRef();
+  default:
+    return llvm::StringRef();
+  }
+}
+
+inline Value Value::car() {
+  if (Pair* P = dyn_cast<Pair>(*this))
+    return P->Car;
+  return nullptr;
+}
+
+inline Value Value::cdr() {
+  if (Pair* P = dyn_cast<Pair>(*this))
+    return P->Cdr;
+  return nullptr;
+}
+
+inline Value Value::cadr() {
+  if (Pair* P = dyn_cast<Pair>(*this))
+    if (Pair* P2 = dyn_cast<Pair>(P->Cdr))
+      return P2->Car;
+  return nullptr;
+}
+
+inline Value Value::cddr() {
+  if (Pair* P = dyn_cast<Pair>(*this))
+    if (Pair* P2 = dyn_cast<Pair>(P->Cdr))
+      return P2->Cdr;
+  return nullptr;
+}
+
+inline llvm::StringRef Error::getErrorMessage() {
+  if (String* S = dyn_cast<String>(Message)) {
+    return  S->getView();
+  }
+  return "Unknown error (invalid error message)";
+}
+
+#define GET_KIND_NAME_CASE(KIND) \
+  case ValueKind::KIND: return llvm::StringRef(#KIND);
+inline llvm::StringRef getKindName(schir::ValueKind Kind) {
+  switch (Kind) {
+  GET_KIND_NAME_CASE(Undefined)
+  GET_KIND_NAME_CASE(BigInt)
+  GET_KIND_NAME_CASE(Binding)
+  GET_KIND_NAME_CASE(Bool)
+  GET_KIND_NAME_CASE(Builtin)
+  GET_KIND_NAME_CASE(BuiltinSyntax)
+  GET_KIND_NAME_CASE(ByteVector)
+  GET_KIND_NAME_CASE(Char)
+  GET_KIND_NAME_CASE(Empty)
+  GET_KIND_NAME_CASE(EnvFrame)
+  GET_KIND_NAME_CASE(Environment)
+  GET_KIND_NAME_CASE(Error)
+  GET_KIND_NAME_CASE(Exception)
+  GET_KIND_NAME_CASE(ExternName)
+  GET_KIND_NAME_CASE(Float)
+  GET_KIND_NAME_CASE(ForwardRef)
+  GET_KIND_NAME_CASE(Int)
+  GET_KIND_NAME_CASE(ImportSet)
+  GET_KIND_NAME_CASE(Lambda)
+  GET_KIND_NAME_CASE(Module)
+  GET_KIND_NAME_CASE(Operation)
+  GET_KIND_NAME_CASE(Pair)
+  GET_KIND_NAME_CASE(PairWithSource)
+  GET_KIND_NAME_CASE(Quote)
+  GET_KIND_NAME_CASE(SourceValue)
+  GET_KIND_NAME_CASE(String)
+  GET_KIND_NAME_CASE(Symbol)
+  GET_KIND_NAME_CASE(Syntax)
+  GET_KIND_NAME_CASE(SyntaxClosure)
+  GET_KIND_NAME_CASE(Any)
+  GET_KIND_NAME_CASE(Vector)
+  default:
+    return llvm::StringRef("?????");
+  }
+}
+#undef GET_KIND_NAME_CASE
+
+// implemented in Context.cpp
+bool equal_slow(Value V1, Value V2);
+bool eqv_slow(Value V1, Value V2);
+
+inline bool eqv(Value V1, Value V2) {
+  if (V1 == V2) return true;
+  if (V1.getKind() != V2.getKind()) return false;
+  return eqv_slow(V1, V2);
+}
+
+inline bool equal(Value V1, Value V2) {
+  if (V1 == V2) return true;
+  if (V1.getKind() != V2.getKind()) return false;
+  return equal_slow(V1, V2);
+}
+
+template <typename F>
+OpaqueFn createOpaqueFn(F& Fn) {
+  // The way the llvm::TrailingObjects<Lambda, Value, char> works
+  // is that the storage pointer (via char) has the same alignment as
+  // its previous trailing objects' type `Value` which is pointer-like.
+  // Types requiring greater alignments probably wouldn't work
+  // (though I am not exactly sure what would happen)
+  static_assert(alignof(F) <= alignof(Value),
+    "function storage alignment is too large");
+
+  static_assert(std::is_trivially_copyable<F>::value,
+    "F must be trivially_copyable");
+  using FuncTy = std::remove_const_t<F>;
+  auto CallFn = [](void* Storage, Context& C, ValueRefs Values) {
+    FuncTy& Func = *static_cast<FuncTy*>(Storage);
+    // llvm::errs() << "Func: " << __PRETTY_FUNCTION__ << '\n';
+    Func(C, Values);
+  };
+  llvm::StringRef Storage(reinterpret_cast<char const*>(&Fn), sizeof(Fn));
+  return OpaqueFn{CallFn, Storage};
+}
+
+template <typename Allocator>
+void* Lambda::allocate(Allocator& Alloc, OpaqueFn FnData,
+                       llvm::ArrayRef<schir::Value> Captures) {
+  size_t size = Lambda::sizeToAlloc(FnData, Captures.size());
+  return schir::allocate(Alloc, size, alignof(Lambda));
+}
+
+template <typename Allocator>
+void* Any::allocate(Allocator& Alloc, llvm::StringRef ObjData) {
+  size_t size = Any::sizeToAlloc(ObjData.size());
+  return schir::allocate(Alloc, size, alignof(Any));
+}
+
+template <typename Allocator>
+void* Syntax::allocate(Allocator& Alloc, OpaqueFn FnData) {
+  size_t size = Syntax::sizeToAlloc(FnData);
+  return schir::allocate(Alloc, size, alignof(Syntax));
+}
+
+template <size_t StorageLen, size_t Alignment>
+struct ExternValue {
+  static constexpr size_t storage_len = StorageLen;
+  schir::Value Value;
+  std::aligned_storage_t<StorageLen, Alignment> Storage;
+
+  ExternValue() = default;
+  ExternValue(ExternValue const&) = delete;
+
+  operator schir::Value() { return Value; }
+};
+
+// FIXME Add storage size for type erased functions.
+template <size_t CaptureCount, size_t FnStorageLen = sizeof(void*)>
+struct ExternLambda : public ExternValue<
+        Lambda::sizeToAlloc(CaptureCount, FnStorageLen),
+        alignof(Lambda)> {
+  // Take invocable object and allocates
+  // it as a type-erased Scheme Lambda.
+  // Must invoke with OpaqueFn
+  template <typename F>
+  void operator=(F f) {
+    static_assert(Lambda::sizeToAlloc(CaptureCount, FnStorageLen) >=
+                  Lambda::sizeToAlloc(CaptureCount, sizeof(f)),
+        "storage must have sufficient size");
+    auto FnData = createOpaqueFn(f);
+    std::array<schir::Value, CaptureCount> Captures = {};
+    void* Mem = Lambda::allocate(*this, FnData, Captures);
+    Lambda* New = new (Mem) Lambda(FnData, Captures);
+
+    this->Value = New;
+  }
+
+  schir::Lambda* operator->() { return cast<Lambda>(this->Value); }
+};
+
+struct ExternFunction : ExternValue<sizeof(Builtin)> {
+  void operator=(schir::ValueFn Fn) {
+    void* Mem = schir::allocate(*this, sizeof(Builtin),
+                                alignof(Builtin));
+    Builtin* New = new (Mem) Builtin(Fn);
+    this->Value = New;
+  }
+};
+struct ExternBuiltinSyntax : ExternValue<sizeof(BuiltinSyntax)> {
+  void operator=(schir::SyntaxFn Fn) {
+    void* Mem = schir::allocate(*this, sizeof(BuiltinSyntax),
+                                alignof(BuiltinSyntax));
+    BuiltinSyntax* New = new (Mem) BuiltinSyntax(Fn);
+    this->Value = New;
+  }
+};
+template <size_t FnStorageLen = sizeof(void*)>
+struct ExternSyntax : ExternValue<sizeof(Syntax) + FnStorageLen> {
+  // Take invocable object and allocates
+  // it as a type-erased Scheme syntax function.
+  // Must invoke with OpaqueFn
+  template <typename F>
+  void operator=(F f) {
+    static_assert(Syntax::sizeToAlloc(FnStorageLen) >=
+                  Syntax::sizeToAlloc(sizeof(f)),
+        "storage must have sufficient size");
+    auto FnData = createOpaqueFn(f);
+    void* Mem = Syntax::allocate(*this, FnData);
+    Syntax* New = new (Mem) Syntax(FnData);
+
+    this->Value = New;
+  }
+};
+
+// ExternString - Used for the symbol name of "import"
+template <size_t Len>
+struct ExternString : public ExternValue<String::sizeToAlloc(Len)> {
+  void operator=(llvm::StringRef Str) {
+    assert(Str.size() <= Len);
+    void* Mem = schir::allocate(*this, String::sizeToAlloc(Str.size()),
+                                alignof(String));
+    String* New = new (Mem) String(Str.size(), Str);
+    this->Value = New;
+  }
+
+  operator String*() {
+    return cast<String>(this->Value);
+  }
+};
+
+//  ContextLocal
+//  - For globals that may contain state specific to a context,
+//    use an empty object to provide a pointer to be used
+//    as a key for the map to the context specific value.
+//  - Point to a Binding by default since values are often
+//    loaded lazily.
+class ContextLocal {
+  schir::Value GetSystemSymbolName(schir::Context& C);
+public:
+  uintptr_t key() const { return reinterpret_cast<uintptr_t>(this); }
+  schir::Value get(schir::Context& C);
+  schir::Binding* getBinding(schir::Context& C);
+  void set(schir::Context& C, schir::Value Value);
+};
+
+// ListIterator - Provide ForwardIterator for lists
+//                and improper lists. Supporting improper
+//                lists implies that any value other than
+//                Empty is a list of at least one element.
+class ListIterator {
+  // Current is a Pair, Empty, or in the case
+  // of an improper list, it is just the element.
+  schir::Value Current = schir::Empty();
+public:
+
+  using value_type = schir::Value;
+
+  ListIterator() = default;
+  ListIterator(schir::Value V)
+    : Current(V)
+  { }
+
+  schir::Value operator*() const {
+    if (auto* P = dyn_cast<schir::Pair>(Current))
+      return P->Car;
+    else
+      return Current;
+  }
+
+  ListIterator& operator++() {
+    if (auto* P = dyn_cast<schir::Pair>(Current))
+      Current = P->Cdr;
+    else
+      Current = schir::Empty();
+
+    return *this;
+  }
+
+  schir::ListIterator operator++(int) {
+    ListIterator Tmp = *this;
+    ++(*this);
+    return Tmp;
+  }
+
+  bool operator==(ListIterator const& Other) const {
+    return Current == Other.Current;
+  }
+  bool operator!=(ListIterator const& Other) const {
+    return Current != Other.Current;
+  }
+};
+
+ListIterator Value::begin() const { return ListIterator(*this); }
+ListIterator Value::end() const { return ListIterator(); }
+
+class WithSourceIterator {
+
+  schir::Value Current = schir::Empty();
+
+public:
+  using value_type = std::pair<schir::SourceLocation,
+                               schir::Value>;
+
+  WithSourceIterator() = default;
+  WithSourceIterator(schir::Value V)
+    : Current(V)
+  { }
+
+  schir::SourceLocation getSourceLocation() const {
+    return Current.getSourceLocation();
+  }
+
+  value_type operator*() const {
+    if (auto* P = dyn_cast<schir::Pair>(Current))
+      return value_type(getSourceLocation(), P->Car);
+    else
+      return value_type(getSourceLocation(), Current);
+  }
+
+  WithSourceIterator& operator++() {
+    if (auto* P = dyn_cast<schir::Pair>(Current))
+      Current = P->Cdr;
+    else
+      Current = schir::Empty();
+
+    return *this;
+  }
+
+  WithSourceIterator operator++(int) {
+    WithSourceIterator Tmp = *this;
+    ++(*this);
+    return Tmp;
+  }
+
+  bool operator==(WithSourceIterator const& Other) const {
+    return Current == Other.Current;
+  }
+  bool operator!=(WithSourceIterator const& Other) const {
+    return Current != Other.Current;
+  }
+};
+
+// Provide a range to iterate lists with source locations.
+struct WithSource {
+  schir::Value Value;
+
+  WithSource(schir::Value V)
+    : Value(V)
+  { }
+
+  WithSourceIterator begin() const {
+    return WithSourceIterator(Value);
+  }
+
+  WithSourceIterator end() const {
+    return WithSourceIterator();
+  }
+};
+
+struct ValueFormatter : llvm::FormatAdapter<Value> {
+  explicit ValueFormatter(Value V)
+    : llvm::FormatAdapter<Value>(std::move(V)) // uhh... ok
+  { }
+
+  void format(llvm::raw_ostream& OS, llvm::StringRef Style) override;
+};
+
+void format(llvm::raw_ostream &OS, llvm::StringRef Fmt,
+            llvm::ArrayRef<Value> Values, bool Validate = false);
+
+} // end namespace schir
+
+#endif

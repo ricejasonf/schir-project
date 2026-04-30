@@ -1,0 +1,182 @@
+//===------------ Lexer.h - Schir Scheme Lexer ------------------*- C++ -*-===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+//  This file defines the Lexer interface for SchirScheme.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef LLVM_SCHIR_LEXER_H
+#define LLVM_SCHIR_LEXER_H
+
+#include "schir/Source.h"
+#include <cassert>
+#include <cstdint>
+
+namespace clang {
+  class SourceLocation;
+}
+
+namespace schir {
+
+enum class TokenKind {
+  unknown = 0,
+  block_comment_eof,        // #| ... EOF (only used for unexpected EOF)
+  bytevector_lparen,        // #u8(
+  char_constant,
+  comment_datum,            // #;
+  eof,
+  extern_name,              // #_SCHIR...
+  false_,
+  identifier,
+  l_brace,
+  l_paren,
+  l_square, 
+  numeric_constant,
+  period,
+  quasiquote,               // `
+  quote,                    // '
+  r_brace,
+  r_paren,
+  r_square,
+  relaxed_identifier,       // like symbol_literal but not escaped
+  string_literal,
+  string_literal_eof,       // unexpected EOF while lexing literal
+  symbol_literal,
+  true_,
+  unquote,                  // ,
+  unquote_splicing,         // ,(
+  vector_lparen,            // #(
+};
+
+using tok = TokenKind;
+
+struct Token {
+  SourceLocation Loc;
+  TokenKind Kind;
+  llvm::StringRef LiteralData = {};
+
+  SourceLocation getLocation() const { return Loc; }
+  TokenKind getKind() const { return Kind; }
+
+  bool is(TokenKind K)    const { return Kind == K; }
+  bool isNot(TokenKind K) const { return Kind != K; }
+
+  unsigned getLength() const { return LiteralData.size(); }
+  llvm::StringRef getLiteralData() const { return LiteralData; }
+};
+
+class EmbeddedLexer {
+protected:
+  SourceLocation FileLoc;
+  char const* BufferStart = nullptr;
+  char const* BufferEnd   = nullptr;
+  char const* BufferPtr   = nullptr;
+
+  EmbeddedLexer() = default;
+  EmbeddedLexer(SourceLocation FileLoc, llvm::StringRef FileBuffer,
+                char const* BufferPos)
+    : FileLoc(FileLoc),
+      BufferStart(FileBuffer.begin()),
+      BufferEnd(FileBuffer.end()),
+      BufferPtr(BufferPos)
+  { 
+    assert((BufferPtr >= BufferStart && BufferPtr <= BufferEnd) &&
+        "BufferPtr must be in range");
+  }
+public:
+  unsigned GetByteOffset() {
+    if (BufferPtr > BufferEnd)
+      return BufferEnd - BufferStart;
+    else
+      return BufferPtr - BufferStart;
+  }
+};
+
+class Lexer : public EmbeddedLexer {
+  // IsBlockComment - block comments can be
+  // nested so if we hit an eof the Lexer
+  // needs to know if we are inside one
+  bool IsBlockComment = false;
+  struct BlockCommentRaii {
+    Lexer& L;
+    bool Prev;
+    BlockCommentRaii(Lexer& L)
+      : L(L), Prev(L.IsBlockComment)
+    { L.IsBlockComment = true; }
+    ~BlockCommentRaii() { L.IsBlockComment = Prev; }
+
+    // This should cancel reverting the IsBlockComment
+    void setInvalidEof() {
+      Prev = true;
+    }
+  };
+
+  void LexIdentifier(Token& Tok, const char *CurPtr, char InitChar);
+  void LexNumberOrIdentifier(Token& Tok, const char *CurPtr, char InitChar);
+  void LexNumber(Token& Tok, const char *CurPtr);
+  void LexSharpLiteral(Token& Tok, const char *CurPtr);
+  void LexStringLiteral(Token& Tok, const char *CurPtr,
+                        TokenKind TokKind, char Terminator);
+  void LexUnknown(Token& Tok, const char *CurPtr);
+  void SkipUntilDelimiter(const char *&CurPtr);
+  void ProcessWhitespace(const char *&CurPtr);
+  void ProcessBlockComment(const char *&CurPtr);
+  bool TryProcessComment(const char *&CurPtr);
+
+  // Advances the Ptr and returns the char
+  char ConsumeChar(const char *&Ptr) {
+    return *(++Ptr);
+  }
+
+  void FormIdentifier(Token &Result, const char *TokEnd) {
+    FormTokenWithChars(Result, TokEnd, tok::identifier);
+  }
+
+  // TODO deprecate this
+  void FormLiteral(Token &Result, const char *TokEnd, TokenKind Kind) {
+    FormTokenWithChars(Result, TokEnd, Kind);
+  }
+
+  // Copy/Pasted from Lexer
+  void FormTokenWithChars(Token &Result, const char *TokEnd,
+                          TokenKind Kind) {
+    unsigned TokLen = TokEnd - BufferPtr;
+    Result.Kind = Kind;
+    Result.LiteralData = llvm::StringRef(BufferPtr, TokLen);
+    Result.Loc = getSourceLocation(BufferPtr);
+    BufferPtr = TokEnd;
+  }
+  SourceLocation getSourceLocation(const char *Loc) const;
+
+public:
+  Lexer() = default;
+
+  Lexer(SourceFile File)
+    : EmbeddedLexer(File.StartLoc, File.Buffer, File.Buffer.begin())
+  { }
+
+  Lexer(SourceFile File, char const* BufferPos)
+    : EmbeddedLexer(File.StartLoc, File.Buffer, BufferPos)
+  { }
+
+  // Str - The user must ensure the lifetime of the String
+  //       for lifetime of Lexer
+  //     - The string must have an initialized zero byte at the end.
+  Lexer(llvm::StringRef Str)
+    : EmbeddedLexer(schir::SourceLocation(), Str, Str.begin())
+  { }
+
+  void Lex(Token& Tok);
+
+  static bool isDelimiter(char c);
+  static bool isExtendedAlphabet(char c);
+};
+
+} // namespace schir
+
+#endif

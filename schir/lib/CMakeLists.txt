@@ -1,0 +1,54 @@
+cmake_minimum_required(VERSION 3.13.4)
+
+add_schir_library(schir
+  Builtins.cpp
+  Context.cpp
+  Dialect.cpp
+  Dialect/Passes.cpp
+  Heap.cpp
+  SchirScheme.cpp
+  Lexer.cpp
+  Mangle.cpp
+  Mlir.cpp
+  MlirHelper.cpp
+  OpEval.cpp
+  OpGen.cpp
+  Parser.cpp
+  Quasiquote.cpp
+  SourceFileStorage.cpp
+  SourceManager.cpp
+  Nbdl.cpp
+  Nbdl/NbdlDialect.cpp
+  Nbdl/NbdlWriter.cpp
+  # TODO Do not use Clangs CharInfo.
+  ${CLANG_LIB_DIR}/Basic/CharInfo.cpp
+
+  LINK_COMPONENTS
+    Core
+    Support
+
+  LINK_LIBS
+    MLIRAnalysis
+    MLIRBytecodeReader
+    MLIRBytecodeWriter
+    MLIRFuncDialect
+    MLIRIR
+    MLIRParser
+    MLIRPass
+    MLIRSideEffectInterfaces
+    MLIRSupport
+    MLIRTransforms
+
+    MLIRRegisterAllDialects
+    MLIRRegisterAllPasses
+    MLIRRegisterAllExtensions
+    ${MLIR_DIALECT_LIBS}
+    ${MLIR_CONVERSION_LIBS}
+    ${MLIR_EXTENSION_LIBS}
+
+  DEPENDS
+    SchirDialectIncGen
+    SchirPassesIncGen
+    NbdlOpsIncGen
+    MLIRFuncOpsIncGen
+  )

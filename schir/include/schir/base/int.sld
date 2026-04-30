@@ -1,0 +1,48 @@
+(import (schir builtins))
+
+(define-library (schir base int)
+  (import (schir builtins)
+          (schir base r7rs-syntax))
+  (begin
+    (define range ; Copied from R7RS
+      (case-lambda
+        ((e) (range 0 e))
+        ((b e) (do ((r '() (cons e r))
+                    (e (- e 1) (- e 1)))
+                 ((< e b) r)))))
+
+    (define (< x1 x2 . xN)
+      (if (positive? (- x2 x1))
+        (if (pair? xN)
+          (apply < x2 xN)
+          #t)
+        #f))
+
+    (define (<= x1 x2 . xN)
+      (let ((Difference (- x2 x1)))
+        (if (or (positive? Difference) (zero? Difference))
+          (if (pair? xN)
+            (apply <= x2 xN)
+            #t)
+          #f)))
+
+    (define (> x1 x2 . xN)
+      (if (positive? (- x1 x2))
+        (if (pair? xN)
+          (apply < x2 xN)
+          #t)
+        #f))
+
+    (define (>= x1 x2 . xN)
+      (let ((Difference (- x1 x2)))
+        (if (or (positive? Difference) (zero? Difference))
+          (if (pair? xN)
+            (apply >= x2 xN)
+            #t)
+          #f)))
+
+    ) ; end begin
+  (export
+    < <= > >=
+    range
+    ))
