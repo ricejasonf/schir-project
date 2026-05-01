@@ -128,7 +128,7 @@ def Schir_ConsOp : SchirOp<"cons"> {
   ];
 }
 
-def Schir_ContOp : SchirOp<"cont", [ReturnLike, Terminator]> {
+def Schir_ContOp : SchirOp<"cont", [Terminator]> {
   let summary = "cont";
   let description = [{
     ContOp models calling the current continuation. It can take
