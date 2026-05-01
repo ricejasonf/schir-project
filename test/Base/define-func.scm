@@ -1,7 +1,7 @@
-; RUN: heavy-scheme -I %heavy_module_path -I %geomalg_module_path %s | FileCheck %s
+; RUN: schir-scheme -I %schir_module_path -I %geomalg_module_path %s | FileCheck %s
 
-(import (heavy base)
-        (heavy mlir)
+(import (schir base)
+        (schir mlir)
         (geomalg base))
 
 ; CHECK-LABEL: func.func @my_func1(
@@ -54,7 +54,7 @@
 
 ; CHECK: func.func @my_func4([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <3>>) -> !geomalg.unknown {
 (define-func my_func4 ((arg0 : (multivector-type e1 e2 (blade-type e1 e2))))
-  ; FIXME should be able to just return arg0 but it is not the !heavy.unknown type.
+  ; FIXME should be able to just return arg0 but it is not the !schir.unknown type.
   ;       (This can be fixed in the type inference pass.)
   (sum arg0))
 (write (module-lookup geomalg-current-module "my_func4"))

@@ -508,8 +508,7 @@ def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Multilinear, ZeroAbsorb]> {
   ];
 }
 
-def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return", [ReturnLike,
-                                                      Terminator]> {
+def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return", [Terminator]> {
   let description = [{
     Provide a return-like operation that does not verify types
     so we can deduce return types in a subsequent pass.

@@ -1,4 +1,4 @@
-(import (heavy base))
+(import (schir base))
 
 (define-library (geomalg base)
   (export
@@ -16,8 +16,8 @@
     gprod
     rev
     inv)
-  (import (heavy base)
-          (heavy mlir))
+  (import (schir base)
+          (schir mlir))
   (begin
     (load-plugin "libGeomalg.so")
     ;; Take a tag that is a power of two (not including the sign bit).
@@ -119,7 +119,7 @@
          (sum-impl (syntax-source-loc V1) V1 VN ...))))
 
     ;; TODO It would be nice to make a syntax to generate these
-    ;;      but local syntax is not yet supported in heavy-scheme.
+    ;;      but local syntax is not yet supported in schir-scheme.
     ;;      The impl functions prevent syntax garbage creation.
 
     (define (outprod-impl Loc V1 V2)

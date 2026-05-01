@@ -66,7 +66,7 @@ geomalg::ReverseOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   llvm::append_range(InferredTypes, Operands.getTypes());
@@ -78,7 +78,7 @@ geomalg::NegateOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   llvm::append_range(InferredTypes, Operands.getTypes());
@@ -90,7 +90,7 @@ geomalg::GradeInvoOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   llvm::append_range(InferredTypes, Operands.getTypes());
@@ -103,7 +103,7 @@ geomalg::SumOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr Attributes,
-                  mlir::OpaqueProperties Properties,
+                  mlir::PropertyRef Properties,
                   mlir::RegionRange Regions,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   SumOpAdaptor Adaptor(Operands, Attributes, Properties, Regions);
@@ -146,7 +146,7 @@ geomalg::ExpandOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   mlir::Type ArgT = Operands.front().getType();
@@ -168,7 +168,7 @@ geomalg::OuterProdOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   if (Operands.size() != 2)
@@ -185,7 +185,7 @@ geomalg::OSwapOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   if (Operands.size() != 1)
@@ -206,7 +206,7 @@ geomalg::InverseOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   if (Operands.size() != 1)
@@ -230,7 +230,7 @@ geomalg::InnerProdOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   mlir::Type TA = Operands[0].getType();
@@ -261,7 +261,7 @@ geomalg::MatvecOp::inferReturnTypes(
                   std::optional<mlir::Location> LocOpt,
                   mlir::ValueRange Operands,
                   mlir::DictionaryAttr,
-                  mlir::OpaqueProperties,
+                  mlir::PropertyRef,
                   mlir::RegionRange Regions,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   // Iterate the regions collecting the all of the blades from
