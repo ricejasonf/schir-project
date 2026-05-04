@@ -2,9 +2,10 @@ cmake_minimum_required(VERSION 3.31)
 
 project(schir_project)
 
-if (DEFINED LLVM_ROOT)
-  set(MLIR_DIR ${LLVM_ROOT}/lib/cmake/mlir)
-  set(Clang_DIR ${LLVM_ROOT}/lib/cmake/clang)
+if (DEFINED SCHIR_LLVM_ROOT)
+  file(REAL_PATH "${SCHIR_LLVM_ROOT}" SCHIR_LLVM_ROOT EXPAND_TILDE)
+  set(MLIR_DIR ${SCHIR_LLVM_ROOT}/lib/cmake/mlir)
+  set(Clang_DIR ${SCHIR_LLVM_ROOT}/lib/cmake/clang)
 endif()
 
 find_file(LLVM_EXTERNAL_LIT NAMES "lit")

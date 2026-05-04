@@ -7,3 +7,7 @@ export(TARGETS ${SCHIR_EXPORTS} FILE ${schir_cmake_builddir}/SchirTargets.cmake)
 if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
   install_distribution_exports(Schir)
 endif()
+
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/SchirConfig.cmake.in
+  ${schir_cmake_builddir}/SchirConfig.cmake)

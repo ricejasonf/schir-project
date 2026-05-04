@@ -1,0 +1,26 @@
+# Use the same LLVM build that Schir was built with.
+# SCHIR_LLVM_ROOT="@SCHIR_LLVM_ROOT@"
+if (NOT DEFINED SCHIR_LLVM_ROOT AND NOT "@SCHIR_LLVM_ROOT@" STREQUAL "")
+  set(SCHIR_LLVM_ROOT "@SCHIR_LLVM_ROOT@")
+endif()
+
+if (DEFINED SCHIR_LLVM_ROOT AND NOT DEFINED MLIR_DIR)
+  set(MLIR_DIR "${SCHIR_LLVM_ROOT}/lib/cmake/mlir")
+  set(MLIR_BIN_DIR "${SCHIR_LLVM_ROOT}/bin")
+endif()
+
+if (DEFINED SCHIR_LLVM_ROOT AND NOT DEFINED Clang_DIR)
+  set(Clang_DIR "${SCHIR_LLVM_ROOT}/lib/cmake/clang")
+endif()
+
+if (DEFINED SCHIR_LLVM_ROOT)
+  set(SCHIR_LLVM_TOOLS_DIR "${SCHIR_LLVM_ROOT}/bin")
+endif()
+
+set(SCHIR_LIB_DIR @CMAKE_BINARY_DIR@/lib)
+set(SCHIR_TOOLS_DIR @CMAKE_BINARY_DIR@/bin)
+set(SCHIR_MODULES_DIR @CMAKE_SOURCE_DIR@/schir/include)
+set(SCHIR_INCLUDE_DIRS
+  @CMAKE_SOURCE_DIR@/schir/include
+  @CMAKE_BINARY_DIR@/schir/include)
+set(SCHIR_CLANG_PLUGIN_FILE @CMAKE_BINARY_DIR@/lib/SchirClang.so)
