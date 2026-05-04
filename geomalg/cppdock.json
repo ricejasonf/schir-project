@@ -1,0 +1,11 @@
+{
+  "cppdock": {
+    "name": "geomalg-heavy-plugin"
+  },
+  "platforms": {
+    "main": {
+      "type": "linux_x64",
+      "push_tag": "ricejasonf/geomalg-heavy-plugin"
+    }
+  }
+}

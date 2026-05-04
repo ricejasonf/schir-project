@@ -1,0 +1,14 @@
+@LIT_SITE_CFG_IN_HEADER@
+# In case you forgot, these are substituted by cmake_configure_file
+
+from lit import llvm
+
+config.schir_module_path = "@SCHIR_MODULES_DIR@"
+config.schir_tools_dir = "@SCHIR_TOOLS_DIR@"
+config.geomalg_module_path = "@GEOMALG_MODULE_PATH@"
+config.geomalg_tools_dir = "@CMAKE_BINARY_DIR@/bin"
+config.geomalg_lib_dir = "@CMAKE_BINARY_DIR@/lib"
+config.test_exec_root = "@CMAKE_CURRENT_BINARY_DIR@"
+
+llvm.initialize(lit_config, config)
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")
