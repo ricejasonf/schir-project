@@ -1,0 +1,73 @@
+//
+// Copyright Jason Rice 2016
+// Distributed under the Boost Software License, Version 1.0.
+// (See accompanying file LICENSE_1_0.txt or copy at
+// http://www.boost.org/LICENSE_1_0.txt)
+//
+#ifndef NBDL_MAKE_CONTEXT_HPP
+#define NBDL_MAKE_CONTEXT_HPP
+
+#include <nbdl/def/builder/context.hpp>
+#include <nbdl/context.hpp>
+
+#include <boost/hana/map.hpp>
+#include <boost/hana/pair.hpp>
+#include <boost/hana/type.hpp>
+#include <boost/mp11/list.hpp>
+#include <boost/mp11/set.hpp>
+#include <memory>
+#include <utility>
+
+namespace nbdl
+{
+  // deprecated (still used in tests)
+  template <typename Tag, typename ...Args>
+  constexpr decltype(auto) make_unique_context(Args&& ...args)
+  {
+    using Context = nbdl::context<Tag>;
+    return std::make_unique<Context>(std::forward<Args>(args)...);
+  }
+
+  // actor - named pair operand for use with make_context
+  static constexpr auto actor = [](auto name, auto arg) {
+    return hana::make_pair(name, arg);
+  };
+
+  namespace make_context_detail
+  {
+    using namespace boost::mp11;
+
+    template <typename Context, typename Names, typename Params, auto ...i>
+    auto make_helper(Params&& params, std::index_sequence<i...>)
+    {
+      // FIXME mp_set_difference not available in mp11 yet
+#if 0
+      static_assert(
+        mp_empty<mp_set_difference<decltype(params.keys()), Names>>::value,
+        "Invalid argument detected");
+#endif
+
+      return std::make_unique<Context>(
+        hana::find(params, mp_at_c<Names, i>{})
+          .value_or(hana::type_c<void>)...);
+    }
+  }
+
+  // make_context - named parameter interface for making a context
+  //                Use `actor("name") = arg` for named_pairs
+  template <typename Tag>
+  constexpr auto make_context = [](auto&& ...named_pairs)
+  {
+    using ActorNames = typename nbdl_def::builder::make_context_meta_t<Tag>
+                                                 ::actor_names;
+    auto params = hana::make_map(
+        std::forward<decltype(named_pairs)>(named_pairs)...);
+
+    return make_context_detail::make_helper<nbdl::context<Tag>, ActorNames>(
+      std::move(params)
+    , std::make_index_sequence<mp_size<ActorNames>{}>{}
+    );
+  };
+}
+
+#endif

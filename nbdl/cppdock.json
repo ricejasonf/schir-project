@@ -1,0 +1,157 @@
+{
+  "cppdock": {
+    "name": "nbdl"
+  },
+  "platforms": {
+    "develop": {
+      "type": "linux_x64",
+      "deps": [
+        [
+          {
+            "name": "ricejasonf/nbdl-tools-heavy-plugins",
+            "type": "docker",
+            "dest_dir": "/usr/local",
+            "revision": "sha256:f9a0efc96650448f1bbf54441a671a6a476be0631a277ea7eeee82879ef8e3bc"
+          }
+        ],
+        [
+          {
+            "name": "ricejasonf/boost",
+            "tag": "1_85_0",
+            "type": "docker",
+            "revision": "sha256:cebcb149011ed4a0bf7a8c38c43976d525545a527204e932ffc3019fe0594ffc"
+          },
+          {
+            "name": "ricejasonf/dyno",
+            "revision": "8dcb05fde3d1c4dae8ad005c46a36b7efcdf3380",
+            "tag": "fix2a"
+          }
+        ],
+        [
+          {
+            "name": "ldionne/libawful",
+            "revision": "d76ec919b9978da24023539fcfb7d8b157f7e535",
+            "tag": "master"
+          }
+        ],
+        [
+          {
+            "name": "ricejasonf/full_duplex",
+            "tag": "master",
+            "revision": "ba441e60538382f2082c707a867730ffbe698992"
+          }
+        ],
+        [
+          {
+            "name": "open-source-parsers/jsoncpp",
+            "tag": "refs/tags/1.9.3",
+            "revision": "6aba23f4a8628d599a9ef7fa4811c4ff6e4070e2"
+          }
+        ]
+      ]
+    },
+    "web_develop": {
+      "type": "emscripten",
+      "deps": [
+        [
+          {
+            "name": "ricejasonf/nbdl-tools-heavy-plugins",
+            "type": "docker",
+            "dest_dir": "/usr/local",
+            "revision": "sha256:f9a0efc96650448f1bbf54441a671a6a476be0631a277ea7eeee82879ef8e3bc"
+          }
+        ],
+        [
+          {
+            "name": "ricejasonf/boost_header_only",
+            "tag": "1_85_0",
+            "type": "docker",
+            "revision": "sha256:252cdac0f4fbac7b065d7754ca2b9431ddeb3273c6dd3f95219086578ec881a5"
+          },
+          {
+            "name": "ricejasonf/dyno",
+            "revision": "8dcb05fde3d1c4dae8ad005c46a36b7efcdf3380",
+            "tag": "fix2a"
+          }
+        ],
+        [
+          {
+            "name": "ldionne/libawful",
+            "revision": "d76ec919b9978da24023539fcfb7d8b157f7e535",
+            "tag": "master"
+          }
+        ],
+        [
+          {
+            "name": "ricejasonf/full_duplex",
+            "tag": "master",
+            "revision": "ba441e60538382f2082c707a867730ffbe698992"
+          }
+        ]
+      ]
+    },
+    "server": {
+      "description": "For building nbdl::server",
+      "type": "linux_x64",
+      "deps": [
+        [
+          {
+            "name": "ricejasonf/boost",
+            "tag": "1_73_0",
+            "type": "docker",
+            "revision": "sha256:9be9bcadb7fc94ca5de931999e0707c2d4f6b939b3b15b8d7fcdb814d08b2cec"
+          },
+          {
+            "name": "boostorg/beast",
+            "tag": "develop",
+            "revision": "6f57e5934c1f307e4510ee11dd09594526a3f5d0"
+          },
+          {
+            "name": "elsid/resource_pool",
+            "revision": "40ff1593a3a22070d276103cbdcd61dff75a0402"
+          },
+          {
+            "name": "ricejasonf/libpq",
+            "type": "docker",
+            "revision": "sha256:260af9b730dc7e7cbdd80a14fe2ec939b1f7b1eec255def8137b0e2b7b45beab"
+          },
+          {
+            "name": "elsid/resource_pool",
+            "revision": "40ff1593a3a22070d276103cbdcd61dff75a0402"
+          },
+          {
+            "name": "yandex/ozo",
+            "tag": "master",
+            "revision": "4bf9f42098cead27d4a3d4c1af2d06eb360f24cb"
+          },
+          {
+            "name": "ricejasonf/dyno",
+            "revision": "8dcb05fde3d1c4dae8ad005c46a36b7efcdf3380",
+            "tag": "fix2a"
+          }
+        ],
+        [
+          {
+            "name": "open-source-parsers/jsoncpp",
+            "tag": "refs/tags/1.9.3",
+            "revision": "6aba23f4a8628d599a9ef7fa4811c4ff6e4070e2"
+          }
+        ],
+        [
+          {
+            "name": "ldionne/libawful",
+            "revision": "d76ec919b9978da24023539fcfb7d8b157f7e535",
+            "tag": "master"
+          }
+        ],
+        [
+          {
+            "name": "ricejasonf/full_duplex",
+            "tag": "master",
+            "revision": "dedbc9c350b740dc60de0af929fef1e7f6a4d904"
+          }
+        ]
+      ]
+    }
+  }
+}

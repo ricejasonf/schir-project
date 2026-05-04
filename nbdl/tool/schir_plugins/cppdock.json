@@ -1,0 +1,22 @@
+{
+  "cppdock": {
+    "name": "nbdl-tools-heavy-plugins"
+  },
+  "platforms": {
+    "main": {
+      "type": "linux_x64",
+      "base_image_dockerfile": "./Dockerfile-base",
+      "push_tag": "ricejasonf/nbdl-tools-heavy-plugins",
+      "deps": [
+        [
+          {
+            "name": "ricejasonf/llvm-project-heavy",
+            "tag": "latest",
+            "type": "docker",
+            "revision": "sha256:1441c534eabca2cdbc06e8456b0acf2dd9f959c29e9d7f8c63ffae5ce99d075a"
+          }
+        ]
+      ]
+    }
+  }
+}
