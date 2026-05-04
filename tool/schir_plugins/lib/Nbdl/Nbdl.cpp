@@ -1,17 +1,17 @@
 #include <nbdl_spec/NbdlDialect.h>
-#include <heavy/Context.h>
-#include <heavy/Value.h>
-#include <heavy/MlirHelper.h>
+#include <schir/Context.h>
+#include <schir/Value.h>
+#include <schir/MlirHelper.h>
 #include <llvm/Support/Casting.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <memory>
 #include <optional>
 #include <tuple>
 
-using Context = heavy::Context;
-using ValueRefs = heavy::ValueRefs;
-using CaptureList = heavy::CaptureList;
-namespace mlir_helper = heavy::mlir_helper;
+using Context = schir::Context;
+using ValueRefs = schir::ValueRefs;
+using CaptureList = schir::CaptureList;
+namespace mlir_helper = schir::mlir_helper;
 using llvm::cast;
 using llvm::cast_or_null;
 using llvm::dyn_cast;
@@ -20,22 +20,22 @@ using llvm::isa;
 using llvm::isa_and_nonnull;
 
 namespace nbdl_spec {
-extern std::tuple<std::string, heavy::SourceLocationEncoding*, mlir::Operation*>
-translate_cpp(heavy::LexerWriterFnRef FnRef, mlir::Operation* Op);
+extern std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
+translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op);
 }
 
 extern "C" {
-heavy::ContextLocal nbdl_current_module;
+schir::ContextLocal nbdl_current_module;
 }
 
 // Create a builder that appends to the nbdl module.
-static std::optional<mlir::OpBuilder> getModuleBuilder(heavy::Context& C) {
-  heavy::Value V = nbdl_current_module.get(C);
-  mlir::Operation* Op = heavy::cast<mlir::Operation>(V);
-  mlir::ModuleOp ModuleOp = heavy::dyn_cast_or_null<mlir::ModuleOp>(Op);
+static std::optional<mlir::OpBuilder> getModuleBuilder(schir::Context& C) {
+  schir::Value V = nbdl_current_module.get(C);
+  mlir::Operation* Op = schir::cast<mlir::Operation>(V);
+  mlir::ModuleOp ModuleOp = schir::dyn_cast_or_null<mlir::ModuleOp>(Op);
   if (!ModuleOp) {
-    heavy::Error* E = C.CreateError(C.getLoc(),
-        "invalid current-nbdl-module", heavy::Empty());
+    schir::Error* E = C.CreateError(C.getLoc(),
+        "invalid current-nbdl-module", schir::Empty());
     C.Raise(E);
     return {};
   }
@@ -60,15 +60,15 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
     return;
   mlir::OpBuilder Builder = BuilderOpt.value();
 
-  heavy::SourceLocation Loc = Args[0].getSourceLocation();
-  // Require a heavy::Symbol so it has a source location.
-  heavy::Symbol* NameSym = dyn_cast<heavy::Symbol>(Args[0]);
+  schir::SourceLocation Loc = Args[0].getSourceLocation();
+  // Require a schir::Symbol so it has a source location.
+  schir::Symbol* NameSym = dyn_cast<schir::Symbol>(Args[0]);
   llvm::StringRef Name = NameSym->getStringRef();
-  heavy::Value NumParamsVal = Args[1];
-  heavy::Value Callback = Args[2];
+  schir::Value NumParamsVal = Args[1];
+  schir::Value Callback = Args[2];
 
-  int32_t NumParams = isa<heavy::Int>(NumParamsVal)
-      ? int32_t(cast<heavy::Int>(NumParamsVal))
+  int32_t NumParams = isa<schir::Int>(NumParamsVal)
+      ? int32_t(cast<schir::Int>(NumParamsVal))
       : int32_t(-1);
 
   if (NumParams < 0)
@@ -94,12 +94,12 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
   auto FuncOp = mlir::func::FuncOp::create(Builder, MLoc, Name, FT);
   FuncOp.addEntryBlock();
 
-  heavy::Value Thunk = C.CreateLambda([FuncOp](Context& C, ValueRefs) mutable {
-    heavy::Value Callback = C.getCapture(0);
-    llvm::SmallVector<heavy::Value, 8> BlockArgs;
+  schir::Value Thunk = C.CreateLambda([FuncOp](Context& C, ValueRefs) mutable {
+    schir::Value Callback = C.getCapture(0);
+    llvm::SmallVector<schir::Value, 8> BlockArgs;
     assert(!FuncOp.getBody().empty() && "should have entry block");
     for (mlir::Value MVal : FuncOp.getBody().getArguments()) {
-      heavy::Value V = C.CreateAny(MVal);
+      schir::Value V = C.CreateAny(MVal);
       BlockArgs.push_back(V);
     }
 
@@ -129,26 +129,26 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
   llvm::raw_ostream* OS = nullptr;
 
   using ResultTy = std::tuple<std::string,
-                              heavy::SourceLocationEncoding*,
+                              schir::SourceLocationEncoding*,
                               mlir::Operation*>;
   auto Result = ResultTy();
 
 
   // Do not capture the emphemeral Any object.
   if (Args.size() == 2) {
-    if (auto LWF = heavy::any_cast<heavy::LexerWriterFnRef>(Args[1])) {
+    if (auto LWF = schir::any_cast<schir::LexerWriterFnRef>(Args[1])) {
       Result = nbdl_spec::translate_cpp(LWF, Op);
-    } else if (auto* Raw = heavy::any_cast<::llvm::raw_ostream>(&Args[1])) {
+    } else if (auto* Raw = schir::any_cast<::llvm::raw_ostream>(&Args[1])) {
       OS = Raw;
     } else {
       return C.RaiseError("expecting llvm::raw_ostream"
-                          " or heavy::LexerWriterFnRef");
+                          " or schir::LexerWriterFnRef");
     }
   } else {
     OS = &llvm::outs();
   }
   if (OS) {
-    auto LexerWriter = [&OS](heavy::SourceLocation, llvm::StringRef Buffer) {
+    auto LexerWriter = [&OS](schir::SourceLocation, llvm::StringRef Buffer) {
       *OS << Buffer;
     };
     Result = nbdl_spec::translate_cpp(LexerWriter, Op);
@@ -156,9 +156,9 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
 
   auto& [ErrMsg, ErrLoc, Irritant] = Result;
   if (!ErrMsg.empty()) {
-    heavy::SourceLocation Loc(ErrLoc);
-    heavy::Error* Err = C.CreateError(Loc, ErrMsg,
-        Irritant ? heavy::Value(Irritant) : heavy::Value(heavy::Undefined()));
+    schir::SourceLocation Loc(ErrLoc);
+    schir::Error* Err = C.CreateError(Loc, ErrMsg,
+        Irritant ? schir::Value(Irritant) : schir::Value(schir::Undefined()));
     return C.Raise(Err);
   }
   C.Cont();
@@ -175,8 +175,6 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
   if (!Builder)
     return;  // error is already raised by getCurrentBuilder
   mlir::Block* Block = Builder->getBlock();
-  assert(Block && isa<mlir::func::FuncOp>(Block->getParentOp())
-      && "expecting func insertion point");
   if (Block->empty() || !Block->back().hasTrait<mlir::OpTrait::IsTerminator>())
     return C.Cont();
 
@@ -195,7 +193,7 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
 }
 
 // Initialize the nbdl_spec mlir module.
-void nbdl_spec_module_init(heavy::Context& C, heavy::ValueRefs) {
+void nbdl_spec_module_init(schir::Context& C, schir::ValueRefs) {
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
 
   // Assume that the MLIRContext cleans up ModuleOps.

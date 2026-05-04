@@ -1,7 +1,34 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.31)
+include(ExternalProject)
 
+# Toolchain stuff
+if (DEFINED SCHIR_ROOT AND NOT DEFINED Schir_DIR)
+  set(Schir_DIR ${SCHIR_ROOT}/lib/cmake/schir)
+endif()
+find_package(Schir REQUIRED CONFIG)
+set(CMAKE_CXX_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang++)
+string(APPEND CMAKE_CXX_FLAGS
+  "-std=c++26 -fplugin=${SCHIR_CLANG_PLUGIN_FILE}")
+add_definitions(-DBOOST_HANA_CONFIG_ENABLE_STRING_UDL)
+add_definitions(-ftemplate-backtrace-limit=0)
+add_definitions(-Wall)
+add_definitions(-Wextra)
+add_definitions(-DBOOST_ASIO_NO_TYPEID)
+include_directories(${SCHIR_MODULES_DIR})
+
+# Nbdl project
 project(nbdl_project)
 enable_testing()
+
+# Add the Schir plugin as an external project since
+# we need it to compile the scheme library.
+ExternalProject_Add(external.schir_plugin
+  SOURCE_DIR ${CMAKE_SOURCE_DIR}/tool/schir_plugins
+  CMAKE_ARGS "-DSchir_DIR=${Schir_DIR}"
+             "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
+             "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
+  DOWNLOAD_COMMAND ""
+  UPDATE_COMMAND   "")
 
 add_custom_target(check
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --exclude-regex "individual"
@@ -94,13 +121,6 @@ function(nbdl_catch_dom_test_suite out suite_name)
   list(APPEND _build_targets "${suite_name}")
   set(${out} ${_build_targets} PARENT_SCOPE)
 endfunction()
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++26 -fplugin=HeavyClang.so")
-add_definitions(-DBOOST_HANA_CONFIG_ENABLE_STRING_UDL)
-add_definitions(-ftemplate-backtrace-limit=0)
-add_definitions(-Wall)
-add_definitions(-Wextra)
-add_definitions(-DBOOST_ASIO_NO_TYPEID)
 
 if (${NBDL_USE_CATCH})
   add_definitions(-DNBDL_USE_CATCH)

@@ -6,10 +6,11 @@
 //
 
 #include <catch.hpp>
+#include <string>
 
 namespace {
 namespace foo {
-#pragma heavy_scheme
+#pragma schir_scheme
 {
   (import (nbdl spec))
   (context 'my_context (arg1 arg2)

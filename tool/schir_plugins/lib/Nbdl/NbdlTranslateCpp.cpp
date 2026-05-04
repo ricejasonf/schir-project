@@ -5,8 +5,8 @@
 // C++ which tries to maintain source locations to declarations in DSL code.
 // 
 #include <nbdl_spec/NbdlDialect.h>
-#include <heavy/Source.h>
-#include <heavy/Value.h>
+#include <schir/Source.h>
+#include <schir/Value.h>
 #include <llvm/ADT/ScopedHashTable.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/Twine.h>
@@ -19,7 +19,7 @@
 #include <string>
 #include <tuple>
 
-namespace heavy {
+namespace schir {
 class SourceLocationEncoding;
 }
 
@@ -41,10 +41,10 @@ public:
   // Irritant may be nullptr even with error present.
   mlir::Operation* Irritant = nullptr;
   std::string ErrMsg;
-  heavy::SourceLocationEncoding* ErrLoc;
-  heavy::SourceLocation CurLoc;
+  schir::SourceLocationEncoding* ErrLoc;
+  schir::SourceLocation CurLoc;
 
-  heavy::LexerWriterFnRef LexerWriter;
+  schir::LexerWriterFnRef LexerWriter;
   std::string OutputBuffer;
   llvm::raw_string_ostream OS;
 
@@ -52,14 +52,14 @@ public:
   // to generate anonymous identifiers if needed.
   unsigned CurrentMemberCount = 0;
   unsigned CurrentAnonVarCount = 0;
-  NbdlSpecWriter(heavy::LexerWriterFnRef LexerWriter)
+  NbdlSpecWriter(schir::LexerWriterFnRef LexerWriter)
     : LexerWriter(LexerWriter),
       OS(OutputBuffer)
   { }
 
   class LocRAII {
     NbdlSpecWriter& NW;
-    heavy::SourceLocation PrevLoc;
+    schir::SourceLocation PrevLoc;
 
   public:
     LocRAII(NbdlSpecWriter& NW, mlir::Location NewLoc)
@@ -91,8 +91,8 @@ public:
   }
 
   void SetLoc(mlir::Location MLoc) {
-    auto Loc = heavy::SourceLocation(mlir::OpaqueLoc
-      ::getUnderlyingLocationOrNull<heavy::SourceLocationEncoding*>(MLoc));
+    auto Loc = schir::SourceLocation(mlir::OpaqueLoc
+      ::getUnderlyingLocationOrNull<schir::SourceLocationEncoding*>(MLoc));
     assert(Loc.isValid() && "expecting valid source location");
     CurLoc = Loc;
   }
@@ -131,7 +131,7 @@ public:
 
     ErrMsg = Msg.str();
     ErrLoc = mlir::OpaqueLoc
-      ::getUnderlyingLocationOrNull<heavy::SourceLocationEncoding*>(Loc);
+      ::getUnderlyingLocationOrNull<schir::SourceLocationEncoding*>(Loc);
   }
 
   void SetError(llvm::StringRef Msg, mlir::Operation* Op) {
@@ -681,7 +681,7 @@ public:
   void WriteMemberDeclRec(StoreComposeOp Op) {
     WriteMemberDeclRec(Op.getRhs());
 
-    heavy::SourceLocation PrevLoc = CurLoc;
+    schir::SourceLocation PrevLoc = CurLoc;
     SetLoc(Op.getLoc());
 
     mlir::Value Key = Op.getKey();  // Could be mlir::Value().
@@ -798,8 +798,8 @@ public:
 }  // end namespace
 
 namespace nbdl_spec {
-std::tuple<std::string, heavy::SourceLocationEncoding*, mlir::Operation*>
-translate_cpp(heavy::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
+std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
+translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
   if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op)) {
     FuncWriter Writer(LexerWriter);
     Writer.Visit(Op);
@@ -817,7 +817,7 @@ translate_cpp(heavy::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
                            Writer.ErrLoc, Writer.Irritant);
   } else {
     return std::make_tuple(std::string("unhandled operation"),
-                static_cast<heavy::SourceLocationEncoding*>(nullptr), Op);
+                static_cast<schir::SourceLocationEncoding*>(nullptr), Op);
   }
 
 }

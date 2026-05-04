@@ -13,7 +13,7 @@
 
 namespace {
 namespace foo {
-#pragma heavy_scheme
+#pragma schir_scheme
 {
   (import (nbdl spec))
 

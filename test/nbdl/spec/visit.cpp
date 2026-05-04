@@ -11,17 +11,18 @@
 #include <nbdl/variant_holder.hpp>
 
 #include <catch.hpp>
-#include <unordered_map>
+#include <string>
 #include <type_traits>
+#include <unordered_map>
 
 namespace {
 namespace my {
 
 using fav_games = std::unordered_map<std::string, std::string>;
 
-#pragma heavy_scheme
+#pragma schir_scheme
 {
-  (import (heavy base)
+  (import (schir base)
           (nbdl spec))
 
   ; // Add to an integer sum.

@@ -20,7 +20,7 @@ namespace foo {
 // Note that nbdl::unresolved is like the monostate type.
 using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 
-#pragma heavy_scheme
+#pragma schir_scheme
 {
   (import (nbdl spec))
   (context 'context (arg1 arg2 arg3)

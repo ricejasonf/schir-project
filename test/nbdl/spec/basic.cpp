@@ -6,9 +6,9 @@
 //
 
 namespace foo {
-#pragma heavy_scheme
+#pragma schir_scheme
 {
-  (import (heavy clang))
+  (import (schir clang))
   (write-lexer "
     struct woof {
       static constexpr bool is_woof = true;

@@ -7,7 +7,7 @@
 
 add_subdirectory(app)
 
-# Heavy
+# Schir scheme
 add_subdirectory(spec)
 
 if (EMSCRIPTEN)

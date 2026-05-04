@@ -1,9 +1,9 @@
-(import (heavy base))
+(import (schir base))
 
 (define-library (nbdl spec)
-  (import (heavy base)
-          (heavy mlir)
-          (heavy clang))
+  (import (schir base)
+          (schir mlir)
+          (schir clang))
   (begin
     ;; Note that the %match functions in this implementation
     ;; use a CPS style where callbacks can be called multiple
@@ -24,7 +24,7 @@
     (module-init)
     (define-binding current-nbdl-module "nbdl_current_module")
     (load-dialect "func")
-    (load-dialect "heavy")
+    (load-dialect "schir")
     (load-dialect "nbdl")
 
     (define !nbdl.store (type "!nbdl.store"))

@@ -10,7 +10,6 @@
 
 #include <array>
 #include <boost/hana.hpp>
-#include <full_duplex.hpp>
 #include <nbdl.hpp>
 #include <nbdl/app/client.hpp>
 #include <nbdl/app/server.hpp>
@@ -86,12 +85,6 @@ namespace
 
 int main()
 {
-  namespace event = full_duplex::event;
-  using full_duplex::endpoint;
-  using full_duplex::endpoint_compose;
-  using full_duplex::promise;
-  using full_duplex::tap;
-
   std::vector<std::string> received_messages{};
 
   auto check = [&] {
