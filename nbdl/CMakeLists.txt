@@ -7,21 +7,22 @@ if (DEFINED SCHIR_ROOT AND NOT DEFINED Schir_DIR)
 endif()
 find_package(Schir REQUIRED CONFIG)
 set(CMAKE_CXX_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang++)
-string(APPEND CMAKE_CXX_FLAGS
-  "-std=c++26 -fplugin=${SCHIR_CLANG_PLUGIN_FILE}")
-add_definitions(-DBOOST_HANA_CONFIG_ENABLE_STRING_UDL)
-add_definitions(-ftemplate-backtrace-limit=0)
-add_definitions(-Wall)
-add_definitions(-Wextra)
-add_definitions(-DBOOST_ASIO_NO_TYPEID)
+add_compile_options(-fplugin=${SCHIR_CLANG_PLUGIN_FILE}
+                    -ftemplate-backtrace-limit=0
+                    -Wall -Wextra)
+add_compile_definitions(-DBOOST_HANA_CONFIG_ENABLE_STRING_UDL
+                        -DBOOST_ASIO_NO_TYPEID)
 include_directories(${SCHIR_MODULES_DIR})
 
 # Nbdl project
 project(nbdl_project)
 enable_testing()
 
-# Add the Schir plugin as an external project since
-# we need it to compile the scheme library.
+# If we do not have schir-project installed on the
+# system, add the Schir plugin as an external project
+# since we need it to compile the scheme library
+# using the system compiler.
+# (Just manually build this target when doing local development.)
 ExternalProject_Add(external.schir_plugin
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/tool/schir_plugins
   CMAKE_ARGS "-DSchir_DIR=${Schir_DIR}"
@@ -150,7 +151,7 @@ include_directories(${nbdl_project_SOURCE_DIR}/include)
 add_subdirectory(test)
 add_subdirectory(example/tiles)
 add_subdirectory(example/pipes)
-add_subdirectory(include/nbdl)
+add_subdirectory(include/nbdl ${CMAKE_BINARY_DIR}/include/nbdl)
 #add_subdirectory(metabench)
 
 install(FILES include/nbdl.hpp  DESTINATION include)

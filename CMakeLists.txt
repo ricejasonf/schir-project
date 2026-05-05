@@ -33,3 +33,4 @@ include_directories(${CMAKE_BINARY_DIR}/include)
 
 add_subdirectory(schir)
 add_subdirectory(geomalg)
+add_subdirectory(nbdl/tool/schir_plugins)
