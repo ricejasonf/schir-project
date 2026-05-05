@@ -3,7 +3,7 @@
 
 from lit import llvm
 
-config.schir_module_path = "@SCHIR_MODULES_DIR@"
+config.schir_module_path = "@SCHIR_MODULE_PATH@"
 config.schir_tools_dir = "@SCHIR_TOOLS_DIR@"
 config.geomalg_module_path = "@GEOMALG_MODULE_PATH@"
 config.geomalg_tools_dir = "@CMAKE_BINARY_DIR@/bin"

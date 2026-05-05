@@ -7,5 +7,8 @@ configure_lit_site_cfg(
 
 add_lit_testsuite(check-geomalg "Running Geomalg tests"
   ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS Geomalg geomalg-opt
+  DEPENDS
+  Geomalg
+  geomalg-opt
+  schir-scheme
 )

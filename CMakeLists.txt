@@ -16,9 +16,10 @@ list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 include(TableGen)
 include(AddLLVM)
 include(AddMLIR)
+
 include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${CMAKE_BINARY_DIR}/include)
-include_directories(${CMAKE_SOURCE_DIR}/include)
+
+include_directories(${CMAKE_SOURCE_DIR}/schir/include)
 
 set(SCHIR_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/schir/include)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -31,3 +32,4 @@ include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${CMAKE_BINARY_DIR}/include)
 
 add_subdirectory(schir)
+add_subdirectory(geomalg)
