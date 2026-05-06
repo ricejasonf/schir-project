@@ -1,3 +1,7 @@
+# This CMake config template is used for building against
+# a schir-project build tree instead of a system installed
+# version.
+
 # Use the same LLVM build that Schir was built with.
 # SCHIR_LLVM_ROOT="@SCHIR_LLVM_ROOT@"
 if (NOT DEFINED SCHIR_LLVM_ROOT AND NOT "@SCHIR_LLVM_ROOT@" STREQUAL "")
@@ -22,5 +26,5 @@ set(SCHIR_TOOLS_DIR @CMAKE_BINARY_DIR@/bin)
 set(SCHIR_MODULES_DIR @CMAKE_SOURCE_DIR@/schir/include)
 set(SCHIR_INCLUDE_DIRS
   @CMAKE_SOURCE_DIR@/schir/include
-  @CMAKE_BINARY_DIR@/schir/include)
+  @CMAKE_BINARY_DIR@/include)
 set(SCHIR_CLANG_PLUGIN_FILE @CMAKE_BINARY_DIR@/lib/SchirClang.so)

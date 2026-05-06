@@ -1,0 +1,12 @@
+{
+  "cppdock": {
+    "name": "schir-project"
+  },
+  "platforms": {
+    "main": {
+      "type": "linux_x64",
+      "build_type": "release",
+      "push_tag": "ricejasonf/schir-project"
+    }
+  }
+}

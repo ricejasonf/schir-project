@@ -6,7 +6,9 @@ if (DEFINED SCHIR_ROOT AND NOT DEFINED Schir_DIR)
   set(Schir_DIR ${SCHIR_ROOT}/lib/cmake/schir)
 endif()
 find_package(Schir REQUIRED CONFIG)
+set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang++)
+
 add_compile_options(-fplugin=${SCHIR_CLANG_PLUGIN_FILE}
                     -ftemplate-backtrace-limit=0
                     -Wall -Wextra)

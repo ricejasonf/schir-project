@@ -1,0 +1,7 @@
+# This generates the SchirConfig.cmake to be installed on the
+# system. It assumes that LLVM/Clang/MLIR are installed on the
+# system as well.
+
+# Don't use CMAKE_INSTALL_PREFEX because we install to /opt/install
+# and then copy to /opt/sysroot in docker builds.
+set(SCHIR_CLANG_PLUGIN_FILE SchirClang.so)

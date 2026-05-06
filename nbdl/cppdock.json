@@ -8,10 +8,10 @@
       "deps": [
         [
           {
-            "name": "ricejasonf/nbdl-tools-heavy-plugins",
+            "name": "ricejasonf/schir-project",
             "type": "docker",
             "dest_dir": "/usr/local",
-            "revision": "sha256:f9a0efc96650448f1bbf54441a671a6a476be0631a277ea7eeee82879ef8e3bc"
+            "revision": "sha256:7b5c197405400073e345ed98cfdb04a3a16f83b82db90e0a8f9c3d3b3b31c837"
           }
         ],
         [
@@ -55,10 +55,10 @@
       "deps": [
         [
           {
-            "name": "ricejasonf/nbdl-tools-heavy-plugins",
+            "name": "ricejasonf/schir-project",
             "type": "docker",
             "dest_dir": "/usr/local",
-            "revision": "sha256:f9a0efc96650448f1bbf54441a671a6a476be0631a277ea7eeee82879ef8e3bc"
+            "revision": "sha256:7b5c197405400073e345ed98cfdb04a3a16f83b82db90e0a8f9c3d3b3b31c837"
           }
         ],
         [
