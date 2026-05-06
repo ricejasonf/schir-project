@@ -6,7 +6,7 @@
 #ifndef NBDL_APP_CLIENT_CONNECTION_JS_HPP
 #define NBDL_APP_CLIENT_CONNECTION_JS_HPP
 
-#ifndef EMSCRIPTEN
+#ifndef __EMSCRIPTEN__
 #error "client_connection_js.hpp requires an emscripten environment."
 #endif
 

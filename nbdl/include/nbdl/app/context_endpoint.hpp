@@ -12,7 +12,7 @@
 #include <nbdl.hpp>
 #include <utility>
 
-#if EMSCRIPTEN
+#if __EMSCRIPTEN__
 #include <nbdl/js.hpp>
 #define NBDL_APP_CONSOLE_LOG(x) emscripten::val::global("console").template call<void>("log", emscripten::val(x))
 #else
@@ -43,18 +43,18 @@ namespace nbdl::app {
     [](full_duplex::queue_full_t const&) {
       NBDL_APP_CONSOLE_LOG("QUEUE FULL");
     },
-#if EMSCRIPTEN
+#if __EMSCRIPTEN__
     [](nbdl::js::val const& err) {
       NBDL_JS_TRANSFORM(err, function(err) {
         console.error(err);
         return err;
       });
     },
-#else  /* NOT EMSCRIPTEN */
+#else  /* NOT __EMSCRIPTEN__ */
     [](boost::system::error_code const& err) {
       NBDL_APP_CONSOLE_LOG(err.message());
     },
-#endif /* EMSCRIPTEN */
+#endif /* __EMSCRIPTEN__ */
     [](auto const& err) {
       NBDL_APP_CONSOLE_LOG(err);
     });

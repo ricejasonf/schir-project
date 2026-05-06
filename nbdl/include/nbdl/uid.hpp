@@ -19,7 +19,7 @@
 #include <functional>
 #include <tuple>
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
 #include <random>
@@ -79,7 +79,7 @@ namespace nbdl
   template <typename T>
   using unique_key = key<T, uid>;
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   inline auto make_uid_generator_fn::operator()() const
   {
     return []

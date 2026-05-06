@@ -8,14 +8,6 @@
       "deps": [
         [
           {
-            "name": "ricejasonf/schir-project",
-            "type": "docker",
-            "dest_dir": "/usr/local",
-            "revision": "sha256:7b5c197405400073e345ed98cfdb04a3a16f83b82db90e0a8f9c3d3b3b31c837"
-          }
-        ],
-        [
-          {
             "name": "ricejasonf/boost",
             "tag": "1_85_0",
             "type": "docker",
@@ -53,14 +45,6 @@
     "web_develop": {
       "type": "emscripten",
       "deps": [
-        [
-          {
-            "name": "ricejasonf/schir-project",
-            "type": "docker",
-            "dest_dir": "/usr/local",
-            "revision": "sha256:7b5c197405400073e345ed98cfdb04a3a16f83b82db90e0a8f9c3d3b3b31c837"
-          }
-        ],
         [
           {
             "name": "ricejasonf/boost_header_only",

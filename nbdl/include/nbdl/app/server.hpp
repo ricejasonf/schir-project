@@ -7,7 +7,7 @@
 #ifndef NBDL_SERVER_HPP
 #define NBDL_SERVER_HPP
 
-#if EMSCRIPTEN
+#if __EMSCRIPTEN__
 #include <nbdl/app/server_js.hpp>
 #else
 
@@ -206,5 +206,5 @@ namespace nbdl {
   };
 }
 
-#endif // NOT EMSCRIPTEN
+#endif // NOT __EMSCRIPTEN__
 #endif

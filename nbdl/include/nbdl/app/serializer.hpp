@@ -9,9 +9,9 @@
 
 #include <nbdl/fwd/app/serializer.hpp>
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
 #include <nbdl/app/serializer_js.hpp>
-#else // NOT EMSCRIPTEN
+#else // NOT __EMSCRIPTEN__
 
 #include <nbdl/binder/jsoncpp.hpp>
 
@@ -85,5 +85,5 @@ namespace nbdl::app
   };
 }
 
-#endif // NOT EMSCRIPTEN
+#endif // NOT __EMSCRIPTEN__
 #endif

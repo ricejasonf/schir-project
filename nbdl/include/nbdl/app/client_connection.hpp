@@ -7,9 +7,9 @@
 #ifndef NBDL_APP_CLIENT_CONNECTION_HPP
 #define NBDL_APP_CLIENT_CONNECTION_HPP
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
 #include <nbdl/app/client_connection_js.hpp>
-#else // NOT EMSCRIPTEN
+#else // NOT __EMSCRIPTEN__
 
 #include <full_duplex.hpp>
 #include <nbdl.hpp>
@@ -121,5 +121,5 @@ namespace nbdl::app {
   }
 }
 
-#endif // EMSCRIPTEN
+#endif // __EMSCRIPTEN__
 #endif

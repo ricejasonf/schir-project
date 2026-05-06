@@ -7,7 +7,7 @@
 #ifndef NBDL_APP_IO_CONTEXT_HPP
 #define NBDL_APP_IO_CONTEXT_HPP
 
-#ifndef EMSCRIPTEN
+#ifndef __EMSCRIPTEN__
 #include <boost/asio.hpp>
 namespace nbdl::app {
   using io_context = boost::asio::io_context;

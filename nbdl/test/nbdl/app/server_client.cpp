@@ -4,7 +4,7 @@
 // (See accompanying file LICENSE_1_0.txt or copy at // http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#if EMSCRIPTEN
+#if __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
 
@@ -29,15 +29,15 @@ using namespace std::literals;
 
 namespace
 {
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   void force_exit(int code) {
     EM_ASM({ process.exit($0) }, code);
   }
-#else // NOT EMSCRIPTEN
+#else // NOT __EMSCRIPTEN__
   void force_exit(int code) {
     std::exit(code);
   }
-#endif // NOT EMSCRIPTEN
+#endif // NOT __EMSCRIPTEN__
 
   auto get_data_model = [] {
     using namespace nbdl_def;
@@ -149,7 +149,7 @@ int main()
 
   io.run();
 
-#if EMSCRIPTEN
+#if __EMSCRIPTEN__
   emscripten_exit_with_live_runtime();
 #endif
 }

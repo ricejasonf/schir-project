@@ -94,7 +94,7 @@ function(nbdl_add_dom_test name_)
   add_dependencies(${name} tool.dom_test)
   get_target_property(link_flags_ ${name} LINK_FLAGS)
   set_target_properties(${name} PROPERTIES LINK_FLAGS
-    "${link_flags} -lembind -s ASSERTIONS=1 -s ENVIRONMENT=node "
+    "${link_flags} -lembind -s ASSERTIONS=1 -s ENVIRONMENT=web,node "
   )
   add_test(
     NAME ${name}
