@@ -45,7 +45,8 @@ using fav_games = std::unordered_map<std::string, std::string>;
   (define-store 'message ()
     (variant (store 'message_1)
              (store 'message_2)
-             (store 'message_3)))
+             (store 'message_3)
+             (store 'message_4)))
 
   (context 'message_context (arg)
     (member: '.body 'my::message (init-args: arg)))
@@ -85,15 +86,9 @@ using fav_games = std::unordered_map<std::string, std::string>;
       ('my::message_2 => insert-fav-game)
       ('my::message_3 => erase-fav-game)
       ('my::message_4 => receive-message-4))
-#| /* FIXME This creates the cartesian product of assignments
-    *       on every pair of alternatives.
-    *       Implement apply-action to assign directly to the variant object
-    *       without visitation.
     (visit 'nbdl::assign
            (get context '.last_message)
            message)
-    */
-|#
     (fn (get context '.last_message)))
 }
 }  // namespace my
@@ -119,18 +114,15 @@ TEST_CASE("Apply messages", "[spec][visit]") {
   my::apply_message(context, my::message_1(5), nbdl::noop);
   CHECK(context.sum == 12);
 
-#if 0
-  // FIXME apply-action to assign directly to variant object
-  // FIXME Proxy relational operators in aliases.
-  // CHECK(context.last_message == my::message_1(5));
+  static_assert(nbdl::StoreAlias<decltype(context.last_message)>);
   int LastMessageValue = 0;
-  nbdl::match(context.last_message, [&](auto&& msg) {
+  nbdl::match(context.last_message, nbdl::variant_value,
+    [&](auto&& msg) {
       if constexpr(nbdl::SameAs<my::message_1, decltype(msg)>) {
         LastMessageValue = msg.value;
       }
     });
-  CHECK(LastMessageValue == 5);  
-#endif
+  CHECK(LastMessageValue == 5);
   CHECK(context.message_4_count == 0);
   my::apply_message(context, my::message_4{}, nbdl::noop);
   CHECK(context.message_4_count == 1);

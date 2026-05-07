@@ -13,6 +13,7 @@
 #include <nbdl/variant.hpp>
 #include <boost/hana/functional/overload.hpp>
 #include <boost/mp11/algorithm.hpp>
+#include <concepts>
 #include <variant>
 
 namespace nbdl {
@@ -33,6 +34,13 @@ public:
   using value_type = detail::variant<Tn ...>;
   // .value has the properties of the sum type.
   value_type value;
+
+  template <typename T>
+  void operator=(this auto&& self, T&& t)
+    requires SameAsAny<T, Tn...>
+  {
+    std::forward<decltype(self)>(self).value = std::forward<T>(t);
+  }
 };
 
 template<>
