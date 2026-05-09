@@ -15,6 +15,10 @@
 #include <clang/Sema/Sema.h>
 #include <utility>
 
+#include "LexerWriter.h"
+#include "ClangUtil.h"
+#include "TemplateProbe.h"
+
 schir::ContextLocal SCHIR_CLANG_VAR(diag_error);
 schir::ContextLocal SCHIR_CLANG_VAR(diag_warning);
 schir::ContextLocal SCHIR_CLANG_VAR(diag_note);
@@ -25,221 +29,14 @@ schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
 schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 
 namespace {
+using schir_clang::DiagReport;
+using schir_clang::LexerWriter;
+using schir_clang::ParseExpression;
+using schir_clang::RunTemplateProbe;
+using schir_clang::getSourceLocation;
 using Pair = std::pair<clang::Parser*, std::unique_ptr<schir::SchirScheme>>;
 
 static auto Instance = Pair();
-
-// Convert to a clang::SourceLocation or an invalid location if it
-// is not external.
-clang::SourceLocation getSourceLocation(schir::FullSourceLocation Loc) {
-  if (!Loc.isExternal()) return clang::SourceLocation();
-  return clang::SourceLocation
-    ::getFromRawEncoding(Loc.getExternalRawEncoding())
-     .getLocWithOffset(Loc.getOffset());
-}
-
-template <clang::DiagnosticsEngine::Level Level>
-struct DiagReport {
-  void operator()(schir::SchirScheme& HS,
-                  schir::SourceLocation Loc,
-                  clang::DiagnosticsEngine& Diags,
-                  llvm::StringRef ErrMsg) const {
-    schir::FullSourceLocation FullLoc = HS.getFullSourceLocation(Loc);
-    this->operator()(HS, FullLoc, Diags, ErrMsg);
-  }
-
-  void operator()(schir::SchirScheme& HS,
-                  schir::FullSourceLocation HSLoc,
-                  clang::DiagnosticsEngine& Diags,
-                  llvm::StringRef ErrMsg) const {
-    // Create a custom DiagId once for our instance.
-    static schir::ContextLocal CustomDiagId;
-    schir::Context& Context = HS.getContext();
-    schir::Binding* DiagIdBinding = CustomDiagId.getBinding(Context);
-    if (schir::isa<schir::Undefined>(DiagIdBinding->getValue())) {
-      unsigned Id = Diags.getCustomDiagID(Level, "(schir_scheme) %0");
-      DiagIdBinding->setValue(schir::Int(static_cast<int32_t>(Id)));
-    }
-    unsigned DiagId = static_cast<unsigned>(
-        schir::cast<schir::Int>(DiagIdBinding->getValue()));
-    clang::SourceLocation Loc = getSourceLocation(HSLoc);
-    Diags.Report(Loc, DiagId) << ErrMsg;
-  }
-};
-
-// It is complicated to keep the TokenBuffer alive
-// for the Preprocessor, so we use an array to give
-// ownership via the EnterTokenStream overload.
-class LexerWriter {
-  using Token = clang::Token;
-  clang::Parser& Parser;
-  llvm::BumpPtrAllocator& LexerSpellings;
-  std::unique_ptr<Token[]> TokenBuffer;
-  unsigned Capacity = 0;
-  unsigned Size = 0;
-
-  void realloc(unsigned NewCapacity) {
-    std::unique_ptr<Token[]> NewTokenBuffer(new Token[NewCapacity]());
-    if (Capacity > 0)
-      std::copy(&TokenBuffer[0], &TokenBuffer[Size],
-                NewTokenBuffer.get());
-    TokenBuffer = std::move(NewTokenBuffer);
-    Capacity = NewCapacity;
-  }
-
-  void push_back(Token Tok) {
-    unsigned NewSize = Size + 1;
-    if (Capacity < NewSize) {
-      // Start with a reasonable 128 bytes and then
-      // double capacity each time it is needed.
-      unsigned NewCapacity = Capacity > 0 ? Capacity * 2 : 128;
-      realloc(NewCapacity);
-    }
-    TokenBuffer[Size] = Tok;
-    Size = NewSize;
-  }
-
-public:
-  LexerWriter(clang::Parser& P,
-              llvm::BumpPtrAllocator& LexerSpellings)
-    : Parser(P),
-      LexerSpellings(LexerSpellings),
-      TokenBuffer(nullptr)
-  { }
-
-  ~LexerWriter() {
-    Capacity = 0;
-    Size = 0;
-  }
-
-  // Lex tokens from string and push to TokenBuffer.
-  // Copy to a std::string to guarantee a null terminator.
-  void Tokenize(clang::SourceLocation Loc, llvm::StringRef Chars) {
-    if (Chars.empty()) return;
-    // Copy to LexerSpellings to ensure null terminator.
-    Chars = Chars.copy(LexerSpellings);
-    char* NullTerm = LexerSpellings.template Allocate<char>(1);
-    *NullTerm = 0;
-    // Lex Tokens for the TokenBuffer.
-    clang::Lexer Lexer(clang::SourceLocation(), Parser.getLangOpts(),
-            Chars.data(), Chars.data(), &(*(Chars.end())));
-    while (true) {
-      Token Tok;
-      Lexer.LexFromRawLexer(Tok);
-
-      // Raw identifiers need to be looked up.
-      if (Tok.is(clang::tok::raw_identifier))
-        Parser.getPreprocessor().LookUpIdentifierInfo(Tok);
-
-      Tok.setLocation(Loc);
-
-      if (Tok.is(clang::tok::eof)) break;
-      push_back(Tok);
-    }
-  }
-
-#if 0 // TODO REMOVE if not used
-  // Clear without flushing.
-  void ClearTokens() {
-    TokenBuffer.reset();
-    Capacity = 0;
-    Size = 0;
-  }
-#endif
-
-  // This must be called AFTER we update the Clang Lexer position.
-  void FlushTokens() {
-    if (Size == 0) return;
-    Parser.getPreprocessor().EnterTokenStream(std::move(TokenBuffer), Size,
-                    /*DisableMacroExpansion=*/true,
-                    /*IsReinject=*/true);
-    Capacity = 0;
-    Size = 0;
-  }
-};
-
-template <typename Fn>
-auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
-                 schir::SourceLocation Loc,
-                 llvm::StringRef Source,
-                 Fn&& Thunk) {
-  // Prepare to revert Parser. This is needed when there is a parse
-  // error in eval_expr and it will clean up by parsing to the next
-  // semicolon or whatever unless we are in tentative parsing mode.
-  clang::Parser::RevertingTentativeParsingAction ParseReverter(P);
-
-  // Lex and expand.
-  LexerWriter TheLexerWriter(P, *HS.LexerSpellings);
-  TheLexerWriter.Tokenize(getSourceLocation(HS.getFullSourceLocation(Loc)),
-                          Source);
-  TheLexerWriter.FlushTokens();
-  P.ConsumeAnyToken();
-
-  return Thunk();
-}
-
-clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
-                                  schir::SourceLocation Loc,
-                                  llvm::StringRef Source) {
-  return ParseSource(P, HS, Loc, Source, [&] {
-    // Parse the expression.
-    return P.ParseExpression();
-  });
-}
-
-// Upon evaluating FullExpr, create a scheme linked list of lists
-// of the names of argument types deduced by instantiating the
-// call operator of a function object determined by Typename.
-// TODO Determine if this will possibly include previous instantiations.
-void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
-                      schir::Context& C,
-                      schir::SourceLocation Loc,
-                      llvm::StringRef TemplateName,
-                      llvm::StringRef Expr) {
-  clang::SourceLocation CLoc = getSourceLocation(HS.getFullSourceLocation(Loc));
-  clang::TemplateDecl*
-  TemplateDecl = ParseSource(P, HS, Loc, TemplateName,
-    [&] -> clang::TemplateDecl* {
-      clang::Sema& S = P.getActions();
-      clang::CXXScopeSpec SS;
-      clang::UnqualifiedId UnqualifiedId;
-      P.ParseOptionalCXXScopeSpecifier(SS,
-          /*ObjectType=*/nullptr, /*ObjectHasErrors=*/false,
-          /*EnteringContext=*/false, /*IsAddressOf=*/false);
-      P.ParseUnqualifiedId(SS,
-          /*ObjectType=*/nullptr, /*ObjectHasErrors=*/false,
-          /*EnteringContext=*/false,
-          /*AllowConstructorName=*/false,
-          /*AllowDesctuctorName=*/false,
-          /*AllowDeductionGuide=*/false,
-          /*TemplateKWLoc=*/nullptr,
-          UnqualifiedId);
-
-      if (UnqualifiedId.getKind() != clang::UnqualifiedIdKind::IK_Identifier)
-        return nullptr;
-      clang::DeclarationName DeclName(UnqualifiedId.Identifier);
-      clang::LookupResult LR(S, DeclName, CLoc,
-                             clang::Sema::LookupOrdinaryName);
-      S.LookupParsedName(LR, S.getCurScope(), &SS, clang::QualType());
-      return LR.getAsSingle<clang::TemplateDecl>();
-    });
-
-  if (!TemplateDecl)
-    return C.RaiseError("expecting template name for probe");
-
-  TemplateDecl->dump();
-
-  //clang::ExprResult TNResult = P.ParseTemplateTemplateArgument();
-  //TNResult.get()->dump();
-
-  // TODO
-  // Prepare to record all the instantiations of Template
-  // via template inst callback or whatever.
-
-  //ParseExpression(P, HS, Loc, Expr);
-
-  // TODO Remove template inst callback or whatever.
-}
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
