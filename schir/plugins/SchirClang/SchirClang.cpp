@@ -11,6 +11,8 @@
 #include <clang/Lex/Pragma.h>
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Parse/Parser.h>
+#include <clang/Sema/Lookup.h>
+#include <clang/Sema/Sema.h>
 #include <utility>
 
 schir::ContextLocal SCHIR_CLANG_VAR(diag_error);
@@ -20,6 +22,7 @@ schir::ContextLocal SCHIR_CLANG_VAR(hello_world);
 schir::ContextLocal SCHIR_CLANG_VAR(write_lexer);
 schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
 schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
+schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 
 namespace {
 using Pair = std::pair<clang::Parser*, std::unique_ptr<schir::SchirScheme>>;
@@ -135,6 +138,15 @@ public:
     }
   }
 
+#if 0 // TODO REMOVE if not used
+  // Clear without flushing.
+  void ClearTokens() {
+    TokenBuffer.reset();
+    Capacity = 0;
+    Size = 0;
+  }
+#endif
+
   // This must be called AFTER we update the Clang Lexer position.
   void FlushTokens() {
     if (Size == 0) return;
@@ -145,6 +157,89 @@ public:
     Size = 0;
   }
 };
+
+template <typename Fn>
+auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
+                 schir::SourceLocation Loc,
+                 llvm::StringRef Source,
+                 Fn&& Thunk) {
+  // Prepare to revert Parser. This is needed when there is a parse
+  // error in eval_expr and it will clean up by parsing to the next
+  // semicolon or whatever unless we are in tentative parsing mode.
+  clang::Parser::RevertingTentativeParsingAction ParseReverter(P);
+
+  // Lex and expand.
+  LexerWriter TheLexerWriter(P, *HS.LexerSpellings);
+  TheLexerWriter.Tokenize(getSourceLocation(HS.getFullSourceLocation(Loc)),
+                          Source);
+  TheLexerWriter.FlushTokens();
+  P.ConsumeAnyToken();
+
+  return Thunk();
+}
+
+clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
+                                  schir::SourceLocation Loc,
+                                  llvm::StringRef Source) {
+  return ParseSource(P, HS, Loc, Source, [&] {
+    // Parse the expression.
+    return P.ParseExpression();
+  });
+}
+
+// Upon evaluating FullExpr, create a scheme linked list of lists
+// of the names of argument types deduced by instantiating the
+// call operator of a function object determined by Typename.
+// TODO Determine if this will possibly include previous instantiations.
+void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
+                      schir::Context& C,
+                      schir::SourceLocation Loc,
+                      llvm::StringRef TemplateName,
+                      llvm::StringRef Expr) {
+  clang::SourceLocation CLoc = getSourceLocation(HS.getFullSourceLocation(Loc));
+  clang::TemplateDecl*
+  TemplateDecl = ParseSource(P, HS, Loc, TemplateName,
+    [&] -> clang::TemplateDecl* {
+      clang::Sema& S = P.getActions();
+      clang::CXXScopeSpec SS;
+      clang::UnqualifiedId UnqualifiedId;
+      P.ParseOptionalCXXScopeSpecifier(SS,
+          /*ObjectType=*/nullptr, /*ObjectHasErrors=*/false,
+          /*EnteringContext=*/false, /*IsAddressOf=*/false);
+      P.ParseUnqualifiedId(SS,
+          /*ObjectType=*/nullptr, /*ObjectHasErrors=*/false,
+          /*EnteringContext=*/false,
+          /*AllowConstructorName=*/false,
+          /*AllowDesctuctorName=*/false,
+          /*AllowDeductionGuide=*/false,
+          /*TemplateKWLoc=*/nullptr,
+          UnqualifiedId);
+
+      if (UnqualifiedId.getKind() != clang::UnqualifiedIdKind::IK_Identifier)
+        return nullptr;
+      clang::DeclarationName DeclName(UnqualifiedId.Identifier);
+      clang::LookupResult LR(S, DeclName, CLoc,
+                             clang::Sema::LookupOrdinaryName);
+      S.LookupParsedName(LR, S.getCurScope(), &SS, clang::QualType());
+      return LR.getAsSingle<clang::TemplateDecl>();
+    });
+
+  if (!TemplateDecl)
+    return C.RaiseError("expecting template name for probe");
+
+  TemplateDecl->dump();
+
+  //clang::ExprResult TNResult = P.ParseTemplateTemplateArgument();
+  //TNResult.get()->dump();
+
+  // TODO
+  // Prepare to record all the instantiations of Template
+  // via template inst callback or whatever.
+
+  //ParseExpression(P, HS, Loc, Expr);
+
+  // TODO Remove template inst callback or whatever.
+}
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
@@ -217,22 +312,7 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      // FIXME Check to see if we ever need this TentativeParsingAction.
-      // Prepare to revert Parser.
-      //clang::Parser::TempExposedTentativeParsingAction ParseReverter(P);
-
-      // Lex and expand.
-      LexerWriter TheLexerWriter(P, *HS.LexerSpellings);
-      TheLexerWriter.Tokenize(getSourceLocation(HS.getFullSourceLocation(Loc)),
-                              Source);
-      TheLexerWriter.FlushTokens();
-      P.ConsumeAnyToken();
-
-      // Parse the expression.
-      clang::ExprResult ExprResult = P.ParseExpression();
-
-      // Revert the lexer position so we don't keep moving forward.
-      //ParseReverter.Revert();
+      clang::ExprResult ExprResult = ParseExpression(P, HS, Loc, Source);
 
       // Process the parsing result if any.
       if (ExprResult.isInvalid()) {
@@ -289,6 +369,7 @@ public:
         case APValue::MemberPointer:
         case APValue::AddrLabelDiff:
           // Do nothing.
+          EvalResult.Val.dump();
         break;
       }
 
@@ -297,6 +378,27 @@ public:
       } else {
         C.RaiseError("unsupported result type");
       }
+    };
+
+    // (template-probe loc "my::foo"
+    //  """
+    //    nbdl::match(std::declval<SomeType>(), [](auto const& arg) {
+    //      my::foo<std::remove_cvref_t<decltype(arg)>>{};
+    //    });
+    //  """)
+    auto template_probe = [&](schir::Context& C, schir::ValueRefs Args) {
+      if (Args.size() != 3)
+        return C.RaiseError("invalid arity");
+      schir::SourceLocation Loc = Args[0].getSourceLocation();
+      llvm::StringRef TemplateName = Args[1].getStringRef();
+      llvm::StringRef Expr = Args[2].getStringRef();
+      if (TemplateName.empty())
+        C.RaiseError("expecting non empty string-like", Args[1]);
+      if (Expr.empty())
+        C.RaiseError("expecting non empty string-like", Args[2]);
+      RunTemplateProbe(P, HS, C, Loc, TemplateName, Expr);
+      // TODO continue with a list of the type names.
+      C.Cont();
     };
 
     // This is a special system specific function so we can
@@ -318,10 +420,10 @@ public:
         return C.RaiseError(ErrMsg, schir::Value(RequestedFilename));
       }
       // Determine if file is a system file... as if!
-      clang::SrcMgr::CharacteristicKind FileChar = 
+      clang::SrcMgr::CharacteristicKind FileChar =
         PP.getHeaderSearchInfo()
           .getFileDirFlavor(*File);
-      clang::FileID FileId = 
+      clang::FileID FileId =
         PP.getSourceManager().createFileID(*File, ClangLoc, FileChar);
       clang::SourceLocation StartLoc =
         PP.getSourceManager().getLocForStartOfFile(FileId);
@@ -350,6 +452,8 @@ public:
                                      Context.CreateLambda(hello_world));
     SCHIR_CLANG_VAR(expr_eval).set(Context,
                                     Context.CreateLambda(expr_eval));
+    SCHIR_CLANG_VAR(template_probe).set(Context,
+                                    Context.CreateLambda(template_probe));
     SchirScheme->RegisterModule(SCHIR_CLANG_LIB_STR, SCHIR_CLANG_LOAD_MODULE);
   }
 
@@ -389,7 +493,7 @@ public:
 
     LexerWriter TheLexerWriter(P, *SchirScheme->LexerSpellings);
     schir::Context& Context = SchirScheme->getContext();
-    SCHIR_CLANG_VAR(write_lexer).set(Context, 
+    SCHIR_CLANG_VAR(write_lexer).set(Context,
         Context.CreateLambda([&](schir::Context& C,
                                  schir::ValueRefs Args) mutable {
       schir::SourceLocation Loc;
