@@ -64,6 +64,7 @@ class SchirScheme {
   std::unique_ptr<llvm::BumpPtrAllocator> LexerSpellings;
 
   SchirScheme(std::unique_ptr<schir::Context>);
+  SchirScheme(SchirScheme const&) = delete;
   SchirScheme();
   ~SchirScheme();
 
@@ -79,14 +80,14 @@ class SchirScheme {
                                    char const* BufferStart,
                                    char const* BufferEnd,
                                    char const* BufferPos);
-  schir::Value ParseSourceFile(schir::Lexer Lexer);
-  schir::Value ParseSourceFile(schir::SourceLocation Loc,
-                               llvm::StringRef Filename);
-  schir::Value ParseSourceFile(uintptr_t ExternalRawLoc,
-                               llvm::StringRef Name,
-                               char const* BufferStart,
-                               char const* BufferEnd,
-                               char const* BufferPos);
+  void ParseSourceFile(schir::Lexer Lexer);
+  void ParseSourceFile(schir::SourceLocation Loc,
+                       llvm::StringRef Filename);
+  void ParseSourceFile(uintptr_t ExternalRawLoc,
+                       llvm::StringRef Name,
+                       char const* BufferStart,
+                       char const* BufferEnd,
+                       char const* BufferPos);
   void InitSourceFileStorage();
   void SetIncludePaths(schir::Value IncludePaths);
 

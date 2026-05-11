@@ -32,11 +32,7 @@ void SchirScheme::InitSourceFileStorage() {
                                    [this](schir::Context& C,
                                           schir::SourceLocation Loc,
                                           schir::String* Filename) {
-    schir::Value Result = this->ParseSourceFile(Loc, Filename->getView());
-    // The parser already raised an error.
-    if (llvm::isa<schir::Undefined>(Result))
-      return;
-    C.Cont(Result);
+    this->ParseSourceFile(Loc, Filename->getView());
   });
 }
 
@@ -86,14 +82,14 @@ static std::string SearchIncludePath(schir::Context& C,
 // This overload provides the default file system
 // access for opening source files.
 // The user must call InitSourceFileStorage.
-schir::Value SchirScheme::ParseSourceFile(schir::SourceLocation Loc,
-                                          llvm::StringRef Filename) {
+void SchirScheme::ParseSourceFile(schir::SourceLocation Loc,
+                                  llvm::StringRef Filename) {
   assert(SourceFileStoragePtr &&
       "source file storage not initialized");
 
   std::string FullPath = SearchIncludePath(getContext(), Filename);
   if (FullPath.empty())
-    return Undefined();
+    return;
 
   std::string ErrorMessage;
   llvm::ErrorOr<schir::SourceFile>
@@ -102,10 +98,10 @@ schir::Value SchirScheme::ParseSourceFile(schir::SourceLocation Loc,
   if (!FileResult) {
     schir::Context& C = getContext();
     C.RaiseError(ErrorMessage);
-    return Undefined();
+    return;
   }
   schir::Lexer Lexer(FileResult.get());
-  return ParseSourceFile(Lexer);
+  ParseSourceFile(Lexer);
 }
 
 llvm::ErrorOr<schir::SourceFile>

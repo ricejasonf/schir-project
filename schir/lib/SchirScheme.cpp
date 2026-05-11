@@ -135,25 +135,25 @@ SchirScheme::getFullSourceLocation(schir::SourceLocation Loc) {
   return getSourceManager().getFullSourceLocation(Loc);
 }
 
-schir::Value SchirScheme::ParseSourceFile(uintptr_t ExternalRawLoc,
-                                          llvm::StringRef Name,
-                                          char const* BufferStart,
-                                          char const* BufferEnd,
-                                          char const* BufferPos) {
+void SchirScheme::ParseSourceFile(uintptr_t ExternalRawLoc,
+                                  llvm::StringRef Name,
+                                  char const* BufferStart,
+                                  char const* BufferEnd,
+                                  char const* BufferPos) {
   schir::Lexer Lexer = createEmbeddedLexer(ExternalRawLoc, Name,
                                            BufferStart, BufferEnd,
                                            BufferPos);
-  return ParseSourceFile(Lexer);
+  ParseSourceFile(Lexer);
 }
 
-schir::Value SchirScheme::ParseSourceFile(schir::Lexer Lexer) {
-  schir::Parser Parser(Lexer, getContext());
+void SchirScheme::ParseSourceFile(schir::Lexer Lexer) {
+  schir::Context& C = getContext();
+  schir::Parser Parser(Lexer, C);
   schir::ValueResult Result = Parser.Parse();
-  if (Parser.HasError()) {
+  if (Parser.HasError())
     Parser.RaiseError();
-    return Undefined();
-  }
-  return Result.get();
+  else
+    C.Cont(Result.get());
 }
 
 // IncludePaths should be a proper or improper list of strings.

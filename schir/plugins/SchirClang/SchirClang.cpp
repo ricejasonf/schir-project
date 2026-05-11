@@ -227,11 +227,11 @@ public:
         return C.RaiseError("error opening file buffer",
                             schir::Value(RequestedFilename));
       // Is it over yet?
-      C.Cont(HS.ParseSourceFile(StartLoc.getRawEncoding(),
-                                File->getName(),
-                                Buffer->getBufferStart(),
-                                Buffer->getBufferEnd(),
-                                Buffer->getBufferStart()));
+      HS.ParseSourceFile(StartLoc.getRawEncoding(),
+                         File->getName(),
+                         Buffer->getBufferStart(),
+                         Buffer->getBufferEnd(),
+                         Buffer->getBufferStart());
     };
 
     schir::Context& Context = SchirScheme->getContext();
