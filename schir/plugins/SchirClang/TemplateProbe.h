@@ -10,12 +10,12 @@
 namespace schir_clang {
 
 class TemplateProbeCallback : public clang::TemplateInstantiationCallback {
-  clang::TemplateDecl* TemplateDecl;
+  clang::TypeAliasTemplateDecl* TemplateDecl;
   schir::Context& Context;
   schir::Binding* Binding;
 
 public:
-  TemplateProbeCallback(clang::TemplateDecl* TD,
+  TemplateProbeCallback(clang::TypeAliasTemplateDecl* TD,
                         schir::Context& C, schir::Binding* B)
     : TemplateDecl(TD),
       Context(C),
@@ -37,8 +37,8 @@ public:
 
   void atTemplateEnd(clang::Sema const& Sema,
           clang::Sema::CodeSynthesisContext const& CS) override {
-    //if (CS.Kind = clang::Sema::CodeSynthesisContext::TemplateInstantiation &&
-    if (CS.Kind == CS.TemplateInstantiation && CS.Template == TemplateDecl)
+    if (CS.Kind == CS.TypeAliasTemplateInstantiation &&
+        CS.Entity == TemplateDecl)
       ProcessTemplateArgs(CS);
   }
 
@@ -46,22 +46,32 @@ public:
     // Get the template arguments and convert them to scheme values.
     // C++ Types and other qualified names are converted to symbols.
     llvm::SmallVector<schir::Value, 8> Values;
-    for (clang::TemplateArgument const& TA : CS.template_arguments()) {
+    schir::Context& C = Context; // Avoid Clang ICE.
+    auto VisitTA = [&](this auto&& Self,
+                       clang::TemplateArgument const& TA) -> void {
       switch (TA.getKind()) {
       case clang::TemplateArgument::Type: {
           // Convert the type into a string of a fully qualified name.
           std::string TypeStr = TypeToString(TA.getAsType());
-          schir::Value Str = Context.CreateString(TypeStr);
+          schir::Value Str = C.CreateSymbol(TypeStr);
           Values.push_back(Str);
           break;
         }
+      case clang::TemplateArgument::Pack: {
+          for (clang::TemplateArgument const& TA_ : TA.pack_elements())
+            Self(TA_);
+          break;
+        }
       default: {
+          TA.dump();
           // Unsupported.
           Values.push_back(schir::Undefined());
           break;
         }
       }
-    }
+    };
+    for (clang::TemplateArgument const& TA : CS.template_arguments())
+      VisitTA(TA);
 
     schir::Value Result = Context.CreateList(Values);
     schir::Value NewB = Context.CreatePair(Result, Binding->getValue());
@@ -69,19 +79,20 @@ public:
   }
 };
 
-// Upon evaluating FullExpr, create a scheme linked list of lists
-// of the names of argument types deduced by instantiating the
-// call operator of a function object determined by Typename.
-// TODO Determine if this will possibly include previous instantiations.
+// Upon parsing Expr, create a scheme linked list of lists
+// of c++ type template arguments of the instantiations of a
+// type alias template identified by TemplateName. This will only include
+// template instantiations that occur during the parsing of Expr.
+// (Note that this will not include previously memoized instantiations.)
 void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
                       schir::Context& C,
                       schir::SourceLocation Loc,
                       llvm::StringRef TemplateName,
                       llvm::StringRef Expr) {
   clang::SourceLocation CLoc = getSourceLocation(HS.getFullSourceLocation(Loc));
-  clang::TemplateDecl*
+  clang::TypeAliasTemplateDecl*
   TemplateDecl = ParseSource(P, HS, Loc, TemplateName,
-    [&] -> clang::TemplateDecl* {
+    [&] -> clang::TypeAliasTemplateDecl* {
       clang::Sema& S = P.getActions();
       clang::CXXScopeSpec SS;
       clang::UnqualifiedId UnqualifiedId;
@@ -103,21 +114,34 @@ void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
       clang::LookupResult LR(S, DeclName, CLoc,
                              clang::Sema::LookupOrdinaryName);
       S.LookupParsedName(LR, S.getCurScope(), &SS, clang::QualType());
-      return LR.getAsSingle<clang::TemplateDecl>();
+      return LR.getAsSingle<clang::TypeAliasTemplateDecl>();
     });
 
   if (!TemplateDecl)
-    return C.RaiseError("expecting template name for probe");
+    return C.RaiseError("expecting type alias template name for probe");
 
-  TemplateDecl->dump();
-
-  // TODO
   // Prepare to record all the instantiations of Template
-  // via template inst callback or whatever.
+  // via template inst callback or whatever. The result
+  // is a scheme list of lists saved to the scheme binding.
+  clang::Sema& Sema = P.getActions();
+  schir::Binding* B = C.CreateBinding(schir::Empty());
+  // Track the pointer to compare when removing the callback
+  // from the vector.
+  auto* CB_ptr = new TemplateProbeCallback(TemplateDecl, C, B);
+  auto CB =
+    std::unique_ptr<clang::TemplateInstantiationCallback>(
+        CB_ptr);
+  Sema.TemplateInstCallbacks.push_back(std::move(CB));
 
-  //ParseExpression(P, HS, Loc, Expr);
+  ParseExpression(P, HS, Loc, Expr);
 
-  // TODO Remove template inst callback or whatever.
+  // Remove template inst callback.
+  llvm::erase_if(Sema.TemplateInstCallbacks,
+    [CB_ptr](auto const& CB) {
+      return CB.get() == CB_ptr;
+    });
+
+  C.Cont(B->getValue());
 }
 
 } // namespace schir_clang

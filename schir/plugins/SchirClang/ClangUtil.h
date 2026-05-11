@@ -80,7 +80,12 @@ clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
 }
 
 std::string TypeToString(clang::QualType QT) {
-  return "TODO";
+  clang::LangOptions LO;
+  clang::PrintingPolicy PP(LO);
+  PP.PrintAsCanonical = true;
+  PP.SuppressUnwrittenScope = true;
+  PP.SuppressTagKeyword = true;
+  return QT.getAsString(PP);
 }
 } // namespace schir_clang
 #endif // SCHIRCLANG_CLANGUTIL_H

@@ -166,7 +166,6 @@ public:
         case APValue::MemberPointer:
         case APValue::AddrLabelDiff:
           // Do nothing.
-          EvalResult.Val.dump();
         break;
       }
 
@@ -190,12 +189,10 @@ public:
       llvm::StringRef TemplateName = Args[1].getStringRef();
       llvm::StringRef Expr = Args[2].getStringRef();
       if (TemplateName.empty())
-        C.RaiseError("expecting non empty string-like", Args[1]);
+        return C.RaiseError("expecting non empty string-like", Args[1]);
       if (Expr.empty())
-        C.RaiseError("expecting non empty string-like", Args[2]);
+        return C.RaiseError("expecting non empty string-like", Args[2]);
       RunTemplateProbe(P, HS, C, Loc, TemplateName, Expr);
-      // TODO continue with a list of the type names.
-      C.Cont();
     };
 
     // This is a special system specific function so we can
