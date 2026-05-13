@@ -1,6 +1,23 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %S/Inputs -fsyntax-only -fplugin=SchirClang.so -Xclang -verify %s
 // expected-no-diagnostics
 
+// Copied mostly from libc++ implementation of declval
+// The two overloads makes __decval dependent and thus decval dependent
+// where the body would not be instantiated in an unevaluated context.
+template <class _Tp>
+_Tp&& __declval(int);
+template <class _Tp>
+_Tp __declval(long);
+
+template <class _Tp>
+decltype(__declval<_Tp>(0)) declval();
+#if 0
+{
+  static_assert(!__is_same(_Tp, _Tp), "unevaluated context required")
+}
+#endif
+
+
 template <typename T>
 struct remove_const;
 
@@ -19,8 +36,12 @@ struct check { };
 namespace my {
   struct foo { };
 }
-template <typename ...>
-using probe = int;
+
+template <int>
+struct probe {
+  template <typename ...>
+  using apply = int;
+};
 
 template <template<typename...> typename probe, typename ...Ts>
 struct make_probes {
@@ -68,9 +89,15 @@ static check<int, float, char, my::foo,
 (define result
  (template-probe
    'RAW_LOC
-   "probe"
-   "make_probes<probe, int, float, char, my::foo,
-                remove_const_t<foo const>>()")) ; Still in scheme land.
+   "probe<0>::apply"
+   "
+    [](auto&& ...arg) {
+      make_probes<probe<0>::apply, decltype(arg)...,
+                  float, char, my::foo,
+                  remove_const_t<foo const>>();
+    }(declval<int>());
+   "
+   ))
 (write-lexer "using CheckResults = ")
 (write-check result)
 (write-lexer ";")
@@ -84,8 +111,8 @@ int main() {
   check<
     check<>,
     check<long>,
-    check<char, int, float, char, my::foo, my_2::foo>,
-    check<int, float, char, my::foo,
+    check<char, int&&, float, char, my::foo, my_2::foo>,
+    check<int&&, float, char, my::foo,
                  my_2::foo>
   > TheCheck = my_2::CheckResults();
 }

@@ -37,7 +37,8 @@ public:
 
   void atTemplateEnd(clang::Sema const& Sema,
           clang::Sema::CodeSynthesisContext const& CS) override {
-    if (CS.Kind == CS.TypeAliasTemplateInstantiation &&
+    if (!Sema.CurContext->isDependentContext() &&
+        CS.Kind == CS.TypeAliasTemplateInstantiation &&
         CS.Entity == TemplateDecl)
       ProcessTemplateArgs(CS);
   }

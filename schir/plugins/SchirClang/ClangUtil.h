@@ -8,6 +8,7 @@
 #include <clang/Lex/Pragma.h>
 #include <clang/Lex/Preprocessor.h>
 #include <clang/Parse/Parser.h>
+#include <clang/Sema/EnterExpressionEvaluationContext.h>
 #include <clang/Sema/Lookup.h>
 #include <clang/Sema/Sema.h>
 
@@ -73,9 +74,23 @@ auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
 clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
                                   schir::SourceLocation Loc,
                                   llvm::StringRef Source) {
+  // We typically need to have an evaluated context to
+  // instantiate dependent lambdas and such.
+  clang::EnterExpressionEvaluationContext EvalCtx(
+      P.getActions(), clang::Sema::ExpressionEvaluationContext::ConstantEvaluated);
   return ParseSource(P, HS, Loc, Source, [&] {
     // Parse the expression.
     return P.ParseExpression();
+  });
+}
+
+// FIXME Weird error assuming missing > to match nonexistant < (I guess.)
+clang::TypeResult ParseTypeName(clang::Parser& P, schir::SchirScheme& HS,
+                                schir::SourceLocation Loc,
+                                llvm::StringRef Source) {
+  return ParseSource(P, HS, Loc, Source, [&] {
+    // Parse the expression.
+    return P.ParseTypeName();
   });
 }
 
