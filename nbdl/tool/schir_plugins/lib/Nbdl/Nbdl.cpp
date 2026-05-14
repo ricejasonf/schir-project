@@ -81,11 +81,14 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
 
   // Create the function type.
   llvm::SmallVector<mlir::Type, 8> InputTypes;
-  for (unsigned i = 0; i < static_cast<uint32_t>(NumParams); i++)
-    InputTypes.push_back(Builder.getType<nbdl_spec::StoreType>());
+  for (unsigned i = 0; i < static_cast<uint32_t>(NumParams); i++) {
+    mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext(), {});
+    InputTypes.push_back(StoreT);
+  }
 
   // Push the visitor fn argument.
-  InputTypes.push_back(Builder.getType<nbdl_spec::StoreType>());
+  mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext(), {});
+  InputTypes.push_back(StoreT);
 
   mlir::FunctionType FT = Builder.getFunctionType(InputTypes,
                                                   /*ResultTypes*/{});
@@ -203,5 +206,34 @@ void nbdl_spec_module_init(schir::Context& C, schir::ValueRefs) {
     = mlir::ModuleOp::create(Builder, Loc, "nbdl_spec_module");
   nbdl_current_module.set(C, ModuleOp.getOperation());
   C.Cont();
+}
+
+void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::Value V = any_cast<mlir::Value>(Args.front());
+  if (!V)
+    return C.RaiseError("expecting a mlir value");
+
+  auto T = dyn_cast<nbdl_spec::StoreType>(V.getType());
+  C.Cont(schir::Bool(false));
+}
+
+// Take an arbitrary set of string-like arguments that represent
+// C++ typenames to create a !nbdl.store<typenames...>.
+void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
+  mlir::MLIRContext* Ctx = C.MLIRContext.get();
+  llvm::SmallVector<mlir::StringAttr, 8> TypeNames;
+  for (schir::Value Arg : Args) {
+    llvm::StringRef Str = Arg.getStringRef();
+    if (Str.empty())
+      return C.RaiseError("expecting a nonempty string-like");
+    auto StringAttr = mlir::StringAttr::get(Ctx, Str);
+    TypeNames.push_back(StringAttr);
+  }
+
+  mlir::Type StoreT = nbdl_spec::StoreType::get(Ctx, TypeNames);
+  schir::Value Result = C.CreateAny<mlir::Type>(StoreT);
+  C.Cont(Result);
 }
 } //  extern "C"

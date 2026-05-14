@@ -63,12 +63,15 @@ def Nbdl_Opaque : TypeDef<Nbdl_Dialect, "Opaque", []> {
 def Nbdl_Store : TypeDef<Nbdl_Dialect, "Store", []> {
   let mnemonic = "store";
   let description = [{
-    An Object of store type represents a member of our state graph.
-    Since a store object can exist as an inactive alternative
-    of a variant, it is not necessarily have an immediate
-    construction.  Hence, we require it to be semiregular.
-    (FIXME or just default constructible?)
+    An object of store type represents a member of our state graph
+    potentially having multiple runtime alternatives listed as
+    C++ typenames. If the list of alternatives is empty, then the
+    set of alternatives is considered to be unknown.
   }];
+
+  // Array of strings that are each a c++ typename.
+  let parameters = (ins OptionalArrayRefParameter<"mlir::StringAttr">:$alts);
+  let assemblyFormat = "(`<` $alts^ `>`)?";
 }
 
 def Nbdl_Tag : TypeDef<Nbdl_Dialect, "Tag", []> {

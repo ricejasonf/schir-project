@@ -7,9 +7,11 @@
 
 #include <nbdl/concept/extras.hpp>
 #include <nbdl/match.hpp>
+#include <nbdl/spec.hpp>
 #include <nbdl/tags.hpp>
 #include <nbdl/variant_holder.hpp>
 #include <boost/hana/functional/overload.hpp>
+#include <boost/hana/type.hpp> // TEMP
 #include <catch.hpp>
 #include <string>
 #include <utility>
@@ -82,6 +84,20 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
     (define my-var-index
       (get store '.my_var '|nbdl::variant_index_t{}|))
     (fn my-var-index))
+
+  ; // match variant index (match root store type)
+  (match-params-fn 'match_8 (store fn)
+    (define (get-my-var-index store)
+      (define my-var-index
+        (get store '.my_var '|nbdl::variant_index_t{}|))
+      (fn my-var-index))
+    (match store
+      ('foo::context => get-my-var-index)))
+  ;(dump-op 'match_5)
+  (dump (reflect-match
+    'HERE
+    "foo::my_variant"
+    "nbdl::variant_value_t"))
 }
 }  // namespace foo
 }  // namespace

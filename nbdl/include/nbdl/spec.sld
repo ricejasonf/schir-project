@@ -19,6 +19,10 @@
       (load-builtin "nbdl_spec_close_previous_scope"))
     (define module-init
       (load-builtin "nbdl_spec_module_init"))
+    (define get-store-alts
+      (load-builtin "nbdl_spec_get_store_alts"))
+    (define !nbdl.store 
+      (load-builtin "nbdl_spec_create_store_type"))
 
     ;; Initialize the mlir module.
     (module-init)
@@ -27,7 +31,6 @@
     (load-dialect "schir")
     (load-dialect "nbdl")
 
-    (define !nbdl.store (type "!nbdl.store"))
     ; FIXME change to "!nbdl.variant" once its in the compiler.
     (define !nbdl.variant (type "!nbdl.store")) ;"!nbdl.variant"))
     (define !nbdl.tag (type "!nbdl.tag"))
@@ -35,6 +38,39 @@
     (define !nbdl.empty (type "!nbdl.empty"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define i32 (type "i32"))
+
+    (define %probe-id 0)
+    (define (make-probe-name)
+      (set! %probe-id (+ 1 %probe-id))
+      (string-append
+        "nbdl::detail::probe<"
+        (number->string %probe-id)
+        ">::apply"))
+
+    ; Return a list of c++ types representing the
+    ; alternatives of a store when calling match
+    ; with a key. Use '() for the "unit" key.
+    (define (reflect-match Loc StoreTypename KeyTypename)
+      ;(define StoreTypename "int")
+      (define ProbeName (make-probe-name))
+      (define KeyArgClause
+        (if (null? KeyTypename)
+          ""
+          (string-append "nbdl::detail::declval<" KeyTypename ">(), ")))
+      (define FullExpr
+        (string-append
+          "nbdl::match(nbdl::detail::declval<" StoreTypename ">(), "
+          KeyArgClause
+          "[](auto&& ... args) -> void { (void)"
+          ProbeName "<std::remove_cvref_t<decltype(args)>...>(); })"))
+      (define Result
+        (template-probe
+          Loc
+          ProbeName
+          FullExpr))
+      ; Unnest the alternatives.
+      (apply append Result)
+      )
 
     ;; Create a thunk that should receive a location and callback
     ;; to resolve a value once its dependencies are resolved.
@@ -104,7 +140,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("value" Arg))
-          (result-types: !nbdl.store))))
+          (result-types: (!nbdl.store)))))
 
     (define (build-constexpr Loc ExprStr)
       (when (member-name-expr? ExprStr)
@@ -114,7 +150,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("expr" (string-attr ExprStr)))
-          (result-types: !nbdl.store))))
+          (result-types: (!nbdl.store)))))
 
     ; Build a key for store-compose.
     (define (build-store-key Loc Key)
@@ -162,7 +198,7 @@
                              '((syntax-source-loc InitArgs) ...)
                              (list InitArgs ...)))
              (attributes: ("name" (flat-symbolref-attr Typename)))
-             (result-types: !nbdl.store)
+             (result-types: (!nbdl.store))
              )))))
 
     (define-syntax store-compose
@@ -175,7 +211,7 @@
                  (loc: KeyLoc)
                  (operands: (build-store-key KeyLoc Key) Store ParentStore)
                  (attributes:)
-                 (result-types: !nbdl.store)
+                 (result-types: (!nbdl.store))
                  )))))))
 
     ; FIXME Use a StoreSpec instead if inserting directly. (See `store`.)
@@ -203,7 +239,7 @@
                     (operands:)
                     (attributes: ("sym_name" (string-attr Name)))
                     (result-types:)
-                    (region: "body" ((InitParams : !nbdl.store) ...)
+                    (region: "body" ((InitParams : (!nbdl.store)) ...)
                       (define Parent (build-unit))
                       (define (ProcessBody BodyEl)
                         (set! Parent
@@ -363,9 +399,25 @@
             (operands:)
             (attributes: ("type" (string-attr "")))
             (result-types:)
-            (region: "body" ((ResolvedStore : !nbdl.store))
+            (region: "body" ((ResolvedStore : (!nbdl.store)))
               (Fn ResolvedStore)
               )))))
+
+    ;; Detect if match is the identity operation for a store
+    ;; so we can not generate a match operation for it.
+    ;; It is a single known type with no match_impl.
+    (define (%match-is-identity? Loc Store)
+      (define StoreAlts (get-store-alts Store))
+      (cond
+        ((and (pair? StoreAlts) (null? (cdr StoreAlts)))
+          (let ()
+            (define StoreT (car StoreAlts))
+            (define Expr
+              (string-append "nbdl::Store<" StoreT ">"))
+            (define Storex
+              (expr-eval Loc Expr))
+            (not Storex)))
+        (else #f)))
 
     (define (member-name-expr? PathNode)
       (and (symbol? PathNode)
@@ -403,7 +455,7 @@
           (loc: Loc)
           (operands: Store KeyVal)
           (attributes:)
-          (result-types: !nbdl.store)))
+          (result-types: (!nbdl.store))))
       (result Op))
 
     (define (build-resolve-params Loc FnVal ParamVals)
@@ -456,7 +508,7 @@
             (loc: (syntax-source-loc FnStore))
             (operands: FnStore Store1 StoreN ...)
             (attributes:)
-            (result-types: !nbdl.store)))))
+            (result-types: (!nbdl.store))))))
 
     (define matching-results? #f)
 
@@ -485,7 +537,7 @@
     (define (build-visit MatchingResults? Loc Results)
       (define ResultType
         (if MatchingResults?
-          !nbdl.store
+          (!nbdl.store)
           !nbdl.unit))
       (define VisitResult
         (result
@@ -558,6 +610,10 @@
           (lambda (Store)
             (%top-level
               (lambda()
+                (define (GetArgType T)
+                  (if (eq? T "")
+                    (!nbdl.store)
+                    (!nbdl.store T)))
                 (close-previous-scope)
                 (create-op "nbdl.match"
                   (loc: (syntax-source-loc PathSpec))
@@ -565,12 +621,13 @@
                   (attributes:)
                   (result-types:)
                   (region: "overloads" ()
+                    ; TODO Replace nbdl.overload with region arg.
                     (create-op "nbdl.overload"
                       (loc: (syntax-source-loc TypeN))
                       (operands:)
                       (attributes: ("type" (string-attr TypeN)))
                       (result-types:)
-                      (region: "body" ((OverloadArg : !nbdl.store))
+                      (region: "body" ((OverloadArg : (GetArgType TypeN)))
                         (FnN OverloadArg))) ...)))))))))
 
     ;; Match a resolved object by its type.
@@ -720,5 +777,6 @@
     quasiquote
     source-loc
     dump
+    reflect-match
     )
 )  ; end of (nbdl spec)
