@@ -18,6 +18,7 @@
 
 namespace {
 namespace foo {
+class context;
 
 // Note that nbdl::unresolved is like the monostate type.
 using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
@@ -87,17 +88,12 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 
   ; // match variant index (match root store type)
   (match-params-fn 'match_8 (store fn)
-    (define (get-my-var-index store)
-      (define my-var-index
-        (get store '.my_var '|nbdl::variant_index_t{}|))
-      (fn my-var-index))
     (match store
-      ('foo::context => get-my-var-index)))
-  ;(dump-op 'match_5)
-  (dump (reflect-match
-    'HERE
-    "foo::my_variant"
-    "nbdl::variant_value_t"))
+     ('foo::context =>
+      (lambda (store)
+        (define my-var-index
+          (get store '.my_var '|nbdl::variant_index_t{}|))
+        (fn my-var-index)))))
 }
 }  // namespace foo
 }  // namespace

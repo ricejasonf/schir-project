@@ -26,6 +26,7 @@ schir::ContextLocal SCHIR_CLANG_VAR(hello_world);
 schir::ContextLocal SCHIR_CLANG_VAR(write_lexer);
 schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
 schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
+schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
 schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 
 namespace {
@@ -176,6 +177,37 @@ public:
       }
     };
 
+    auto expr_type = [&](schir::Context& C, schir::ValueRefs Args) {
+      if (Args.size() != 1)
+        return C.RaiseError("invalid arity");
+
+      schir::Value Arg = Args.front();
+      llvm::StringRef ExprStr = Arg.getStringRef();
+      if (ExprStr.empty())
+        return C.RaiseError("expecting nonempty string-like", Arg);
+
+      schir::SourceLocation Loc = Arg.getSourceLocation();
+      if (!Loc.isValid())
+        Loc = C.getLoc();
+
+      clang::ExprResult ExprResult = ParseExpression(P, HS, Loc, ExprStr);
+      // Process the parsing result if any.
+      if (ExprResult.isInvalid())
+        return C.RaiseError("clang expression parsing failed");
+      clang::Expr* Expr = ExprResult.get();
+
+      if (Expr->isValueDependent())
+        return C.RaiseError("expression has dependent type");
+
+      clang::QualType QT = Expr->getType();
+      if (QT.isNull())
+        return C.RaiseError("clang expression type failed");
+
+      std::string ResultStr = schir_clang::TypeToString(QT);
+      schir::Value Result = C.CreateSymbol(ResultStr);
+      C.Cont(Result);
+    };
+
     // (template-probe loc "my::foo"
     //  """
     //    nbdl::match(std::declval<SomeType>(), [](auto const& arg) {
@@ -246,6 +278,8 @@ public:
                                      Context.CreateLambda(hello_world));
     SCHIR_CLANG_VAR(expr_eval).set(Context,
                                     Context.CreateLambda(expr_eval));
+    SCHIR_CLANG_VAR(expr_type).set(Context,
+                                    Context.CreateLambda(expr_type));
     SCHIR_CLANG_VAR(template_probe).set(Context,
                                     Context.CreateLambda(template_probe));
     SchirScheme->RegisterModule(SCHIR_CLANG_LIB_STR, SCHIR_CLANG_LOAD_MODULE);

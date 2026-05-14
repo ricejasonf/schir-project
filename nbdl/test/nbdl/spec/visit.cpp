@@ -17,6 +17,11 @@
 
 namespace {
 namespace my {
+class message_1;
+class message_2;
+class message_3;
+struct message_4;
+class message_5;
 
 using fav_games = std::unordered_map<std::string, std::string>;
 

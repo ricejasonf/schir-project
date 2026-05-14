@@ -172,25 +172,13 @@ def Nbdl_MatchOp : Nbdl_Op<"match", [Terminator, NoTerminator]> {
   let arguments = (ins Nbdl_Type:$store,
                        Nbdl_Key:$key);
   let results = (outs);
-  let regions = (region SizedRegion<1>:$overloads);
+  let regions = (region VariadicRegion<SizedRegion<1>>:$overloads);
   let extraClassDeclaration = [{
     bool hasUnitKey() {
       return !getKey() ||
         ::llvm::isa<::nbdl_spec::UnitType>(getKey().getType());
     }
   }];
-}
-
-def Nbdl_OverloadOp : Nbdl_Op<"overload", []> {
-  let description = [{
-    Visit the body when the input matches a specific typename
-    not including any qualifiers or when the type is an empty string.
-    If the body is not empty, it takes an argument that is the matched
-    object. An empty body is a noop.
-  }];
-  let arguments = (ins StrAttr:$type);
-  let results = (outs);
-  let regions = (region AnyRegion:$body);
 }
 
 def Nbdl_NoOp : Nbdl_Op<"noop", [Terminator]> {

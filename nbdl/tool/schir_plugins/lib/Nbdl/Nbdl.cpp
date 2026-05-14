@@ -208,17 +208,6 @@ void nbdl_spec_module_init(schir::Context& C, schir::ValueRefs) {
   C.Cont();
 }
 
-void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 1)
-    return C.RaiseError("invalid arity");
-  mlir::Value V = any_cast<mlir::Value>(Args.front());
-  if (!V)
-    return C.RaiseError("expecting a mlir value");
-
-  auto T = dyn_cast<nbdl_spec::StoreType>(V.getType());
-  C.Cont(schir::Bool(false));
-}
-
 // Take an arbitrary set of string-like arguments that represent
 // C++ typenames to create a !nbdl.store<typenames...>.
 void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
@@ -235,5 +224,35 @@ void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   mlir::Type StoreT = nbdl_spec::StoreType::get(Ctx, TypeNames);
   schir::Value Result = C.CreateAny<mlir::Type>(StoreT);
   C.Cont(Result);
+}
+
+// Get the !nbdl.store typenames as a list of symbols
+// or #f if the list is empty or mlir.value is not a !nbdl.store.
+// We also accept '() since it is often used as a placeholder for the
+// unit type.
+void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  schir::Value Arg = Args.front();
+
+  if (isa<schir::Empty>(Arg))
+    return C.Cont(schir::Bool(false));
+
+  mlir::Value V = schir::any_cast<mlir::Value>(Arg);
+  if (!V)
+    return C.RaiseError("expecting mlir.value or '()", Arg);
+
+  nbdl_spec::StoreType ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
+  if (!ST)
+    return C.Cont(schir::Bool(false));
+
+  llvm::SmallVector<schir::Value, 8> Results;
+  for (mlir::StringAttr SA : ST.getAlts())
+    Results.push_back(C.CreateSymbol(llvm::StringRef(SA)));
+
+  if (Results.empty())
+    return C.Cont(schir::Bool(false));
+
+  C.Cont(C.CreateList(Results));
 }
 } //  extern "C"

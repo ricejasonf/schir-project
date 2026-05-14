@@ -350,7 +350,6 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     auto LocScope = MakeLocRAII(Op->getLoc());
 
          if (isa<MatchOp>(Op))        return Visit(cast<MatchOp>(Op));
-    else if (isa<OverloadOp>(Op))     return Visit(cast<OverloadOp>(Op));
     else if (isa<MemberNameOp>(Op))   return Visit(cast<MemberNameOp>(Op));
     else if (isa<GetOp>(Op))          return Visit(cast<GetOp>(Op));
     else if (isa<DiscardOp>(Op))      return Visit(cast<DiscardOp>(Op));
@@ -500,14 +499,14 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     }
     OS << ", ";
 
-    auto& Ops = Op.getOverloads().front().getOperations();
-    if (Ops.size() == 1) {
-      Visit(const_cast<mlir::Operation*>(&Ops.front()));
+    mlir::RegionRange Overloads = Op.getOverloads();
+    if (Overloads.size() == 1) {
+      VisitOverload(*Overloads.front());
     } else {
       OS << "boost::hana::overload(";
-      llvm::interleave(Ops, OS,
-          [&](mlir::Operation const& OverloadOp) {
-            Visit(const_cast<mlir::Operation*>(&OverloadOp));
+      llvm::interleave(Overloads, OS,
+          [&](mlir::Region* Overload) {
+            VisitOverload(*Overload);
           }, ",\n");
       OS << ")";
     }
@@ -515,15 +514,19 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ");\n";
   }
 
-  void Visit(OverloadOp Op) {
-    mlir::Region& Body = Op.getBody();
+  void VisitOverload(mlir::Region& Body) {
     if (Body.empty())
       return;
-    llvm::StringRef TypeStr = Op.getType();
+
+    mlir::BlockArgument& Arg = Body.getArguments().front();
+    auto ST = dyn_cast<nbdl_spec::StoreType>(Arg.getType());
+    llvm::StringRef TypeStr;
+    if (ST.getAlts().size() == 1)
+      TypeStr = llvm::StringRef(ST.getAlts().front());
+
     OS << "[&]";
     // Write parameters.
     OS << "([[maybe_unused]] ";
-    mlir::BlockArgument& Arg = Body.getArguments().front();
     if (!TypeStr.empty())
       OS << "::nbdl::SameAs<" << TypeStr << "> ";
     OS << "auto&& "

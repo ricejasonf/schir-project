@@ -91,9 +91,11 @@
         ((symbol? Arg)
           (build-constexpr Loc Arg))
         ((number? Arg)
-          (build-literal Loc (attr (number->string Arg) i32)))
+          (build-literal Loc (attr (number->string Arg) i32)
+                         (!nbdl.store "int32_t")))
         ((string? Arg)
-          (build-literal Loc (string-attr Arg)))
+          (build-literal Loc (string-attr Arg)
+                         (!nbdl.store "std::string_view")))
         (else Arg)))
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
@@ -134,15 +136,17 @@
           (attributes:)
           (result-types: !nbdl.unit))))
 
-    (define (build-literal Loc Arg)
+    (define (build-literal Loc Arg StoreT)
       (result
         (create-op "nbdl.literal"
           (loc: Loc)
           (operands:)
           (attributes: ("value" Arg))
-          (result-types: (!nbdl.store)))))
+          (result-types: StoreT))))
 
     (define (build-constexpr Loc ExprStr)
+      (define StoreT
+        (!nbdl.store (expr->type ExprStr)))
       (when (member-name-expr? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
@@ -150,7 +154,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("expr" (string-attr ExprStr)))
-          (result-types: (!nbdl.store)))))
+          (result-types: StoreT))))
 
     ; Build a key for store-compose.
     (define (build-store-key Loc Key)
@@ -382,27 +386,6 @@
             (else (error "expecting proper list"))))
         (%match-path-node CurStore Loc PathNode NextFn)))
 
-    ;; Simply apply the unit-key to a mlir.value Store.
-    (define (%match-unit Loc Store Fn)
-      (%match-key Loc Store '() Fn))
-
-    ;; We have mlir.values for both Store and Key
-    (define (%match-key Loc Store Key Fn)
-      (create-op "nbdl.match"
-        (loc: Loc)
-        (operands: Store Key)
-        (attributes:)
-        (result-types:)
-        (region: "overloads" ()
-          (create-op "nbdl.overload"
-            (loc: Loc)
-            (operands:)
-            (attributes: ("type" (string-attr "")))
-            (result-types:)
-            (region: "body" ((ResolvedStore : (!nbdl.store)))
-              (Fn ResolvedStore)
-              )))))
-
     ;; Detect if match is the identity operation for a store
     ;; so we can not generate a match operation for it.
     ;; It is a single known type with no match_impl.
@@ -418,6 +401,35 @@
               (expr-eval Loc Expr))
             (not Storex)))
         (else #f)))
+
+    ;; Match a store with unit-key unless
+    ;; it would be the identity operation.
+    (define (%match-unit Loc Store Fn)
+      (if (%match-is-identity? Loc Store)
+        (Fn Store)
+        (%match-key Loc Store '() Fn)))
+
+    ;; We have mlir.values for both Store and Key
+    (define (%match-key Loc Store Key Fn)
+      ; "Alt" here means a c++ type written as symbol.
+      (define (ReflectAlts StoreAlt)
+        (lambda (KeyAlt)
+          (reflect-match Loc StoreAlt KeyAlt)))
+      (define StoreAlts (get-store-alts Store))
+      (define KeyAlts (get-store-alts Key))
+      (define MatchedAlts
+        (if (and StoreAlts KeyAlts)
+          (apply append (map (map ReflectAlts StoreAlts) KeyAlts))
+          '()))
+      (define StoreT
+        (apply !nbdl.store MatchedAlts))
+      (create-op "nbdl.match"
+        (loc: Loc)
+        (operands: Store Key)
+        (attributes:)
+        (result-types:)
+        (region: "overloads" ((ResolvedStore : StoreT))
+          (Fn ResolvedStore))))
 
     (define (member-name-expr? PathNode)
       (and (symbol? PathNode)
@@ -620,15 +632,8 @@
                   (operands: Store)
                   (attributes:)
                   (result-types:)
-                  (region: "overloads" ()
-                    ; TODO Replace nbdl.overload with region arg.
-                    (create-op "nbdl.overload"
-                      (loc: (syntax-source-loc TypeN))
-                      (operands:)
-                      (attributes: ("type" (string-attr TypeN)))
-                      (result-types:)
-                      (region: "body" ((OverloadArg : (GetArgType TypeN)))
-                        (FnN OverloadArg))) ...)))))))))
+                  (region: "overloads" ((OverloadArg : (GetArgType TypeN)))
+                    (FnN OverloadArg)) ...))))))))
 
     ;; Match a resolved object by its type.
     ;; - It is an error if a type appears more that once as an alternative.

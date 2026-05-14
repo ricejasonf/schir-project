@@ -94,7 +94,12 @@ clang::TypeResult ParseTypeName(clang::Parser& P, schir::SchirScheme& HS,
   });
 }
 
+// Print the canonical type with cvref qualifiers stripped.
+// Note that anonymous namespace information is also lost.
 std::string TypeToString(clang::QualType QT) {
+  QT = QT.getCanonicalType()
+         .getNonReferenceType()
+         .getUnqualifiedType();
   clang::LangOptions LO;
   clang::PrintingPolicy PP(LO);
   PP.PrintAsCanonical = true;

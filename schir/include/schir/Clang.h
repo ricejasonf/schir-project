@@ -51,6 +51,9 @@ extern schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
 // expr-eval
 extern schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
 
+// expr->type
+extern schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
+
 // template-probe
 extern schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 
@@ -71,6 +74,8 @@ inline void SCHIR_CLANG_INIT(schir::Context& Context) {
       "external module must be preloaded");
   assert(SCHIR_CLANG_VAR(expr_eval).get(Context) &&
       "external module must be preloaded");
+  assert(SCHIR_CLANG_VAR(expr_type).get(Context) &&
+      "external module must be preloaded");
   assert(SCHIR_CLANG_VAR(template_probe).get(Context) &&
       "external module must be preloaded");
 }
@@ -87,6 +92,7 @@ inline void SCHIR_CLANG_LOAD_MODULE(schir::Context& Context) {
     {"write-lexer", SCHIR_CLANG_VAR(write_lexer).get(Context)},
     {"lexer-writer",SCHIR_CLANG_VAR(lexer_writer).get(Context)},
     {"expr-eval",   SCHIR_CLANG_VAR(expr_eval).get(Context)},
+    {"expr->type",   SCHIR_CLANG_VAR(expr_type).get(Context)},
     {"template-probe",   SCHIR_CLANG_VAR(template_probe).get(Context)}
   });
 }

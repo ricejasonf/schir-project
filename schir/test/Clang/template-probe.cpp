@@ -93,7 +93,7 @@ static check<int, float, char, my::foo,
    "
     [](auto&& ...arg) {
       make_probes<probe<0>::apply, decltype(arg)...,
-                  float, char, my::foo,
+                  float, char, my::foo const&,
                   remove_const_t<foo const>>();
     }(declval<int>());
    "
@@ -107,12 +107,11 @@ static check<int, float, char, my::foo,
 } // namespace
 
 int main() {
-  // Expect a viable conversion (ie copy assignment of same type).
+  // Expect cvref qualifiers to be stripped.
   check<
     check<>,
     check<long>,
-    check<char, int&&, float, char, my::foo, my_2::foo>,
-    check<int&&, float, char, my::foo,
-                 my_2::foo>
+    check<char, int, float, char, my::foo, my_2::foo>,
+    check<int, float, char, my::foo, my_2::foo>
   > TheCheck = my_2::CheckResults();
 }
