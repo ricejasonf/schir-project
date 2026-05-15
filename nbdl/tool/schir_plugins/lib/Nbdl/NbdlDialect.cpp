@@ -38,6 +38,18 @@ void nbdl_spec::NbdlDialect::initialize() {
 }
 #pragma clang diagnostic pop
 
+nbdl_spec::StoreType
+nbdl_spec::StoreType::get(mlir::MLIRContext* Ctx,
+                          llvm::ArrayRef<mlir::StringAttr> StrAttrsRef) {
+  llvm::SmallVector<mlir::StringAttr, 8> StrAttrs(StrAttrsRef);
+  // Sort and unique the inputs lexicographically.
+  llvm::sort(StrAttrs, [](auto const& A, auto const& B) {
+      return llvm::StringRef(A) < llvm::StringRef(B);
+    });
+  StrAttrsRef = llvm::ArrayRef(StrAttrs.begin(), llvm::unique(StrAttrs));
+  return Base::get(Ctx, StrAttrsRef);
+}
+
 void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
                               ::mlir::OperationState& odsState,
                               std::unique_ptr<::mlir::Region>&& body) {

@@ -72,6 +72,14 @@ def Nbdl_Store : TypeDef<Nbdl_Dialect, "Store", []> {
   // Array of strings that are each a c++ typename.
   let parameters = (ins OptionalArrayRefParameter<"mlir::StringAttr">:$alts);
   let assemblyFormat = "(`<` $alts^ `>`)?";
+
+  let skipDefaultBuilders = 1;
+  let builders = [
+    TypeBuilder<(ins "llvm::ArrayRef<mlir::StringAttr>":$Strings)>,
+    TypeBuilder<(ins), [{
+      return Base::get($_ctxt, llvm::ArrayRef<mlir::StringAttr>());
+    }]>
+  ];
 }
 
 def Nbdl_Tag : TypeDef<Nbdl_Dialect, "Tag", []> {

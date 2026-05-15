@@ -82,12 +82,12 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
   // Create the function type.
   llvm::SmallVector<mlir::Type, 8> InputTypes;
   for (unsigned i = 0; i < static_cast<uint32_t>(NumParams); i++) {
-    mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext(), {});
+    mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext());
     InputTypes.push_back(StoreT);
   }
 
   // Push the visitor fn argument.
-  mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext(), {});
+  mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext());
   InputTypes.push_back(StoreT);
 
   mlir::FunctionType FT = Builder.getFunctionType(InputTypes,
