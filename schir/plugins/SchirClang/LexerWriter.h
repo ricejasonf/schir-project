@@ -2,6 +2,16 @@
 #ifndef SCHIRCLANG_LEXER_WRITER_H
 #define SCHIRCLANG_LEXER_WRITER_H
 
+#include <clang/Lex/Preprocessor.h>
+#include <clang/Parse/Parser.h>
+#include <llvm/Support/Allocator.h>
+#include <algorithm>
+#include <memory>
+
+namespace {
+  class SchirSchemePragmaHandler;
+}
+
 namespace schir_clang {
 // It is complicated to keep the TokenBuffer alive
 // for the Preprocessor, so we use an array to give
@@ -74,14 +84,15 @@ public:
     }
   }
 
-#if 0 // TODO REMOVE if not used
-  // Clear without flushing.
-  void ClearTokens() {
-    TokenBuffer.reset();
-    Capacity = 0;
-    Size = 0;
+  void PushResumeToken(clang::SourceLocation Loc,
+                       SchirSchemePragmaHandler* Handler) {
+    clang::Token Tok;
+    Tok.startToken();
+    Tok.setKind(clang::tok::annot_pragma_parse_ext_decl);
+    Tok.setLocation(Loc);
+    Tok.setAnnotationValue(static_cast<void*>(Handler));
+    push_back(Tok);
   }
-#endif
 
   // This must be called AFTER we update the Clang Lexer position.
   void FlushTokens() {

@@ -28,6 +28,13 @@ schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
 schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
 schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
 schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
+schir::ContextLocal SCHIR_CLANG_VAR(flush_tokens);
+
+// Parsed expressions to be evaluated.
+static schir::ContextLocal ExprStack;
+// Escape procedure to resume evaluation after
+// flushing tokens (if needed).
+static schir::ContextLocal ResumeProc;
 
 namespace {
 using schir_clang::DiagReport;
@@ -41,6 +48,8 @@ static auto Instance = Pair();
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
+  bool IsResuming = false;
+
 public:
   SchirSchemePragmaHandler()
     : ParserPragmaHandler("schir_scheme")
@@ -289,27 +298,18 @@ public:
                     clang::Parser& P,
                     clang::Token& Tok,
                     clang::DeclGroupRef&) override {
-    auto& [ParserPtr, SchirScheme] = Instance;
-    // Only supporting one instance.
-    if (ParserPtr == nullptr)
-      CreateInst(P, Instance);
-    else if (&P != ParserPtr)
-      return;
-
-    schir::Lexer SchemeLexer;
-    auto LexerInitFn = [&](clang::SourceLocation Loc,
-                           llvm::StringRef Name,
-                           char const* BufferStart,
-                           char const* BufferEnd,
-                           char const* BufferPtr) {
-      SchemeLexer = SchirScheme->createEmbeddedLexer(
-                          Loc.getRawEncoding(), Name,
-                          BufferStart, BufferEnd, BufferPtr);
-    };
-
     clang::Preprocessor& PP = P.getPreprocessor();
-    PP.InitEmbeddedLexer(LexerInitFn);
+    {
+      auto& [ParserPtr, SchirScheme] = Instance;
+      // Only supporting one instance.
+      if (ParserPtr == nullptr)
+        CreateInst(P, Instance);
+      else if (&P != ParserPtr)
+        return;
+    }
 
+    auto& [_, SchirScheme] = Instance;
+    schir::SchirScheme& HS = *SchirScheme;
     bool HasError = false;
     auto ErrorHandler = [&](llvm::StringRef Err,
                             schir::FullSourceLocation EmbeddedLoc) {
@@ -362,28 +362,64 @@ public:
     auto LWF = schir::LexerWriterFnRef(LexerWriterFn);
     SCHIR_CLANG_VAR(lexer_writer).set(Context, Context.CreateAny(LWF));
 
-    // Do the thing.
-    schir::TokenKind Terminator = schir::tok::r_brace;
-    SchirScheme->ProcessTopLevelCommands(SchemeLexer, schir::builtins::eval,
-                                         ErrorHandler, Terminator);
+    // Create scheme proc to allow the user to
+    // flush tokens and continue evaluation.
+    // Note that we merely break where flush is called
+    // after evaluation is complete.
+    auto FlushTokens = [&](schir::Context& C, schir::ValueRefs) {
+      IsResuming = true;
+      schir::FullSourceLocation HSLoc = HS.getFullSourceLocation(C.getLoc());
+      clang::SourceLocation Loc = getSourceLocation(HSLoc);
+      TheLexerWriter.PushResumeToken(Loc, this);
+      C.CallCC(C.CreateLambda([](schir::Context& C, schir::ValueRefs Args) {
+        ResumeProc.set(C, Args[0]);
+        C.Cont();
+      }));
+    };
+    SCHIR_CLANG_VAR(flush_tokens)
+      .set(Context, Context.CreateLambda(FlushTokens));
 
-    // Return control to C++ Lexer
-    PP.FinishEmbeddedLexer(SchemeLexer.GetByteOffset());
+    // Do the thing or the other thing.
+    if (!IsResuming) {
+      schir::Lexer SchemeLexer;
+      auto LexerInitFn = [&](clang::SourceLocation Loc,
+                             llvm::StringRef Name,
+                             char const* BufferStart,
+                             char const* BufferEnd,
+                             char const* BufferPtr) {
+        SchemeLexer = SchirScheme->createEmbeddedLexer(
+                            Loc.getRawEncoding(), Name,
+                            BufferStart, BufferEnd, BufferPtr);
+      };
+      PP.InitEmbeddedLexer(LexerInitFn);
+      schir::TokenKind Terminator = schir::tok::r_brace;
+      SchirScheme->ParseTopLevelCommands(SchemeLexer, ErrorHandler,
+                                         Terminator);
+      PP.FinishEmbeddedLexer(SchemeLexer.GetByteOffset());
+      // Evaluate the stuff we parsed.
+      SchirScheme->ProcessPendingExprs(schir::builtins::eval, ErrorHandler);
+    } else {
+      IsResuming = false;
+      SchirScheme->Resume(ErrorHandler);
+    }
+    // If we messed with the lexer but do not enter a token
+    // stream we need to reprime the Parser look-ahead.
     if (!HasError)
       TheLexerWriter.FlushTokens();
+
+    P.ConsumeAnyToken();
+
+    // Clear out lambdas that capture stack variables.
+    SCHIR_CLANG_VAR(flush_tokens).set(Context, schir::Undefined());
     SCHIR_CLANG_VAR(lexer_writer).set(Context, schir::Undefined());
     SCHIR_CLANG_VAR(write_lexer).set(Context,
           Context.CreateBuiltin([](schir::Context& C, schir::ValueRefs Args) {
       C.RaiseError("lexer writer is not initialized");
     }));
-
-    // The Lexers position has been changed
-    // so we need to re-prime the look-ahead
-    P.ConsumeAnyToken();
   }
 };
 
 } // namespace
 
 static clang::PragmaHandlerRegistry::Add<SchirSchemePragmaHandler>
-PragmaHandler("schir-scheme", "embed compile-time scheme");
+PragmaHandler("schir_scheme", "embed compile-time scheme");

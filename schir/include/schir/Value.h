@@ -2161,7 +2161,7 @@ public:
     : Current(V)
   { }
 
-  schir::Value operator*() const {
+  schir::Value& operator*() {
     if (auto* P = dyn_cast<schir::Pair>(Current))
       return P->Car;
     else

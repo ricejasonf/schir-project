@@ -78,10 +78,12 @@ clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
   // instantiate dependent lambdas and such.
   clang::EnterExpressionEvaluationContext EvalCtx(
       P.getActions(), clang::Sema::ExpressionEvaluationContext::ConstantEvaluated);
-  return ParseSource(P, HS, Loc, Source, [&] {
+  clang::ExprResult Result =  ParseSource(P, HS, Loc, Source, [&] {
     // Parse the expression.
     return P.ParseExpression();
   });
+  P.ConsumeAnyToken();
+  return Result;
 }
 
 // FIXME Weird error assuming missing > to match nonexistant < (I guess.)

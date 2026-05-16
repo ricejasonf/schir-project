@@ -39,6 +39,7 @@ extern schir::ContextLocal parse_source_file;
 extern schir::ExternFunction compile;
 extern schir::ExternFunction eval;
 extern schir::ExternFunction op_eval;
+extern schir::ExternFunction append;
 }
 
 namespace schir::builtins {

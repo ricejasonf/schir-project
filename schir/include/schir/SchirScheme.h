@@ -94,23 +94,32 @@ class SchirScheme {
   using ErrorHandlerFn = void(llvm::StringRef,
                               schir::FullSourceLocation const&);
 
-  // ProcessTopLevelCommands
-  //              - Reading tokens with the provided lexer, this command parses
-  //                and evaluates a top level scheme command sequence returning
-  //                true if there is an error
-  //                The terminator token is only checked outside of expressions
-  //                (ie a schir::tok::r_paren can terminate without effecting
-  //                 the parsing of lists that are delimited by parens)
-  //              - ExprHandler defaults to `base::eval`
+  // Enable the user to parse up front before processing.
+  void ParseTopLevelCommands(schir::Lexer& Lexer,
+                             llvm::function_ref<ErrorHandlerFn> ErrorHandler,
+                             schir::tok Terminator = schir::tok::eof);
+  // Handle the parsed exprs which are saved in a context global.
+  void ProcessPendingExprs(llvm::function_ref<ValueFnTy> ExprHandler,
+                           llvm::function_ref<ErrorHandlerFn> ErrorHandler);
+  // Parse top level expressions and apply ExprHandler to the results.
+  // The terminator token is only checked outside of expressions
+  // (ie A schir::tok::r_paren can terminate without effecting
+  //     the parsing of lists that are delimited by parens)
   void ProcessTopLevelCommands(schir::Lexer& Lexer,
                                llvm::function_ref<ValueFnTy> ExprHandler,
                                llvm::function_ref<ErrorHandlerFn> ErrorHandler,
                                schir::tok Terminator = schir::tok::eof);
-  // ProcessTopLevelCommands
-  //              - Filename overload requires calling InitSourceFileStorage.
+  // Filename overload requires calling InitSourceFileStorage.
+  // (Implemented in SourceFileStorage.)
   void ProcessTopLevelCommands(llvm::StringRef Filename,
                                llvm::function_ref<ValueFnTy> ExprHandler,
                                llvm::function_ref<ErrorHandlerFn> ErrorHandler);
+
+  // Allow the user to break from evaluation saving the current
+  // continuation to be called when they resume.
+  void Break();
+  // Resume evaluation after break point.
+  bool Resume(llvm::function_ref<ErrorHandlerFn>);
 
   // Registers a module import function
   void RegisterModule(llvm::StringRef MangledName,
