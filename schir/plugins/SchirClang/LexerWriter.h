@@ -78,8 +78,10 @@ public:
         Parser.getPreprocessor().LookUpIdentifierInfo(Tok);
 
       Tok.setLocation(Loc);
+      Tok.setFlag(clang::Token::IsReinjected);
 
       if (Tok.is(clang::tok::eof)) break;
+
       push_back(Tok);
     }
   }
@@ -94,12 +96,24 @@ public:
     push_back(Tok);
   }
 
+  // Terminate token stream for temporary parsing.
+  void PushEod() {
+    assert(Size > 0 && "token buffer should be nonempty");
+    clang::Token EndTok;
+    EndTok.startToken();
+    EndTok.setKind(clang::tok::eod);
+    EndTok.setLocation(TokenBuffer[0].getLocation());
+    push_back(EndTok);
+  }
+
   // This must be called AFTER we update the Clang Lexer position.
   void FlushTokens() {
     if (Size == 0) return;
+
+    // Note we manually mark tokens as reinjected as required.
     Parser.getPreprocessor().EnterTokenStream(std::move(TokenBuffer), Size,
                     /*DisableMacroExpansion=*/true,
-                    /*IsReinject=*/true);
+                    /*IsReinject=*/false);
     Capacity = 0;
     Size = 0;
   }

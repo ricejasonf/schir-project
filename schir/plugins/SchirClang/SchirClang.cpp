@@ -396,18 +396,22 @@ public:
       SchirScheme->ParseTopLevelCommands(SchemeLexer, ErrorHandler,
                                          Terminator);
       PP.FinishEmbeddedLexer(SchemeLexer.GetByteOffset());
+    }
+
+    if (!IsResuming) {
       // Evaluate the stuff we parsed.
       SchirScheme->ProcessPendingExprs(schir::builtins::eval, ErrorHandler);
     } else {
       IsResuming = false;
       SchirScheme->Resume(ErrorHandler);
     }
-    // If we messed with the lexer but do not enter a token
-    // stream we need to reprime the Parser look-ahead.
-    if (!HasError)
-      TheLexerWriter.FlushTokens();
 
-    P.ConsumeAnyToken();
+    if (!HasError) {
+      TheLexerWriter.FlushTokens();
+      assert(P.getCurToken().is(clang::tok::eod) &&
+          "expecting eod of flushed tokens stream or pragma");
+      P.ConsumeToken();
+    }
 
     // Clear out lambdas that capture stack variables.
     SCHIR_CLANG_VAR(flush_tokens).set(Context, schir::Undefined());

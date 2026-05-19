@@ -95,7 +95,7 @@ static check<int, float, char, my::foo,
       make_probes<probe<0>::apply, decltype(arg)...,
                   float, char, my::foo const&,
                   remove_const_t<foo const>>();
-    }(declval<int>());
+    }(declval<int>())
    "
    ))
 (write-lexer "using CheckResults = ")

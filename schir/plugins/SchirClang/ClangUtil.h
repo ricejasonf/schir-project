@@ -59,15 +59,17 @@ auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
   // Prepare to revert Parser. This is needed when there is a parse
   // error in eval_expr and it will clean up by parsing to the next
   // semicolon or whatever unless we are in tentative parsing mode.
-  clang::Parser::RevertingTentativeParsingAction ParseReverter(P);
+  //clang::Parser::RevertingTentativeParsingAction ParseReverter(P);
+  // TODO Remove tentative parse I think
 
   // Lex and expand.
   LexerWriter TheLexerWriter(P, *HS.LexerSpellings);
   TheLexerWriter.Tokenize(getSourceLocation(HS.getFullSourceLocation(Loc)),
                           Source);
+  TheLexerWriter.PushEod();
   TheLexerWriter.FlushTokens();
-  P.ConsumeAnyToken();
 
+  P.ConsumeAnyToken();
   return Thunk();
 }
 
@@ -82,7 +84,6 @@ clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
     // Parse the expression.
     return P.ParseExpression();
   });
-  P.ConsumeAnyToken();
   return Result;
 }
 
