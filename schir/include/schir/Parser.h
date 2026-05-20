@@ -128,7 +128,7 @@ public:
     Terminator = Term;
     switch (Terminator) {
     case tok::r_brace:
-      return TryConsumeToken(tok::l_brace, "expecting {");
+      return TryConsumeToken(tok::l_brace, "expecting {{"); // {
     case tok::r_paren:
       return TryConsumeToken(tok::l_paren, "expecting (");
     case tok::r_square:

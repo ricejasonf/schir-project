@@ -18,6 +18,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include <concepts>
 #include <memory>
 
 namespace schir {
@@ -46,7 +47,6 @@ class SchirScheme {
                   void(*)(SourceFileStorage*)> SourceFileStoragePtr;
 
   schir::SourceManager& getSourceManager() {
-    assert(SourceManagerPtr && "SchirScheme must be initialized");
     return *SourceManagerPtr;
   }
 
@@ -58,11 +58,6 @@ class SchirScheme {
   }
 
   public:
-
-  // LexerSpellings is used for holding the generated
-  // code for the clang::Lexer spellings.
-  std::unique_ptr<llvm::BumpPtrAllocator> LexerSpellings;
-
   SchirScheme(std::unique_ptr<schir::Context>);
   SchirScheme(SchirScheme const&) = delete;
   SchirScheme();
@@ -80,6 +75,13 @@ class SchirScheme {
                                    char const* BufferStart,
                                    char const* BufferEnd,
                                    char const* BufferPos);
+
+  using UserErrorHandlerFn = void(llvm::StringRef,
+                                  schir::FullSourceLocation const&);
+  std::function<UserErrorHandlerFn> UserErrorHandler;
+  void RegisterErrorHandler(std::function<UserErrorHandlerFn> Fn);
+  void RegisterErrorHandler(Lambda*);
+
   void ParseSourceFile(schir::Lexer Lexer);
   void ParseSourceFile(schir::SourceLocation Loc,
                        llvm::StringRef Filename);
@@ -91,35 +93,28 @@ class SchirScheme {
   void InitSourceFileStorage();
   void SetIncludePaths(schir::Value IncludePaths);
 
-  using ErrorHandlerFn = void(llvm::StringRef,
-                              schir::FullSourceLocation const&);
-
   // Enable the user to parse up front before processing.
   void ParseTopLevelCommands(schir::Lexer& Lexer,
-                             llvm::function_ref<ErrorHandlerFn> ErrorHandler,
                              schir::tok Terminator = schir::tok::eof);
   // Handle the parsed exprs which are saved in a context global.
-  void ProcessPendingExprs(llvm::function_ref<ValueFnTy> ExprHandler,
-                           llvm::function_ref<ErrorHandlerFn> ErrorHandler);
+  void ProcessPendingExprs(llvm::function_ref<ValueFnTy> ExprHandler);
   // Parse top level expressions and apply ExprHandler to the results.
   // The terminator token is only checked outside of expressions
   // (ie A schir::tok::r_paren can terminate without effecting
   //     the parsing of lists that are delimited by parens)
   void ProcessTopLevelCommands(schir::Lexer& Lexer,
                                llvm::function_ref<ValueFnTy> ExprHandler,
-                               llvm::function_ref<ErrorHandlerFn> ErrorHandler,
                                schir::tok Terminator = schir::tok::eof);
   // Filename overload requires calling InitSourceFileStorage.
   // (Implemented in SourceFileStorage.)
   void ProcessTopLevelCommands(llvm::StringRef Filename,
-                               llvm::function_ref<ValueFnTy> ExprHandler,
-                               llvm::function_ref<ErrorHandlerFn> ErrorHandler);
+                               llvm::function_ref<ValueFnTy> ExprHandler);
 
   // Allow the user to break from evaluation saving the current
   // continuation to be called when they resume.
   void Break();
   // Resume evaluation after break point.
-  bool Resume(llvm::function_ref<ErrorHandlerFn>);
+  bool Resume();
 
   // Registers a module import function
   void RegisterModule(llvm::StringRef MangledName,

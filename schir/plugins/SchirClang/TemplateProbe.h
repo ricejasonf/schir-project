@@ -86,13 +86,14 @@ public:
 // template instantiations that occur during the parsing of Expr.
 // (Note that this will not include previously memoized instantiations.)
 void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
+                      llvm::BumpPtrAllocator& LexerSpellings,
                       schir::Context& C,
                       schir::SourceLocation Loc,
                       llvm::StringRef TemplateName,
                       llvm::StringRef Expr) {
   clang::SourceLocation CLoc = getSourceLocation(HS.getFullSourceLocation(Loc));
   clang::TypeAliasTemplateDecl*
-  TemplateDecl = ParseSource(P, HS, Loc, TemplateName,
+  TemplateDecl = ParseSource(P, HS, LexerSpellings, Loc, TemplateName,
     [&] -> clang::TypeAliasTemplateDecl* {
       clang::Sema& S = P.getActions();
       clang::CXXScopeSpec SS;
@@ -134,7 +135,7 @@ void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
         CB_ptr);
   Sema.TemplateInstCallbacks.push_back(std::move(CB));
 
-  ParseExpression(P, HS, Loc, Expr);
+  ParseExpression(P, HS, LexerSpellings, Loc, Expr);
 
   // Remove template inst callback.
   llvm::erase_if(Sema.TemplateInstCallbacks,

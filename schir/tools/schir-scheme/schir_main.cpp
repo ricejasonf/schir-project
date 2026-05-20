@@ -128,11 +128,11 @@ int main(int argc, char const** argv) {
       llvm::errs() << "error: " << Err << "\n\n";
     }
   };
+  SchirScheme.RegisterErrorHandler(OnError);
 
   // Run the top level expressions in the file.
   SchirScheme.ProcessTopLevelCommands(InputFilename,
-                                      ProcessTopLevelExpr,
-                                      OnError);
+                                      ProcessTopLevelExpr);
 
   if (InputMode.getValue() == ExecutionMode::mlir) {
     SchirScheme.getContext().verifyModule();

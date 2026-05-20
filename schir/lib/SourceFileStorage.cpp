@@ -37,24 +37,24 @@ void SchirScheme::InitSourceFileStorage() {
 }
 
 void SchirScheme::ProcessTopLevelCommands(llvm::StringRef Filename,
-                          llvm::function_ref<ValueFnTy> ExprHandler,
-                          llvm::function_ref<ErrorHandlerFn> ErrorHandler) {
+                          llvm::function_ref<ValueFnTy> ExprHandler) {
   schir::SourceManager& SM = getSourceManager();
-  if (!SourceFileStoragePtr) {
-    ErrorHandler("source file storage not initialized",
-                 SM.getFullSourceLocation({}));
-    return;
-  }
   std::string ErrorMessage;
   llvm::ErrorOr<schir::SourceFile>
     FileResult = SourceFileStoragePtr->Open(SM, schir::SourceLocation(),
                                             Filename, ErrorMessage);
-  if (!FileResult) {
-    ErrorHandler(ErrorMessage, SM.getFullSourceLocation({}));
-    return;
+  schir::SourceFile SourceFile;
+  if (FileResult) {
+    SourceFile = FileResult.get();
+  } else if (!FileResult) {
+    ErrorMessage = std::string("(import (schir builtins)) (error \"") +
+                   ErrorMessage + "\")";
+    SourceFile= SM.createEntry(ErrorMessage, "error-script");
+    ExprHandler = schir::builtins::eval;
   }
-  schir::Lexer Lexer(FileResult.get());
-  ProcessTopLevelCommands(Lexer, ExprHandler, ErrorHandler, tok::eof);
+
+  schir::Lexer Lexer(SourceFile);
+  ProcessTopLevelCommands(Lexer, ExprHandler, tok::eof);
 }
 
 // Indicate an error was raised by returning an empty string.

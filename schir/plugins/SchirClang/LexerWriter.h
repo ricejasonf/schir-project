@@ -58,6 +58,8 @@ public:
     Size = 0;
   }
 
+  bool empty() const { return Size == 0; }
+
   // Lex tokens from string and push to TokenBuffer.
   // Copy to a std::string to guarantee a null terminator.
   void Tokenize(clang::SourceLocation Loc, llvm::StringRef Chars) {
@@ -94,6 +96,7 @@ public:
     Tok.setLocation(Loc);
     Tok.setAnnotationValue(static_cast<void*>(Handler));
     push_back(Tok);
+    PushEod();
   }
 
   // Terminate token stream for temporary parsing.

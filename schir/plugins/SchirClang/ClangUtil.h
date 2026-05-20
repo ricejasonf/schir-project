@@ -53,6 +53,7 @@ struct DiagReport {
 
 template <typename Fn>
 auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
+                 llvm::BumpPtrAllocator& LexerSpellings,
                  schir::SourceLocation Loc,
                  llvm::StringRef Source,
                  Fn&& Thunk) {
@@ -63,7 +64,7 @@ auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
   // TODO Remove tentative parse I think
 
   // Lex and expand.
-  LexerWriter TheLexerWriter(P, *HS.LexerSpellings);
+  LexerWriter TheLexerWriter(P, LexerSpellings);
   TheLexerWriter.Tokenize(getSourceLocation(HS.getFullSourceLocation(Loc)),
                           Source);
   TheLexerWriter.PushEod();
@@ -74,13 +75,16 @@ auto ParseSource(clang::Parser& P, schir::SchirScheme& HS,
 }
 
 clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
+                                  llvm::BumpPtrAllocator& LexerSpellings,
                                   schir::SourceLocation Loc,
                                   llvm::StringRef Source) {
   // We typically need to have an evaluated context to
   // instantiate dependent lambdas and such.
   clang::EnterExpressionEvaluationContext EvalCtx(
-      P.getActions(), clang::Sema::ExpressionEvaluationContext::ConstantEvaluated);
-  clang::ExprResult Result =  ParseSource(P, HS, Loc, Source, [&] {
+      P.getActions(),
+      clang::Sema::ExpressionEvaluationContext::ConstantEvaluated);
+  clang::ExprResult Result =  ParseSource(P, HS, LexerSpellings,
+                                          Loc, Source, [&] {
     // Parse the expression.
     return P.ParseExpression();
   });
@@ -89,9 +93,10 @@ clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
 
 // FIXME Weird error assuming missing > to match nonexistant < (I guess.)
 clang::TypeResult ParseTypeName(clang::Parser& P, schir::SchirScheme& HS,
+                                llvm::BumpPtrAllocator& LexerSpellings,
                                 schir::SourceLocation Loc,
                                 llvm::StringRef Source) {
-  return ParseSource(P, HS, Loc, Source, [&] {
+  return ParseSource(P, HS, LexerSpellings, Loc, Source, [&] {
     // Parse the expression.
     return P.ParseTypeName();
   });

@@ -167,6 +167,8 @@ public:
   // Str - The user must ensure the lifetime of the String
   //       for lifetime of Lexer
   //     - The string must have an initialized zero byte at the end.
+  //     - Note that code from this should not be compiled since
+  //       the compiler asserts valid source locations.
   Lexer(llvm::StringRef Str)
     : EmbeddedLexer(schir::SourceLocation(), Str, Str.begin())
   { }

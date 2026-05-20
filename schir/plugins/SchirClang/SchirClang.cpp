@@ -30,38 +30,58 @@ schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
 schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 schir::ContextLocal SCHIR_CLANG_VAR(flush_tokens);
 
-// Parsed expressions to be evaluated.
-static schir::ContextLocal ExprStack;
-// Escape procedure to resume evaluation after
-// flushing tokens (if needed).
-static schir::ContextLocal ResumeProc;
-
 namespace {
 using schir_clang::DiagReport;
 using schir_clang::LexerWriter;
 using schir_clang::ParseExpression;
 using schir_clang::RunTemplateProbe;
 using schir_clang::getSourceLocation;
-using Pair = std::pair<clang::Parser*, std::unique_ptr<schir::SchirScheme>>;
 
-static auto Instance = Pair();
+// The stuff we need to stay alive.
+struct InstanceTy {
+  clang::Parser& ClangParser;
+  schir::SchirScheme SchirScheme;
+  llvm::BumpPtrAllocator LexerSpellings; // TODO use PP scratch buffer
+  schir_clang::LexerWriter LexerWriter;
+  bool IsResuming = false;
+
+  InstanceTy(clang::Parser& P)
+    : ClangParser(P),
+      SchirScheme(),
+      LexerSpellings(),
+      LexerWriter(P, LexerSpellings)
+  { }
+  InstanceTy(InstanceTy const&) = delete;
+};
+
+static std::unique_ptr<InstanceTy> Instance;
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
-  bool IsResuming = false;
 
 public:
   SchirSchemePragmaHandler()
     : ParserPragmaHandler("schir_scheme")
   { }
 
-  void CreateInst(clang::Parser& P, Pair& Inst) {
-    auto& [ParserPtr, SchirScheme] = Inst;
-    ParserPtr = &P;
-    SchirScheme = std::make_unique<schir::SchirScheme>();
-    SchirScheme->LexerSpellings = std::make_unique<llvm::BumpPtrAllocator>();
+  void CreateInst(clang::Parser& P, std::unique_ptr<InstanceTy>& Inst) {
+    // All of the references we capture here should be stable
+    // for the lifetime of the compiler.
+    Inst = std::make_unique<InstanceTy>(P);
+    auto& [_, SchirScheme,
+           LexerSpellings, TheLexerWriter,
+           IsResuming] = *Inst;
+    schir::SchirScheme& HS = SchirScheme;
+
+    auto ErrorHandler = [&](llvm::StringRef Err,
+                            schir::FullSourceLocation EmbeddedLoc) {
+      auto& Diags = P.getPreprocessor().getDiagnostics();
+      DiagReport<clang::DiagnosticsEngine::Level::Error>{}(
+            SchirScheme, EmbeddedLoc, Diags, Err);
+    };
+    SchirScheme.RegisterErrorHandler(ErrorHandler);
+
     // Load the static builtin module.
-    schir::SchirScheme& HS = *SchirScheme;
     auto diag_gen = [&](auto DiagReportFn) {
       return [&, DiagReportFn](schir::Context& C, schir::ValueRefs Args) {
         if (Args.size() < 1 || Args.size() > 2) {
@@ -119,7 +139,8 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      clang::ExprResult ExprResult = ParseExpression(P, HS, Loc, Source);
+      clang::ExprResult ExprResult = ParseExpression(P, HS, LexerSpellings,
+                                                     Loc, Source);
 
       // Process the parsing result if any.
       if (ExprResult.isInvalid()) {
@@ -199,7 +220,8 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      clang::ExprResult ExprResult = ParseExpression(P, HS, Loc, ExprStr);
+      clang::ExprResult ExprResult = ParseExpression(P, HS, LexerSpellings,
+                                                     Loc, ExprStr);
       // Process the parsing result if any.
       if (ExprResult.isInvalid())
         return C.RaiseError("clang expression parsing failed");
@@ -233,7 +255,7 @@ public:
         return C.RaiseError("expecting non empty string-like", Args[1]);
       if (Expr.empty())
         return C.RaiseError("expecting non empty string-like", Args[2]);
-      RunTemplateProbe(P, HS, C, Loc, TemplateName, Expr);
+      RunTemplateProbe(P, HS, LexerSpellings, C, Loc, TemplateName, Expr);
     };
 
     // This is a special system specific function so we can
@@ -275,7 +297,7 @@ public:
                          Buffer->getBufferStart());
     };
 
-    schir::Context& Context = SchirScheme->getContext();
+    schir::Context& Context = SchirScheme.getContext();
     schir::builtins::InitParseSourceFile(Context, ParseSourceFileFn);
     SCHIR_CLANG_VAR(diag_error).set(Context,
                                     Context.CreateLambda(diag_error));
@@ -291,64 +313,36 @@ public:
                                     Context.CreateLambda(expr_type));
     SCHIR_CLANG_VAR(template_probe).set(Context,
                                     Context.CreateLambda(template_probe));
-    SchirScheme->RegisterModule(SCHIR_CLANG_LIB_STR, SCHIR_CLANG_LOAD_MODULE);
-  }
-
-  void HandleParseExternalDeclaration(
-                    clang::Parser& P,
-                    clang::Token& Tok,
-                    clang::DeclGroupRef&) override {
-    clang::Preprocessor& PP = P.getPreprocessor();
-    {
-      auto& [ParserPtr, SchirScheme] = Instance;
-      // Only supporting one instance.
-      if (ParserPtr == nullptr)
-        CreateInst(P, Instance);
-      else if (&P != ParserPtr)
-        return;
-    }
-
-    auto& [_, SchirScheme] = Instance;
-    schir::SchirScheme& HS = *SchirScheme;
-    bool HasError = false;
-    auto ErrorHandler = [&](llvm::StringRef Err,
-                            schir::FullSourceLocation EmbeddedLoc) {
-      HasError = true;
-      auto& Diags = PP.getDiagnostics();
-      DiagReport<clang::DiagnosticsEngine::Level::Error>{}(
-            *SchirScheme, EmbeddedLoc, Diags, Err);
-    };
-
-    LexerWriter TheLexerWriter(P, *SchirScheme->LexerSpellings);
-    schir::Context& Context = SchirScheme->getContext();
     SCHIR_CLANG_VAR(write_lexer).set(Context,
         Context.CreateLambda([&](schir::Context& C,
                                  schir::ValueRefs Args) mutable {
       schir::SourceLocation Loc;
       schir::Value Output;
-      if (Args.size() == 2) {
+      if (Args.size() == 0)
+        return C.RaiseError("invalid arity");
+      if (Args.size() > 1) {
         // Accept any value that may have a source location.
         Loc = Args[0].getSourceLocation();
-        Output = Args[1];
-      } else if (Args.size() == 1) {
-        Output = Args[0];
-      } else {
-        return C.RaiseError("invalid arity");
+        Args = Args.drop_front();
       }
-      if (!schir::isa<schir::String, schir::Symbol>(Output))
-        return C.RaiseError(C.CreateString(
-              "invalid type: ",
-              schir::getKindName(Output.getKind()),
-              ", expecting string or identifier"
-              ), Output);
+      llvm::SmallString<128> BufStr;
+      for (schir::Value Output : Args) {
+        if (!schir::isa<schir::String, schir::Symbol>(Output))
+          return C.RaiseError(C.CreateString(
+                "invalid type: ",
+                schir::getKindName(Output.getKind()),
+                ", expecting string or identifier"
+                ), Output);
+        BufStr.append(Output.getStringRef());
 
-      // Try to get a valid source location.
-      if (!Loc.isValid()) Loc = Output.getSourceLocation();
-      if (!Loc.isValid()) Loc = C.getLoc();
+        // Try to get a valid source location.
+        if (!Loc.isValid()) Loc = Output.getSourceLocation();
+        if (!Loc.isValid()) Loc = C.getLoc();
+      }
 
-      llvm::StringRef Result = Output.getStringRef();
+      llvm::StringRef Result(BufStr);
       TheLexerWriter.Tokenize(getSourceLocation(
-            SchirScheme->getFullSourceLocation(Loc)),
+            SchirScheme.getFullSourceLocation(Loc)),
             Result);
       C.Cont();
     }));
@@ -357,7 +351,7 @@ public:
     // more suited to calling in c++.
     auto LexerWriterFn = [&](schir::SourceLocation Loc, llvm::StringRef Str) {
       TheLexerWriter.Tokenize(getSourceLocation(
-            SchirScheme->getFullSourceLocation(Loc)), Str);
+            SchirScheme.getFullSourceLocation(Loc)), Str);
     };
     auto LWF = schir::LexerWriterFnRef(LexerWriterFn);
     SCHIR_CLANG_VAR(lexer_writer).set(Context, Context.CreateAny(LWF));
@@ -367,17 +361,33 @@ public:
     // Note that we merely break where flush is called
     // after evaluation is complete.
     auto FlushTokens = [&](schir::Context& C, schir::ValueRefs) {
+      if (TheLexerWriter.empty())
+        return C.Cont();
       IsResuming = true;
       schir::FullSourceLocation HSLoc = HS.getFullSourceLocation(C.getLoc());
       clang::SourceLocation Loc = getSourceLocation(HSLoc);
       TheLexerWriter.PushResumeToken(Loc, this);
-      C.CallCC(C.CreateLambda([](schir::Context& C, schir::ValueRefs Args) {
-        ResumeProc.set(C, Args[0]);
-        C.Cont();
-      }));
+      HS.Break();
     };
     SCHIR_CLANG_VAR(flush_tokens)
       .set(Context, Context.CreateLambda(FlushTokens));
+    SchirScheme.RegisterModule(SCHIR_CLANG_LIB_STR, SCHIR_CLANG_LOAD_MODULE);
+  }
+
+  void HandleParseExternalDeclaration(
+                    clang::Parser& P,
+                    clang::Token& Tok,
+                    clang::DeclGroupRef&) override {
+    // Only supporting one instance.
+    if (!Instance)
+      CreateInst(P, Instance);
+    assert(&Instance->ClangParser == &P);
+    auto& [_, SchirScheme,
+           _, TheLexerWriter,
+           IsResuming] = *Instance;
+    clang::Preprocessor& PP = P.getPreprocessor();
+
+    schir::Context& Context = SchirScheme.getContext();
 
     // Do the thing or the other thing.
     if (!IsResuming) {
@@ -387,39 +397,24 @@ public:
                              char const* BufferStart,
                              char const* BufferEnd,
                              char const* BufferPtr) {
-        SchemeLexer = SchirScheme->createEmbeddedLexer(
+        SchemeLexer = SchirScheme.createEmbeddedLexer(
                             Loc.getRawEncoding(), Name,
                             BufferStart, BufferEnd, BufferPtr);
       };
       PP.InitEmbeddedLexer(LexerInitFn);
       schir::TokenKind Terminator = schir::tok::r_brace;
-      SchirScheme->ParseTopLevelCommands(SchemeLexer, ErrorHandler,
-                                         Terminator);
+      SchirScheme.ParseTopLevelCommands(SchemeLexer, Terminator);
       PP.FinishEmbeddedLexer(SchemeLexer.GetByteOffset());
-    }
-
-    if (!IsResuming) {
-      // Evaluate the stuff we parsed.
-      SchirScheme->ProcessPendingExprs(schir::builtins::eval, ErrorHandler);
+      SchirScheme.ProcessPendingExprs(schir::builtins::eval);
     } else {
       IsResuming = false;
-      SchirScheme->Resume(ErrorHandler);
+      SchirScheme.Resume();
     }
 
-    if (!HasError) {
-      TheLexerWriter.FlushTokens();
-      assert(P.getCurToken().is(clang::tok::eod) &&
-          "expecting eod of flushed tokens stream or pragma");
+    TheLexerWriter.FlushTokens();
+    // If its not eod there was some issue with the pragma syntax.
+    if (P.getCurToken().is(clang::tok::eod))
       P.ConsumeToken();
-    }
-
-    // Clear out lambdas that capture stack variables.
-    SCHIR_CLANG_VAR(flush_tokens).set(Context, schir::Undefined());
-    SCHIR_CLANG_VAR(lexer_writer).set(Context, schir::Undefined());
-    SCHIR_CLANG_VAR(write_lexer).set(Context,
-          Context.CreateBuiltin([](schir::Context& C, schir::ValueRefs Args) {
-      C.RaiseError("lexer writer is not initialized");
-    }));
   }
 };
 

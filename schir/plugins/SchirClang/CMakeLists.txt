@@ -6,5 +6,5 @@ add_llvm_library(SchirClang MODULE SchirClang.cpp PLUGIN_TOOL clang)
 # (case sensitive)
 find_package(Clang REQUIRED CONFIG)
 target_include_directories(SchirClang
-  PRIVATE ${CLANG_INCLUDE_DIRS})
+  SYSTEM PRIVATE ${CLANG_INCLUDE_DIRS})
 target_link_libraries(SchirClang PRIVATE schir)

@@ -21,12 +21,10 @@
 #include <schir/SourceManager.h>
 #include <schir/Value.h>
 #include <llvm/ADT/STLFunctionalExtras.h>
+#include <utility>
 
 
 namespace schir {
-using ErrorHandlerFnTy =
-  llvm::function_ref<schir::SchirScheme::ErrorHandlerFn>;
-
 // Keep a list of parsed top level
 // exprs to eventually be processed.
 static ContextLocal PendingTopLevelExprs;
@@ -38,7 +36,7 @@ static ContextLocal ResumeProc;
 // on the current stack frame.
 // If set, expect it to be
 //  Any<ErrorHandlerFnTy>
-static ContextLocal RefreshableErrorHandler;
+static ContextLocal ErrorHandler;
 
 SchirScheme::SchirScheme(std::unique_ptr<schir::Context> C)
   : ContextPtr(std::move(C)),
@@ -55,16 +53,6 @@ SchirScheme::SchirScheme()
 
 SchirScheme::~SchirScheme() = default;
 
-#if 0
-// TODO Not sure if this is necessary
-bool SchirScheme::HasPendingExprs() {
-  Context& C = getContext();
-  schir::Value Exprs = PendingTopLevelExprs.get(C);
-  schir::Value Proc = ResumeProc.get(C);
-  return isa<Pair>(ExprStack) || isa<Lambda>(Proc);
-}
-#endif
-
 void SchirScheme::Break() {
   Context& C = getContext();
   C.CallCC(C.CreateLambda([](Context& C, ValueRefs Args) {
@@ -73,14 +61,15 @@ void SchirScheme::Break() {
   }));
 }
 
-bool SchirScheme::Resume(ErrorHandlerFnTy ErrorHandler) {
+bool SchirScheme::Resume() {
   Context& C = getContext();
-  RefreshableErrorHandler.set(C, C.CreateAny<ErrorHandlerFnTy>(ErrorHandler));
   Lambda* Proc = dyn_cast<Lambda>(ResumeProc.get(C));
   ResumeProc.set(C, Undefined());
   Value Undef = Undefined();
-  if (Proc)
-    C.RunSync(Proc, Undef);
+  if (Proc) {
+    C.Apply(Proc, Undef);
+    C.Resume();
+  }
   return Proc != nullptr;
 }
 
@@ -98,50 +87,38 @@ schir::Lexer SchirScheme::createEmbeddedLexer(uintptr_t ExternalRawLoc,
   return Lexer(File, BufferPos);
 }
 
-// Note this captures a the function_ref which
-// must be kept alive in the parent stack frame.
-static auto
-CreateErrorHandler(Context& C, ErrorHandlerFnTy ErrorHandler) {
-  // Capture the function_ref in a global to be accessible in scheme land
-  // and refreshable in subsequent calls to Resume.
-  using FnTy = ErrorHandlerFnTy;
-  RefreshableErrorHandler.set(C, C.CreateAny<FnTy>(ErrorHandler));
-  return [](schir::Context& C, ValueRefs Args = {}) {
-    FnTy ErrorHandler = any_cast<FnTy>(RefreshableErrorHandler.get(C));
-    if (!ErrorHandler)
-      ErrorHandler = [](auto&& ...) {
-        /* Do nothing by default. */
-      };
+void SchirScheme::RegisterErrorHandler(std::function<UserErrorHandlerFn> Fn) {
+  Context& C = getContext();
+  UserErrorHandler = std::move(Fn);
+  Lambda* L = C.CreateLambda([this](Context& C, ValueRefs Args) mutable {
     auto* SM = C.SourceManager;
     schir::FullSourceLocation FullLoc = SM->getFullSourceLocation(
         Args[0].getSourceLocation());
     if (schir::Error* Err = dyn_cast<schir::Error>(Args[0])) {
       String* FmtMessage = C.CreateFormatted(Err);
-      ErrorHandler(FmtMessage->getStringRef(), FullLoc);
+      UserErrorHandler(FmtMessage->getStringRef(), FullLoc);
     } else {
-      ErrorHandler("errorhandler received a non-error", FullLoc);
+      UserErrorHandler("errorhandler received a non-error", FullLoc);
     }
     C.Cont();
-  };
+  });
+  RegisterErrorHandler(L);
+}
+
+void SchirScheme::RegisterErrorHandler(Lambda* Fn) {
+  ErrorHandler.set(getContext(), Fn);
 }
 
 void SchirScheme::ParseTopLevelCommands(
                               schir::Lexer& Lexer,
-                              ErrorHandlerFnTy ErrorHandler,
                               schir::tok Terminator) {
   auto& Context = getContext();
   auto& SM = getSourceManager();
   Context.SourceManager = &SM;
   auto ParserPtr = std::make_unique<Parser>(Lexer, Context);
   Parser& Parser = *ParserPtr;
-  auto HandleErrorFn = CreateErrorHandler(Context, ErrorHandler);
+  Parser.PrimeToken(Terminator);
 
-  if (!Parser.PrimeToken(Terminator)) {
-    HandleErrorFn(Context, {});
-    return;
-  }
-
-  Value HandleError = Context.CreateLambda(HandleErrorFn, {});
   Value MainThunk = Context.CreateLambda([&Parser]
                           (schir::Context& C, ValueRefs) {
     if (Parser.isFinished()) {
@@ -178,11 +155,11 @@ void SchirScheme::ParseTopLevelCommands(
   }, CaptureList{});
 
   Context.DynamicWind(std::move(ParserPtr), Context.CreateLambda(
-    [](schir::Context& Context, ValueRefs) {
-      Value HandleError = Context.getCapture(0);
-      Value MainThunk = Context.getCapture(1);
-      Context.WithExceptionHandler(HandleError, MainThunk);
-    }, CaptureList{HandleError, MainThunk}));
+    [](schir::Context& C, ValueRefs) {
+      Value HandleError = ErrorHandler.get(C);
+      Value MainThunk = C.getCapture(0);
+      C.WithExceptionHandler(HandleError, MainThunk);
+    }, CaptureList{MainThunk}));
 
   // Run the loop.
   Context.Resume();
@@ -191,25 +168,21 @@ void SchirScheme::ParseTopLevelCommands(
 void SchirScheme::ProcessTopLevelCommands(
                               schir::Lexer& Lexer,
                               llvm::function_ref<ValueFnTy> ExprHandler,
-                              llvm::function_ref<ErrorHandlerFn> ErrorHandler,
                               schir::tok Terminator) {
-  ParseTopLevelCommands(Lexer, ErrorHandler, Terminator);
-  ProcessPendingExprs(ExprHandler, ErrorHandler);
+  ParseTopLevelCommands(Lexer, Terminator);
+  ProcessPendingExprs(ExprHandler);
 }
 
 // ParseTopLevelCommands pushed to PendingTopLevelExprs
 // so now we apply them to ExprHandler.
 void SchirScheme::ProcessPendingExprs(
-                            llvm::function_ref<ValueFnTy> ExprHandler,
-                            llvm::function_ref<ErrorHandlerFn> ErrorHandler) {
+                            llvm::function_ref<ValueFnTy> ExprHandler) {
   auto& Context = getContext();
   auto& SM = getSourceManager();
   Context.SourceManager = &SM;
   schir::Environment* Env = Context.DefaultEnv.get();
 
   Value HandleExpr = Context.CreateLambda(ExprHandler, {});
-  Value HandleError = Context.CreateLambda(
-                          CreateErrorHandler(Context, ErrorHandler), {});
   Value MainThunk = Context.CreateLambda([](schir::Context& C, ValueRefs) {
     Value TLExprs = PendingTopLevelExprs.get(C);
     Pair* P = dyn_cast<Pair>(TLExprs);
@@ -227,6 +200,7 @@ void SchirScheme::ProcessPendingExprs(
     C.Apply(HandleExpr, {Expr, Env});
   }, CaptureList{Value(Env), HandleExpr});
 
+  Value HandleError = ErrorHandler.get(Context);
   Context.WithExceptionHandler(HandleError, MainThunk);
   // Run the loop.
   Context.Resume();
