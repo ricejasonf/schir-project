@@ -13,6 +13,7 @@
 #include <clang/Parse/Parser.h>
 #include <clang/Sema/Lookup.h>
 #include <clang/Sema/Sema.h>
+#include <functional>
 #include <utility>
 
 #include "LexerWriter.h"
@@ -44,6 +45,8 @@ struct InstanceTy {
   llvm::BumpPtrAllocator LexerSpellings; // TODO use PP scratch buffer
   schir_clang::LexerWriter LexerWriter;
   bool IsResuming = false;
+  std::function<void(schir::SourceLocation Loc, llvm::StringRef Str)>
+  LexerWriterFn;
 
   InstanceTy(clang::Parser& P)
     : ClangParser(P),
@@ -70,7 +73,7 @@ public:
     Inst = std::make_unique<InstanceTy>(P);
     auto& [_, SchirScheme,
            LexerSpellings, TheLexerWriter,
-           IsResuming] = *Inst;
+           IsResuming, LexerWriterFn] = *Inst;
     schir::SchirScheme& HS = SchirScheme;
 
     auto ErrorHandler = [&](llvm::StringRef Err,
@@ -349,7 +352,7 @@ public:
 
     // Also provide a type erased LexerWriterFnRef which is
     // more suited to calling in c++.
-    auto LexerWriterFn = [&](schir::SourceLocation Loc, llvm::StringRef Str) {
+    LexerWriterFn = [&](schir::SourceLocation Loc, llvm::StringRef Str) {
       TheLexerWriter.Tokenize(getSourceLocation(
             SchirScheme.getFullSourceLocation(Loc)), Str);
     };
@@ -384,7 +387,7 @@ public:
     assert(&Instance->ClangParser == &P);
     auto& [_, SchirScheme,
            _, TheLexerWriter,
-           IsResuming] = *Instance;
+           IsResuming, _] = *Instance;
     clang::Preprocessor& PP = P.getPreprocessor();
 
     schir::Context& Context = SchirScheme.getContext();

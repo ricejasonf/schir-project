@@ -18,8 +18,6 @@
 
 namespace {
 namespace foo {
-class context;
-
 // Note that nbdl::unresolved is like the monostate type.
 using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 

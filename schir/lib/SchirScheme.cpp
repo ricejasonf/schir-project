@@ -21,6 +21,7 @@
 #include <schir/SourceManager.h>
 #include <schir/Value.h>
 #include <llvm/ADT/STLFunctionalExtras.h>
+#include <functional>
 #include <utility>
 
 

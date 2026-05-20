@@ -267,6 +267,7 @@
                 (unless (verify Op)
                   (error "operation failed verification: {}" Op))
                 (translate-cpp Op lexer-writer)
+                (flush-tokens)
                 Op))))))
 
     ;; For now, this is just an alternative interface to define-store.
@@ -319,6 +320,7 @@
             (unless (verify FuncOp)
               (error "verification failed: {0} {1}" name FuncOp))
             (translate-cpp FuncOp lexer-writer)
+            (flush-tokens)
             FuncOp))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
@@ -745,6 +747,7 @@
       (define Op
         (module-lookup current-nbdl-module name))
       (translate-cpp Op)
+      (flush-tokens)
       (newline))
 
     (define (dump-op name)
