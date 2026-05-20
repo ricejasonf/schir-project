@@ -18,6 +18,7 @@
 #include <llvm/ADT/SmallString.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Support/IOSandbox.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/Process.h>
@@ -95,6 +96,8 @@ void SetIncludePaths(schir::SchirScheme& SchirScheme) {
 }
 
 int main(int argc, char const** argv) {
+  // Disable LLVM IO sandboxing.
+  auto SandboxDisableRAII = llvm::sys::sandbox::scopedDisable();
 #if 0
   // TODO Provide interactive looping.
   //      Also look at llvm::LineEditor.

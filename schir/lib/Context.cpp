@@ -41,6 +41,7 @@
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -1182,6 +1183,7 @@ void Context::IncludeModuleFile(schir::SourceLocation Loc,
 //      filename the command line.
 bool Context::TryLoadPrebuiltModule(schir::SourceLocation Loc,
                                     schir::String* Filename) {
+  auto SandboxScope = llvm::sys::sandbox::scopedDisable();
   std::unique_ptr<llvm::MemoryBuffer> FileBuffer = nullptr;
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> File =
     llvm::MemoryBuffer::getFile(
