@@ -15,6 +15,7 @@
 #include <schir/Parser.h>
 #include <schir/SchirScheme.h>
 #include <schir/SourceManager.h>
+#include <schir/Value.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/FileSystem.h>
@@ -95,6 +96,26 @@ void SetIncludePaths(schir::SchirScheme& SchirScheme) {
   SchirScheme.SetIncludePaths(PathList);
 }
 
+static void PrintError(llvm::StringRef Label, schir::Context& C,
+                       schir::Error* Err) {
+  auto SL = C.getFullSourceLocation();
+  if (SL.isValid()) {
+    schir::SourceLineContext LineContext = SL.getLineContext();
+    llvm::errs() << LineContext.FileName
+                 << ':' << LineContext.LineNumber
+                 << ':' << LineContext.Column << ": "
+                 << Label << ": " << Err << '\n'
+                 << LineContext.LineRange << '\n';
+    // Display the caret pointing to the point of interest.
+    for (unsigned i = 1; i < LineContext.Column; i++) {
+      llvm::errs() << ' ';
+    }
+    llvm::errs() << "^\n";
+  } else {
+    llvm::errs() << Label << ": " << Err << "\n\n";
+  }
+}
+
 int main(int argc, char const** argv) {
   // Disable LLVM IO sandboxing.
   auto SandboxDisableRAII = llvm::sys::sandbox::scopedDisable();
@@ -112,26 +133,11 @@ int main(int argc, char const** argv) {
 
   // Create error handler.
   bool HasErrors = false;
-  auto OnError = [&HasErrors](llvm::StringRef Err,
-                              schir::FullSourceLocation const& SL) {
-    HasErrors = true;
-    if (SL.isValid()) {
-      schir::SourceLineContext LineContext = SL.getLineContext();
-      llvm::errs() << LineContext.FileName
-                   << ':' << LineContext.LineNumber
-                   << ':' << LineContext.Column << ": "
-                   << "error: " << Err << '\n'
-                   << LineContext.LineRange << '\n';
-      // Display the caret pointing to the point of interest.
-      for (unsigned i = 1; i < LineContext.Column; i++) {
-        llvm::errs() << ' ';
-      }
-      llvm::errs() << "^\n";
-    } else {
-      llvm::errs() << "error: " << Err << "\n\n";
-    }
-  };
-  SchirScheme.RegisterErrorHandler(OnError);
+  SchirScheme.RegisterErrorHandler(
+    [&HasErrors](schir::Context& C, schir::ValueRefs Args) {
+      HasErrors = true;
+      PrintError("error", C, cast<schir::Error>(Args.front()));
+    });
 
   // Run the top level expressions in the file.
   SchirScheme.ProcessTopLevelCommands(InputFilename,

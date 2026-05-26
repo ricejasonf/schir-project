@@ -99,17 +99,19 @@ struct SourceFile {
 
 class FullSourceLocation {
   friend SourceManager;
-  SourceManager& Manager;
+  SourceManager* Manager = nullptr;
   SourceFile File;
   SourceLocation Loc;
 
-  FullSourceLocation(SourceManager& SM, SourceFile File, SourceLocation Loc)
+  FullSourceLocation(SourceManager* SM, SourceFile File, SourceLocation Loc)
     : Manager(SM),
       File(File),
       Loc(Loc)
   { }
 
 public:
+  FullSourceLocation() = default;
+
   SourceLocation getLocation() const {
     return Loc;
   }
@@ -127,7 +129,8 @@ public:
   }
 
   bool isValid() const {
-    return Loc.isValid() && File.isValid() && !File.isExternal();
+    return Manager != nullptr && Loc.isValid() && File.isValid() &&
+           !File.isExternal();
   }
 
   bool isExternal() const {

@@ -19,6 +19,7 @@
 #include "schir/OpGen.h"
 #include "schir/Parser.h"
 #include "schir/Source.h"
+#include "schir/SourceManager.h"
 #include "schir/Value.h"
 #include "schir/ValueVisitor.h"
 #include "mlir/Bytecode/BytecodeReader.h"
@@ -1341,6 +1342,12 @@ Error* Context::CreateError(Value Msg, llvm::ArrayRef<Value> IrrArgs) {
   }
 
   return CreateError(Loc, Msg, IrrList);
+}
+
+FullSourceLocation Context::getFullSourceLocation(SourceLocation Loc) const {
+  if (SourceManager && Loc.isValid())
+    return SourceManager->getFullSourceLocation(Loc);
+  return {};
 }
 
 // ManagedObjectWind - Manage the lifetime of a C++ object within a dynamic

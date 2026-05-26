@@ -76,10 +76,10 @@ class SchirScheme {
                                    char const* BufferEnd,
                                    char const* BufferPos);
 
-  using UserErrorHandlerFn = void(llvm::StringRef,
-                                  schir::FullSourceLocation const&);
-  std::function<UserErrorHandlerFn> UserErrorHandler;
-  void RegisterErrorHandler(std::function<UserErrorHandlerFn> Fn);
+  template <typename Fn>
+  void RegisterErrorHandler(Fn&& F) {
+    RegisterErrorHandler(getContext().CreateLambda(F));
+  }
   void RegisterErrorHandler(Lambda*);
 
   void ParseSourceFile(schir::Lexer Lexer);

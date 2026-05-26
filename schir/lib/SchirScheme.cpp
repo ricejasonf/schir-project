@@ -21,7 +21,6 @@
 #include <schir/SourceManager.h>
 #include <schir/Value.h>
 #include <llvm/ADT/STLFunctionalExtras.h>
-#include <functional>
 #include <utility>
 
 
@@ -86,24 +85,6 @@ schir::Lexer SchirScheme::createEmbeddedLexer(uintptr_t ExternalRawLoc,
   schir::SourceFile File = SM.getOrCreateExternal(ExternalRawLoc, FileBuffer,
                                                   Name);
   return Lexer(File, BufferPos);
-}
-
-void SchirScheme::RegisterErrorHandler(std::function<UserErrorHandlerFn> Fn) {
-  Context& C = getContext();
-  UserErrorHandler = std::move(Fn);
-  Lambda* L = C.CreateLambda([this](Context& C, ValueRefs Args) mutable {
-    auto* SM = C.SourceManager;
-    schir::FullSourceLocation FullLoc = SM->getFullSourceLocation(
-        Args[0].getSourceLocation());
-    if (schir::Error* Err = dyn_cast<schir::Error>(Args[0])) {
-      String* FmtMessage = cast<String>(Err->getMessage());
-      UserErrorHandler(FmtMessage->getStringRef(), FullLoc);
-    } else {
-      UserErrorHandler("errorhandler received a non-error", FullLoc);
-    }
-    C.Cont();
-  });
-  RegisterErrorHandler(L);
 }
 
 void SchirScheme::RegisterErrorHandler(Lambda* Fn) {

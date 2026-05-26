@@ -300,6 +300,16 @@ public:
 
   SourceLocation getLoc() const { return Loc; }
 
+  FullSourceLocation getFullSourceLocation() const {
+    return getFullSourceLocation(Loc);
+  }
+
+  FullSourceLocation getFullSourceLocation(Value V) const {
+    return getFullSourceLocation(V.getSourceLocation());
+  }
+
+  FullSourceLocation getFullSourceLocation(SourceLocation Loc) const;
+
   SourceLocation getErrorLocation() {
     assert(Err && "requires an error be set");
     SourceLocation L = Err.getSourceLocation();

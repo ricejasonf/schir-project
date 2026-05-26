@@ -102,10 +102,10 @@ FullSourceLocation::getLineContext() const {
   // We could store SourceLineStarts to help with speeding
   // up searching instead of scanning the entire file every
   // time we need line numbers.
-  SourceLineStart Closest = Manager.getClosestLineStart(File, Loc);
+  SourceLineStart Closest = Manager->getClosestLineStart(File, Loc);
   // Now scan lines until we get to the desired location.
-  char const* const TargetPos = Manager.getBufferPos(File, Loc);
-  char const* CurPos = Manager.getBufferPos(File, Closest.Loc);
+  char const* const TargetPos = Manager->getBufferPos(File, Loc);
+  char const* CurPos = Manager->getBufferPos(File, Closest.Loc);
   unsigned CurrentLineNumber = Closest.LineNumber;
   char const* LineStartPos = CurPos;
   if (CurPos <= TargetPos) {

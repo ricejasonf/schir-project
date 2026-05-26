@@ -76,11 +76,26 @@ public:
            IsResuming, LexerWriterFn] = *Inst;
     schir::SchirScheme& HS = SchirScheme;
 
-    auto ErrorHandler = [&](llvm::StringRef Err,
-                            schir::FullSourceLocation EmbeddedLoc) {
+    auto ErrorHandler = [&](schir::Context& C,
+                            schir::ValueRefs Args) {
+                            //schir::FullSourceLocation EmbeddedLoc) {
+      schir::Error* Error = dyn_cast<schir::Error>(Args.front());
+      schir::FullSourceLocation EmbeddedLoc;
+      llvm::StringRef ErrMsg;
+      if (Error) {
+        ErrMsg = Error->getMessage().getStringRef();
+        EmbeddedLoc = C.getFullSourceLocation(Error);
+      }
+      else {
+        ErrMsg = C.CreateFormatted(
+            "uncaught exception of non-error type: {}", Args.front())
+          ->getStringRef();
+        EmbeddedLoc = C.getFullSourceLocation();
+      }
+
       auto& Diags = P.getPreprocessor().getDiagnostics();
       DiagReport<clang::DiagnosticsEngine::Level::Error>{}(
-            SchirScheme, EmbeddedLoc, Diags, Err);
+            SchirScheme, EmbeddedLoc, Diags, ErrMsg);
     };
     SchirScheme.RegisterErrorHandler(ErrorHandler);
 

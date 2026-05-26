@@ -56,7 +56,7 @@ public:
   llvm::ErrorOr<SourceFile> Open(llvm::StringRef Filename);
 
   FullSourceLocation getFullSourceLocation(SourceLocation Loc) {
-    return FullSourceLocation{*this, getFile(Loc), Loc};
+    return FullSourceLocation{this, getFile(Loc), Loc};
   }
 
   SourceFile getFile(SourceLocation Loc) const;
