@@ -13,7 +13,7 @@ namespace foo {
 #pragma schir_scheme
 {
   (import (nbdl spec))
-  (context 'my_context (arg1 arg2)
+  (define-context my_context (arg1 arg2)
    (member: '.foo 'int
     (init-args: 42))
     (member: '.bar 'std::string

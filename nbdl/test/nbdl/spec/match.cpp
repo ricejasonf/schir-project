@@ -24,7 +24,7 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 #pragma schir_scheme
 {
   (import (nbdl spec))
-  (context 'context (arg1 arg2 arg3)
+  (define-context context (arg1 arg2 arg3)
     (member: '.foo 'int
      (init-args: 42))
     (member: '.bar 'std::string
@@ -36,36 +36,36 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
     (member: '.my_var 'my_variant (init-args: arg2)))
 
   ; // get values initialized with literals
-  (match-params-fn 'match_0 (store fn)
+  (match-params-fn match_0 (store fn)
     (define root-path (get store))
     (fn
       (get store '.foo)
       (get root-path '.bar)))
 
   ; // get nested pair
-  (match-params-fn 'match_1 (store fn)
+  (match-params-fn match_1 (store fn)
     (define root-path (get store))
     (fn
       (get store '.baz)
       (get store '.boo '.first)))
 
   ; // get nested pair
-  (match-params-fn 'match_2 (store fn)
+  (match-params-fn match_2 (store fn)
     (fn (get store '.boo '.second)))
 
   ; // match variant alternative with overloaded fn.
   ; // equivalent to (get store 'my_var unit)
-  (match-params-fn 'match_3 (store fn)
+  (match-params-fn match_3 (store fn)
     (fn (get store '.my_var '.value)))
 
   ; // match variant alternative with overloaded fn.
   ; // equivalent to (get store 'my_var unit)
-  (match-params-fn 'match_4 (store fn)
+  (match-params-fn match_4 (store fn)
     (match (get store '.my_var '.value)
       (else => fn)))
 
   ; // match specific variant alternative std::string
-  (match-params-fn 'match_5 (store fn)
+  (match-params-fn match_5 (store fn)
     (define my_var
       (get store '.my_var 'nbdl::variant_value))
     (match my_var
@@ -73,19 +73,19 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
       (else => noop)))
 
   ; // match variant index (not flat)
-  (match-params-fn 'match_6 (store fn)
+  (match-params-fn match_6 (store fn)
     (define my-var-index
       (get store '.my_var 'nbdl::variant_index))
     (fn my-var-index))
 
   ; // match variant index (not flat)
-  (match-params-fn 'match_7 (store fn)
+  (match-params-fn match_7 (store fn)
     (define my-var-index
       (get store '.my_var '|nbdl::variant_index_t{}|))
     (fn my-var-index))
 
   ; // match variant index (match root store type)
-  (match-params-fn 'match_8 (store fn)
+  (match-params-fn match_8 (store fn)
     (match store
      ('foo::context =>
       (lambda (store)

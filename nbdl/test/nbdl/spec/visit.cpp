@@ -6,6 +6,7 @@
 //
 
 #include <nbdl/assign.hpp>
+#include <nbdl/apply_action.hpp>
 #include <nbdl/match.hpp>
 #include <nbdl/strong_alias.hpp>
 #include <nbdl/variant_holder.hpp>
@@ -25,42 +26,39 @@ using fav_games = std::unordered_map<std::string, std::string>;
           (nbdl spec))
 
   ; // Add to an integer sum.
-  (define-store 'message_1 (id)
+  (define-store message_1 (id)
     (store-compose '.value (store 'int (init-args: id))))
 
   ; // Associate a player with a favorite game. (just strings)
-  (define-store 'message_2 (name fav-game)
+  (define-store message_2 (name fav-game)
     (store-compose '.name (store 'std::string (init-args: name)))
     (store-compose '.fav_game (store 'std::string (init-args: fav-game))))
 
   ; // Remove a player from the favorite games table.
-  (define-store 'message_3 (name)
+  (define-store message_3 (name)
     (store-compose '.name (store 'std::string (init-args: name))))
 
   ; // A tag.
-  (define-store 'message_4 ())
+  (define-store message_4 ())
 
   ; // A strong alias to a variant that implements nbdl::match.
-  (define-store 'message ()
-    (variant (store 'message_1)
-             (store 'message_2)
-             (store 'message_3)
-             (store 'message_4)))
+  (define-store message ()
+    (variant (store message_1)
+             (store message_2)
+             (store message_3)
+             (store message_4)))
 
-  (context 'message_context (arg)
-    (member: '.body 'my::message (init-args: arg)))
-
-  (context 'context ()
+  (define-context context ()
     (member: '.sum 'int (init-args:))
     (member: '.fav_games 'my::fav_games (init-args:))
     (member: '.message_4_count 'size_t (init-args:))
-    (member: '.last_message 'message (init-args:))
+    (member: '.last_message message (init-args:))
     )
 
-  (match-params-fn 'apply_message (context message fn)
+  (match-params-fn apply_message (context message fn)
     (define sum (get context '.sum))
     (define (receive-message-1 Message1)
-      (visit 'nbdl::assign
+      (visit 'nbdl::apply_action
              sum
              (visit '|std::plus<int>{}|
                     sum

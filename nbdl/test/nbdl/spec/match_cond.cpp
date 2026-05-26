@@ -22,12 +22,12 @@ namespace foo {
 
   ; // Note that .first and .second are not accessible
   ; // because of implementation issues. (ie not having reflection)
-  (define-store 'weighted_string ()
+  (define-store weighted_string ()
     (store "std::pair<int, std::string>"))
 
   ; // Store 3 values and the result of concatenating
   ; // the strings that match our conditional.
-  (define-store 'context (arg1 arg2 arg3)
+  (define-store context (arg1 arg2 arg3)
     (store-compose '.val1 (store 'weighted_string
                             (init-args: arg1)))
     (store-compose '.val2 (store 'weighted_string
@@ -37,7 +37,7 @@ namespace foo {
     (store-compose '.result_val (store 'std::string)))
 
   ; // Concatenate values with keys greater than 42.
-  (match-params-fn 'combo_concat (context fn)
+  (match-params-fn combo_concat (context fn)
     ; // Concat a member (of context) to result_val
     ; // capitalizing it if its weight is greater than
     ; // the threshold 42.

@@ -233,49 +233,51 @@
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
-          (with-builder
-            (lambda ()
-              (at-block-end (entry-block current-nbdl-module))
-              (let ()
-                (define Op
-                  (create-op "nbdl.define_store"
-                    (loc: (syntax-source-loc Name))
-                    (operands:)
-                    (attributes: ("sym_name" (string-attr Name)))
-                    (result-types:)
-                    (region: "body" ((InitParams : (!nbdl.store)) ...)
-                      (define Parent (build-unit))
-                      (define (ProcessBody BodyEl)
-                        (set! Parent
-                          (cond
-                            ((procedure? BodyEl)
-                              (BodyEl Parent))
-                            ; Allow specifying a single store
-                            ((value? !nbdl.unit Parent)
-                             (begin
-                               ; TODO Delete the dangling nbdl.unit operation here.
-                               BodyEl))
-                            (else
-                              (error "expecting store functional: {}" BodyEl)))))
-                      (ProcessBody StoreFunctionalN) ...
-                      (create-op "nbdl.cont"
-                        (loc: (syntax-source-loc Name))
-                        (operands: Parent)
-                        (attributes:)
-                        (result-types:))
-                      )))
-                (unless (verify Op)
-                  (error "operation failed verification: {}" Op))
-                (translate-cpp Op lexer-writer)
-                (flush-tokens)
-                Op))))))
+          (begin
+            (define Name 'Name)
+            (with-builder
+              (lambda ()
+                (at-block-end (entry-block current-nbdl-module))
+                (let ()
+                  (define Op
+                    (create-op "nbdl.define_store"
+                      (loc: (syntax-source-loc Name))
+                      (operands:)
+                      (attributes: ("sym_name" (string-attr Name)))
+                      (result-types:)
+                      (region: "body" ((InitParams : (!nbdl.store)) ...)
+                        (define Parent (build-unit))
+                        (define (ProcessBody BodyEl)
+                          (set! Parent
+                            (cond
+                              ((procedure? BodyEl)
+                                (BodyEl Parent))
+                              ; Allow specifying a single store
+                              ((value? !nbdl.unit Parent)
+                               (begin
+                                 ; TODO Delete the dangling nbdl.unit operation here.
+                                 BodyEl))
+                              (else
+                                (error "expecting store functional: {}" BodyEl)))))
+                        (ProcessBody StoreFunctionalN) ...
+                        (create-op "nbdl.cont"
+                          (loc: (syntax-source-loc Name))
+                          (operands: Parent)
+                          (attributes:)
+                          (result-types:))
+                        )))
+                  (unless (verify Op)
+                    (error "operation failed verification: {}" Op))
+                  (translate-cpp Op lexer-writer)
+                  (flush-tokens)
+                  Op)))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
     ;; but the benefit is not apparent.
-    (define-syntax context
+    (define-syntax define-context
       (syntax-rules (member: init-args:)
-        ((context Name (Formals ...)
+        ((define-context Name (Formals ...)
             (member: Key1 Typename1 (init-args: InitArgs1N ...))
             (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
          (define-store Name (Formals ...)
@@ -307,21 +309,23 @@
     (define-syntax match-params-fn
       (syntax-rules ()
         ((match-params-fn name (stores ... fn) body ...)
-         (let ((FuncOp
-                (%build-match-params
-                  name
-                  (length '(stores ...))
-                  (lambda (stores ... %FnVal)
-                    (define Loc (source-loc name))
-                    (define Fn
-                      (%match-params-resolver Loc %FnVal))
-                    ((lambda (fn) body ...) Fn)
-                    ))))
-            (unless (verify FuncOp)
-              (error "verification failed: {0} {1}" name FuncOp))
-            (translate-cpp FuncOp lexer-writer)
-            (flush-tokens)
-            FuncOp))))
+         (begin
+           (define name 'name)
+           (let ((FuncOp
+                  (%build-match-params
+                    'name
+                    (length '(stores ...))
+                    (lambda (stores ... %FnVal)
+                      (define Loc (source-loc name))
+                      (define Fn
+                        (%match-params-resolver Loc %FnVal))
+                      ((lambda (fn) body ...) Fn)
+                      ))))
+              (unless (verify FuncOp)
+                (error "verification failed: {0} {1}" 'name FuncOp))
+              (translate-cpp FuncOp lexer-writer)
+              (flush-tokens)
+              FuncOp)))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
@@ -759,7 +763,7 @@
 
   ) ; end of... begin
   (export
-    context
+    define-context
     define-store
     store-compose
     variant
