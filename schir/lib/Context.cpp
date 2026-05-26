@@ -1327,7 +1327,6 @@ void Context::RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs) {
   Value IrrList = Empty();
   for (Value Irr : llvm::reverse(IrrArgs))
     IrrList = CreatePair(Irr, IrrList);
-  Msg = CreateFormatted(Msg->getStringRef(), IrrArgs);
   Value Error = CreateError(this->Loc, Msg, IrrList);
   Raise(Error);
 }
@@ -1809,6 +1808,10 @@ String* Context::CreateFormatted(llvm::StringRef Fmt,
   llvm::raw_string_ostream OS(WorkingStr);
   schir::format(OS, Fmt, Values);
   return CreateString(llvm::StringRef(WorkingStr));
+}
+String* Context::CreateFormatted(llvm::StringRef Fmt, Value List) {
+  llvm::SmallVector<Value, 8> Values(List.begin(), List.end());
+  return CreateFormatted(Fmt, Values);
 }
 
 // Return nullptr if there is anything other

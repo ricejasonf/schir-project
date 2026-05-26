@@ -97,8 +97,9 @@ void SetIncludePaths(schir::SchirScheme& SchirScheme) {
 }
 
 static void PrintError(llvm::StringRef Label, schir::Context& C,
-                       schir::Error* Err) {
-  auto SL = C.getFullSourceLocation();
+                       schir::Error* Error) {
+  auto SL = C.getFullSourceLocation(Error);
+  llvm::StringRef Err = Error->getMessage().getStringRef();
   if (SL.isValid()) {
     schir::SourceLineContext LineContext = SL.getLineContext();
     llvm::errs() << LineContext.FileName
@@ -136,7 +137,19 @@ int main(int argc, char const** argv) {
   SchirScheme.RegisterErrorHandler(
     [&HasErrors](schir::Context& C, schir::ValueRefs Args) {
       HasErrors = true;
-      PrintError("error", C, cast<schir::Error>(Args.front()));
+      auto* Error = dyn_cast<schir::Error>(Args.front());
+      if (Error) {
+        PrintError("error", C, Error);
+        for (schir::Value Irr : Error->getIrritants()) {
+          if (auto* Note = dyn_cast<schir::Error>(Irr))
+            PrintError("note", C, Note);
+        }
+      } else {
+        llvm::errs() << "uncaught exception of non-error object:";
+        Args.front().dump();
+        llvm::errs() << "\n\n";
+      }
+      C.Cont();
     });
 
   // Run the top level expressions in the file.

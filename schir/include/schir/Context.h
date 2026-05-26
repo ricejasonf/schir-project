@@ -377,6 +377,7 @@ public:
   String*     CreateString(StringRef, StringRef, StringRef, StringRef);
   String*     CreateFormatted(llvm::StringRef Fmt,
                               llvm::ArrayRef<Value> Values);
+  String*     CreateFormatted(llvm::StringRef Fmt, Value List);
   Vector*     CreateVector(ArrayRef<Value> Xs);
   Vector*     CreateVector(unsigned N, Value Default = Undefined());
   ByteVector* CreateByteVector(llvm::ArrayRef<Value> Xs);
@@ -438,6 +439,7 @@ public:
   }
 
   Error* CreateError(SourceLocation Loc, Value Message, Value Irritants) {
+    Message = CreateFormatted(Message.getStringRef(), Irritants);
     return new (*this) Error(Loc, Message, Irritants);
   }
   Error* CreateError(SourceLocation Loc, StringRef Str, Value Irritants) {

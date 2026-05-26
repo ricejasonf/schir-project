@@ -2154,6 +2154,7 @@ class ListIterator {
   schir::Value Current = schir::Empty();
 public:
 
+  using difference_type = std::ptrdiff_t;
   using value_type = schir::Value;
 
   ListIterator() = default;
@@ -2161,7 +2162,7 @@ public:
     : Current(V)
   { }
 
-  schir::Value& operator*() {
+  schir::Value operator*() const {
     if (auto* P = dyn_cast<schir::Pair>(Current))
       return P->Car;
     else
@@ -2191,6 +2192,7 @@ public:
   }
 };
 
+static_assert(std::forward_iterator<ListIterator>);
 ListIterator Value::begin() const { return ListIterator(*this); }
 ListIterator Value::end() const { return ListIterator(); }
 

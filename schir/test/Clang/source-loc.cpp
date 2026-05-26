@@ -1,11 +1,9 @@
 // RUN: clang++ -I %S/Inputs -fsyntax-only -fplugin=SchirClang.so -Xclang -verify %s
 
-#include <type_traits>
-
 // Note that a note requires an error or a warning in order to be displayed.
-// expected-warning@13{{this is a foo}}
-// expected-error@13{{this is still a foo}}
-// expected-note@15{{this is a bar in a list}}
+// expected-warning@11{{this is a foo}}
+// expected-error@11{{this is still a foo}}
+// expected-note@13{{this is a bar in a list}}
 namespace foo {
 #pragma schir_scheme
 {

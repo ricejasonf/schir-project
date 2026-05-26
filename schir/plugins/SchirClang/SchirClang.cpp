@@ -78,7 +78,6 @@ public:
 
     auto ErrorHandler = [&](schir::Context& C,
                             schir::ValueRefs Args) {
-                            //schir::FullSourceLocation EmbeddedLoc) {
       schir::Error* Error = dyn_cast<schir::Error>(Args.front());
       schir::FullSourceLocation EmbeddedLoc;
       llvm::StringRef ErrMsg;
@@ -96,6 +95,16 @@ public:
       auto& Diags = P.getPreprocessor().getDiagnostics();
       DiagReport<clang::DiagnosticsEngine::Level::Error>{}(
             SchirScheme, EmbeddedLoc, Diags, ErrMsg);
+      if (Error)
+        for (schir::Value Irr : Error->getIrritants()) {
+          if (auto* Note = dyn_cast<schir::Error>(Irr)) {
+            llvm::StringRef NoteMsg = Note->getMessage().getStringRef();
+            schir::FullSourceLocation EmLoc = C.getFullSourceLocation(Note);
+            DiagReport<clang::DiagnosticsEngine::Level::Note>{}(
+                  SchirScheme, EmLoc, Diags, NoteMsg);
+          }
+        }
+      C.Cont();
     };
     SchirScheme.RegisterErrorHandler(ErrorHandler);
 
