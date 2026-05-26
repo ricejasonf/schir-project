@@ -434,6 +434,7 @@ public:
   Error* CreateError(SourceLocation Loc, StringRef Str, Value Irritants) {
     return CreateError(Loc, CreateString(Str), Irritants);
   }
+  Error* CreateError(Value Message, llvm::ArrayRef<Value> Irritants);
 
   ExternName* CreateExternName(SourceLocation Loc, String* Str) {
     return new (*this) ExternName(Str, Loc);

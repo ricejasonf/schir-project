@@ -849,6 +849,8 @@ private:
     }
 
     if (!Result) {
+      schir::SourceLocation Loc = getSourceLocation(Op.getLoc());
+      Context.setLoc(Loc);
       std::string Str;
       llvm::raw_string_ostream Stream(Str);
       Type.print(Stream);

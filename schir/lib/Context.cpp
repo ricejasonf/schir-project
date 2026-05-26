@@ -1330,6 +1330,18 @@ void Context::RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs) {
   Raise(Error);
 }
 
+Error* Context::CreateError(Value Msg, llvm::ArrayRef<Value> IrrArgs) {
+  SourceLocation Loc;
+  Value IrrList = Empty();
+  for (Value Irr : llvm::reverse(IrrArgs)) {
+    IrrList = CreatePair(Irr, IrrList);
+    if (!Loc.isValid())
+      Loc = Irr.getSourceLocation();
+  }
+
+  return CreateError(Loc, Msg, IrrList);
+}
+
 // ManagedObjectWind - Manage the lifetime of a C++ object within a dynamic
 // extent via a provided type-erased desctructor.
 void Context::ManagedObjectWind(void* Ptr, DestructorTy Destructor,

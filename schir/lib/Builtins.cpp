@@ -89,6 +89,8 @@ schir::ExternFunction call_with_values;
 schir::ExternFunction with_exception_handler;
 schir::ExternFunction raise;
 schir::ExternFunction error;
+schir::ExternFunction error_note;
+schir::ExternFunction format_string;
 schir::ExternFunction dynamic_wind;
 schir::ExternFunction load_module;
 schir::ExternFunction source_loc;
@@ -1062,6 +1064,24 @@ void error(Context& C, ValueRefs Args) {
   C.RaiseError(cast<String>(Args[0]), Args.drop_front());
 }
 
+// Create an error object without raising.
+// (can be used as irritant to add additional notes to errors)
+void error_note(Context& C, ValueRefs Args) {
+  if (Args.size() == 0) return C.RaiseError("invalid arity");
+  if (C.CheckKind<String>(Args[0])) return;
+
+  Value Err = C.CreateError(Args[0], Args.drop_front());
+  C.Cont(Err);
+}
+
+void format_string(Context& C, ValueRefs Args) {
+  if (Args.size() == 0) return C.RaiseError("invalid arity");
+  if (C.CheckKind<String>(Args[0])) return;
+
+  Value Str = C.CreateFormatted(Args[0].getStringRef(), Args.drop_front());
+  C.Cont(Str);
+}
+
 void dynamic_wind(Context& C, ValueRefs Args) {
   if (Args.size() != 3) return C.RaiseError("invalid arity");
   C.DynamicWind(Args[0], Args[1], Args[2]);
@@ -1380,6 +1400,8 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
     = schir::builtins::with_exception_handler;
   SCHIR_BASE_VAR(raise)   = schir::builtins::raise;
   SCHIR_BASE_VAR(error)   = schir::builtins::error;
+  SCHIR_BASE_VAR(error_note) = schir::builtins::error_note;
+  SCHIR_BASE_VAR(format_string) = schir::builtins::format_string;
   SCHIR_BASE_VAR(dynamic_wind) = schir::builtins::dynamic_wind;
 
   SCHIR_BASE_VAR(eval)    = schir::builtins::eval;
@@ -1480,6 +1502,8 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"with-exception-handler", SCHIR_BASE_VAR(with_exception_handler)},
     {"raise", SCHIR_BASE_VAR(raise)},
     {"error", SCHIR_BASE_VAR(error)},
+    {"error-note", SCHIR_BASE_VAR(error_note)},
+    {"format-string", SCHIR_BASE_VAR(format_string)},
     {"dynamic-wind", SCHIR_BASE_VAR(dynamic_wind)},
 
     {"eval",    SCHIR_BASE_VAR(eval)},
