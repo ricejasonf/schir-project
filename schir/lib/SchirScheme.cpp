@@ -96,7 +96,7 @@ void SchirScheme::RegisterErrorHandler(std::function<UserErrorHandlerFn> Fn) {
     schir::FullSourceLocation FullLoc = SM->getFullSourceLocation(
         Args[0].getSourceLocation());
     if (schir::Error* Err = dyn_cast<schir::Error>(Args[0])) {
-      String* FmtMessage = C.CreateFormatted(Err);
+      String* FmtMessage = cast<String>(Err->getMessage());
       UserErrorHandler(FmtMessage->getStringRef(), FullLoc);
     } else {
       UserErrorHandler("errorhandler received a non-error", FullLoc);

@@ -367,7 +367,6 @@ public:
   String*     CreateString(StringRef, StringRef, StringRef, StringRef);
   String*     CreateFormatted(llvm::StringRef Fmt,
                               llvm::ArrayRef<Value> Values);
-  String*     CreateFormatted(Error* Err);
   Vector*     CreateVector(ArrayRef<Value> Xs);
   Vector*     CreateVector(unsigned N, Value Default = Undefined());
   ByteVector* CreateByteVector(llvm::ArrayRef<Value> Xs);
