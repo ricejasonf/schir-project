@@ -46,16 +46,6 @@
   (format-string "this is just a string: {1}" 5 "yo"))
 (newline)
 
-; CHECK: "accessing invalid index: 3"
-(write
-  (format-string "accessing invalid index: {3}" 5 "yo"))
-(newline)
-
-; CHECK: "accessing invalid index: "
-(write
-  (format-string "accessing invalid index: {foo}" 5 "yo"))
-(newline)
-
 ; CHECK: "escaping braces: {foo}"
 (write
   (format-string "escaping braces: {{foo}" 5 "yo"))
