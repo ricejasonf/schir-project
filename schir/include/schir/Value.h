@@ -1281,11 +1281,15 @@ public:
   static ValueKind getKind() { return ValueKind::SyntaxClosure; }
 };
 
-inline bool isIdentifier(Value V) {
+// Returns unwrapped identifier or nullptr.
+inline Symbol* unwrapIdentifier(Value V) {
   if (auto* SC = dyn_cast<SyntaxClosure>(V))
     V = SC->Node;
 
-  return isa<Symbol>(V);
+  return dyn_cast<Symbol>(V);
+}
+inline bool isIdentifier(Value V) {
+  return unwrapIdentifier(V) != nullptr;
 }
 
 class Vector final

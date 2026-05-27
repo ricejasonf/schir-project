@@ -356,16 +356,7 @@ public:
 
   void createLoadModule(SourceLocation Loc, Symbol* MangledName);
 
-  mlir::Value SetError(schir::Error* NewErr) {
-    assert((!Err || Value(NewErr) == Err) && "no squashing errors");
-    Err = NewErr;
-    Context.setLoc(Err.getSourceLocation());
-    if (RunSyncDepth == 0)
-      Context.Raise(Err);
-    else
-      Context.Yield(Err);
-    return Error();
-  }
+  mlir::Value SetError(schir::Error* NewErr);
 
   template <typename T>
   mlir::Value SetError(SourceLocation Loc, T Str,

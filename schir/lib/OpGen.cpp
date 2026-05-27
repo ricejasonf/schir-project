@@ -32,6 +32,8 @@
 
 using namespace schir;
 
+static ContextLocal SyntaxStack;
+
 struct OpGen::SyntaxClosureScope {
   OpGen& O;
   SyntaxClosure* PrevSC;
@@ -302,8 +304,6 @@ void OpGen::VisitLibrary(schir::SourceLocation Loc,
         // The library is done.
         // Unset stuff so the cleanups will run.
         cast<Binding>(HandleLibraryDecls)->setValue(Empty());
-        //C.OpGen->LibraryEnvProc->setValue(Empty());
-        //C.Cont();
         C.Apply(C.OpGen->LibraryEnvProc->getValue(), Value(Empty()));
         C.PushCont(HandleLibraryDecls->getValue());
       } else {
@@ -1492,6 +1492,16 @@ mlir::Value OpGen::createContinuation(mlir::Operation* CallOp) {
 }
 
 mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
+  // Push to syntax stack where each node is '(Operator . P)
+  Binding* SSB = SyntaxStack.getBinding(Context);
+  Value StackNode = Context.CreatePair(Operator, P);
+  SSB->setValue(Context.CreatePair(StackNode, SSB->getValue()));
+  // Pop the syntax stack on scope exit.
+
+  auto SyntaxStackPopper = llvm::scope_exit([SSB] {
+      SSB->setValue(cast<Pair>(SSB->getValue())->Cdr);
+    });
+
   switch (Operator.getKind()) {
     case ValueKind::BuiltinSyntax: {
       Context.setLoc(P->getSourceLocation());
@@ -1507,12 +1517,16 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
       schir::OpGen* OpGen = Context.OpGen;
       assert(OpGen == this && "sanity check");
       ++RunSyncDepth;
+
       std::array<schir::Value, 2> Args{Input, Env};
       Value Result = Context.RunSync(Operator, Args);
       --RunSyncDepth;
       assert(OpGen == Context.OpGen && "OpGen should not unwind itself");
-      if (auto ResultErr = dyn_cast_or_null<schir::Error>(Result))
+
+      if (auto ResultErr = dyn_cast_or_null<schir::Error>(Result)) {
+        // Propagate the error to this instance.
         SetError(ResultErr);
+      }
       Context.PopEnvFrame(EF);
       return toValue(Result);
     }
@@ -1521,6 +1535,42 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
       return mlir::Value();
     }
   }
+}
+
+mlir::Value OpGen::SetError(schir::Error* NewErr) {
+  assert((!Err || Value(NewErr) == Err) && "no squashing errors");
+  Err = NewErr;
+  Context.setLoc(Err.getSourceLocation());
+  if (RunSyncDepth == 0) {
+    Context.Raise(Err);
+  } else if (RunSyncDepth == 1) {
+    Binding* SSB = SyntaxStack.getBinding(Context);
+    if (auto* P = dyn_cast<Pair>(SSB->getValue())) {
+      // Recreate the error appending the nodes of the syntax stack as notes.
+      llvm::SmallVector<Value, 12> Irrs;
+      for (Value SyntaxStackNode : Value(P)) {
+        if (auto* P2 = dyn_cast<Pair>(SyntaxStackNode)) {
+          // Add error as irritant (which is rendered as a note.)
+          Value SyntaxSym = P2->Cdr.car();
+          Symbol* S = unwrapIdentifier(P2->Cdr.car());
+          assert(S && "expecting syntax identifier");
+          Value Note = Context.CreateError(P2->Cdr.getSourceLocation(),
+                                           "while expanding syntax: {}",
+                                           Value(S));
+          Irrs.insert(Irrs.begin(), Note);
+        }
+        Value PrevIrrs = NewErr->getIrritants();
+        Irrs.insert(Irrs.begin(), PrevIrrs.begin(), PrevIrrs.end());
+      }
+      Err = Context.CreateError(Value(NewErr).getSourceLocation(),
+                                NewErr->getMessage(),
+                                Context.CreateList(Irrs));
+    }
+    Context.Yield(Err);
+  } else {
+    Context.Yield(Err);
+  }
+  return Error();
 }
 
 mlir::Value OpGen::VisitPair(Pair* P) {
