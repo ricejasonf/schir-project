@@ -18,88 +18,44 @@
 
 #include "schir/Value.h"
 
-#define SCHIR_CLANG_LIB               _SCHIRL5Sclang
-#define SCHIR_CLANG_LIB_(NAME)        _SCHIRL5Sclang ## NAME
-#define SCHIR_CLANG_LIB_STR           "_SCHIRL5SschirL5Sclang"
-#define SCHIR_CLANG_LOAD_MODULE       SCHIR_CLANG_LIB##_load_module
-#define SCHIR_CLANG_INIT              SCHIR_CLANG_LIB##_init
-#define SCHIR_CLANG_VAR(NAME)         SCHIR_CLANG_VAR__##NAME
-#define SCHIR_CLANG_VAR__diag_error   SCHIR_CLANG_LIB_(VS4diagmi5Serror)
-#define SCHIR_CLANG_VAR__diag_warning SCHIR_CLANG_LIB_(VS4diagmi7Swarning)
-#define SCHIR_CLANG_VAR__diag_note    SCHIR_CLANG_LIB_(VS4diagmi4Snote)
-#define SCHIR_CLANG_VAR__hello_world  SCHIR_CLANG_LIB_(V5Shellomi5Sworld)
-#define SCHIR_CLANG_VAR__write_lexer  SCHIR_CLANG_LIB_(V5Swritemi5Slexer)
-#define SCHIR_CLANG_VAR__lexer_writer SCHIR_CLANG_LIB_(V5Slexermi6Swriter)
-#define SCHIR_CLANG_VAR__expr_eval    SCHIR_CLANG_LIB_(V4Sexprmi4Seval)
+// TODO All of this could be moved to SchirClang.cpp and schir/clang.sld.
 
-// diag-error
-// diag-warning
-// diag-note
-extern schir::ContextLocal SCHIR_CLANG_VAR(diag_error);
-extern schir::ContextLocal SCHIR_CLANG_VAR(diag_warning);
-extern schir::ContextLocal SCHIR_CLANG_VAR(diag_note);
+// This is the mangled library name.
+#define SCHIR_CLANG_LIB_STR "_SCHIRL5SschirL5Sclang"
 
-// hello-world
-extern schir::ContextLocal SCHIR_CLANG_VAR(hello_world);
-
-// write-lexer
-extern schir::ContextLocal SCHIR_CLANG_VAR(write_lexer);
-
-// lexer-writer
-extern schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
-
-// expr-eval
-extern schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
-
-// expr->type
-extern schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
-
-// template-probe
-extern schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
-
-// template-probe
-extern schir::ContextLocal SCHIR_CLANG_VAR(flush_tokens);
-
-extern "C" {
-// initialize the module for run-time independent of the compiler
-inline void SCHIR_CLANG_INIT(schir::Context& Context) {
-  assert(SCHIR_CLANG_VAR(diag_error).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(diag_warning).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(diag_note).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(hello_world).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(write_lexer).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(lexer_writer).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(expr_eval).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(expr_type).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(template_probe).get(Context) &&
-      "external module must be preloaded");
-  assert(SCHIR_CLANG_VAR(flush_tokens).get(Context) &&
-      "external module must be preloaded");
+#define SCHIR_CLANG_VAR(NAME) ::schir_clang::NAME
+namespace schir_clang {
+extern schir::ContextLocal diag_error;
+extern schir::ContextLocal diag_warning;
+extern schir::ContextLocal diag_note;
+extern schir::ContextLocal hello_world;
+extern schir::ContextLocal write_lexer;
+extern schir::ContextLocal lexer_writer;
+extern schir::ContextLocal expr_eval;
+extern schir::ContextLocal expr_type;
+extern schir::ContextLocal template_probe;
+extern schir::ContextLocal flush_tokens;
+extern schir::ContextLocal register_module;
+extern schir::ContextLocal registered_modules;
 }
 
-// initializes the module and loads lookup information
-// for the compiler
-inline void SCHIR_CLANG_LOAD_MODULE(schir::Context& Context) {
-  SCHIR_CLANG_INIT(Context);
+extern "C" {
+// Initialize the module and load lookup information
+// for the compiler.
+inline void SchirClangLoadModule(schir::Context& Context) {
   schir::initModuleNames(Context, SCHIR_CLANG_LIB_STR, {
-    {"diag-error",  SCHIR_CLANG_VAR(diag_error).get(Context)},
-    {"diag-warning",  SCHIR_CLANG_VAR(diag_warning).get(Context)},
-    {"diag-note",  SCHIR_CLANG_VAR(diag_note).get(Context)},
-    {"hello-world", SCHIR_CLANG_VAR(hello_world).get(Context)},
-    {"write-lexer", SCHIR_CLANG_VAR(write_lexer).get(Context)},
-    {"lexer-writer",SCHIR_CLANG_VAR(lexer_writer).get(Context)},
-    {"expr-eval",   SCHIR_CLANG_VAR(expr_eval).get(Context)},
-    {"expr->type",   SCHIR_CLANG_VAR(expr_type).get(Context)},
-    {"template-probe", SCHIR_CLANG_VAR(template_probe).get(Context)},
-    {"flush-tokens", SCHIR_CLANG_VAR(flush_tokens).get(Context)}
+    {"diag-error", schir_clang::diag_error.get(Context)},
+    {"diag-warning", schir_clang::diag_warning.get(Context)},
+    {"diag-note", schir_clang::diag_note.get(Context)},
+    {"hello-world", schir_clang::hello_world.get(Context)},
+    {"write-lexer", schir_clang::write_lexer.get(Context)},
+    {"lexer-writer", schir_clang::lexer_writer.get(Context)},
+    {"expr-eval", schir_clang::expr_eval.get(Context)},
+    {"expr->type", schir_clang::expr_type.get(Context)},
+    {"template-probe", schir_clang::template_probe.get(Context)},
+    {"flush-tokens", schir_clang::flush_tokens.get(Context)},
+    {"register-module", schir_clang::register_module.get(Context)}
+    {"registered-modules", schir_clang::registered_modules.get(Context)}
   });
 }
 }

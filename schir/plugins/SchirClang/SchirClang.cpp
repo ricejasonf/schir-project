@@ -30,6 +30,8 @@ schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
 schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
 schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
 schir::ContextLocal SCHIR_CLANG_VAR(flush_tokens);
+schir::ContextLocal SCHIR_CLANG_VAR(register_module);
+schir::ContextLocal SCHIR_CLANG_VAR(registered_modules);
 
 namespace {
 using schir_clang::DiagReport;
@@ -58,6 +60,12 @@ struct InstanceTy {
 };
 
 static std::unique_ptr<InstanceTy> Instance;
+
+namespace schir_clang {
+schir::SchirScheme& getSchirSchemeInstance() {
+  return Instance->SchirScheme;
+}
+} // namespace schir_clang
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
