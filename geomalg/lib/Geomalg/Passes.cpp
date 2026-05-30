@@ -1822,6 +1822,7 @@ public:
   }
 };
 
+// FIXME The name is too specific to SPIRV if we also use it for LLVM.
 // Since 'unknown' is mainly for testing, default to
 // 'cga' for the metric.
 struct GeomalgToSPIRVOptions
@@ -1851,4 +1852,22 @@ void geomalg::registerGeomalgToSPIRV() {
 
   mlir::PassPipelineRegistration<GeomalgToSPIRVOptions>(
         "geomalg-to-spirv", "Convert Geomalg to SPIRV (cga)", BuildFn);
+}
+
+void geomalg::registerGeomalgToLLVM() {
+  auto BuildFn = [](mlir::OpPassManager& PM,
+                    GeomalgToSPIRVOptions const& Options) {
+    geomalg::ExpandPassOptions EPO{.metric = Options.MetricName,
+                                   .disabledPatterns = {"ExpandMatvec"}};
+    PM.addNestedPass<mlir::func::FuncOp>(createExpandPass(EPO));
+    PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
+    //PM.addPass(mlir::createSCCPPass());
+    PM.addPass(createLowerPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
+    PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
+    PM.addPass(createLowerToLLVMPass());
+  };
+
+  mlir::PassPipelineRegistration<GeomalgToSPIRVOptions>(
+        "geomalg-to-llvm", "Convert Geomalg to LLVM (cga)", BuildFn);
 }

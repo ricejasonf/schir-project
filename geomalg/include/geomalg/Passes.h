@@ -33,6 +33,7 @@ inline bool isUnitBlade(mlir::Value V) {
 }
 
 void registerGeomalgToSPIRV();
+void registerGeomalgToLLVM();
 }  // namespace geomalg
 
 #endif  // GEOMALG_PASSES_H

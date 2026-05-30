@@ -1,8 +1,13 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Metric.h>
 #include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
+#include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
+#include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
 #include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
+#include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
+#include <mlir/Conversion/LLVMCommon/TypeConverter.h>
 #include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
+#include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
@@ -27,6 +32,7 @@
 namespace geomalg {
 #define GEN_PASS_DEF_LOWERPASS
 #define GEN_PASS_DEF_LOWERTOSPIRVPASS
+#define GEN_PASS_DEF_LOWERTOLLVMPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
 
@@ -533,6 +539,34 @@ public:
 
     mlir::LogicalResult
       Result = mlir::applyPartialConversion(M, *Target, std::move(PS));
+    if (llvm::failed(Result))
+      signalPassFailure();
+  }
+};
+
+// This pass is to be run on the lower dialects (ie after geomalg-lower.)
+class LowerToLLVMPass : public geomalg::impl::LowerToLLVMPassBase<LowerToLLVMPass> {
+  using Base = geomalg::impl::LowerToLLVMPassBase<LowerToLLVMPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+
+  void runOnOperation() override {
+    mlir::MLIRContext* Ctx = &getContext();
+    mlir::ModuleOp M = getOperation();
+
+    mlir::LLVMTypeConverter TC = mlir::LLVMTypeConverter(Ctx);
+    mlir::LLVMConversionTarget Target(*Ctx);
+
+    mlir::RewritePatternSet PS(Ctx);
+    // LLVM conversion patterns
+    arith::populateArithToLLVMConversionPatterns(TC, PS);
+    mlir::populateFuncToLLVMConversionPatterns(TC, PS);
+    mlir::populateVectorToLLVMConversionPatterns(TC, PS);
+
+    mlir::LogicalResult
+      Result = mlir::applyPartialConversion(M, Target, std::move(PS));
     if (llvm::failed(Result))
       signalPassFailure();
   }

@@ -4,6 +4,7 @@
 #include <geomalg/BladeTag.h>
 #include <llvm/ADT/Hashing.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/OpDefinition.h>
