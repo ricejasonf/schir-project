@@ -4,10 +4,9 @@
 #include <llvm/IR/PassManager.h>
 
 namespace schir_clang {
-// Relegate ourselves to getting the static
-// instance from the parser plugin... :(
+// Get the static instance from the parser plugin... :(
 extern schir::SchirScheme& getSchirSchemeInstance();
-extern schir::ContextLocal 
+extern schir::ContextLocal // what was this going to be?
 }
 
 namespace {
@@ -22,7 +21,7 @@ class InjectPass : llvm::PassInfoMixin<InjectPass> {
       auto* Op = cast<mlir::Operation>(Module);
       if (auto* ModuleOp = dyn_cast<mlir::ModuleOp>(Module)) {
         std::unique_ptr<llvm::Module> M
-          = mlir::translateModuleToLLVMIR(ModuleOp, LLVMCtx); 
+          = mlir::translateModuleToLLVMIR(ModuleOp, LLVMCtx);
         if (!M || llvm::Linker::linkModules(MainModule, std::move(M))) {
           llvm::Linker::linkModules(MainModule, std::move(M));
         } else {

@@ -1,7 +1,6 @@
 // Copyright Jason Rice 2025
 
 #include <schir/Builtins.h>
-#include <schir/Clang.h>
 #include <schir/Context.h>
 #include <schir/SchirScheme.h>
 #include <schir/Value.h>
@@ -20,25 +19,46 @@
 #include "ClangUtil.h"
 #include "TemplateProbe.h"
 
-schir::ContextLocal SCHIR_CLANG_VAR(diag_error);
-schir::ContextLocal SCHIR_CLANG_VAR(diag_warning);
-schir::ContextLocal SCHIR_CLANG_VAR(diag_note);
-schir::ContextLocal SCHIR_CLANG_VAR(hello_world);
-schir::ContextLocal SCHIR_CLANG_VAR(write_lexer);
-schir::ContextLocal SCHIR_CLANG_VAR(lexer_writer);
-schir::ContextLocal SCHIR_CLANG_VAR(expr_eval);
-schir::ContextLocal SCHIR_CLANG_VAR(expr_type);
-schir::ContextLocal SCHIR_CLANG_VAR(template_probe);
-schir::ContextLocal SCHIR_CLANG_VAR(flush_tokens);
-schir::ContextLocal SCHIR_CLANG_VAR(register_module);
-schir::ContextLocal SCHIR_CLANG_VAR(registered_modules);
+// Manually mangling to support module lookup.
+#define SCHIR_CLANG_LIB_STR "_SCHIRL5SschirL5Sclang"
 
 namespace {
+using schir::ContextLocal;
 using schir_clang::DiagReport;
 using schir_clang::LexerWriter;
 using schir_clang::ParseExpression;
 using schir_clang::RunTemplateProbe;
 using schir_clang::getSourceLocation;
+
+ContextLocal diag_error;
+ContextLocal diag_warning;
+ContextLocal diag_note;
+ContextLocal hello_world;
+ContextLocal write_lexer;
+ContextLocal lexer_writer;
+ContextLocal expr_eval;
+ContextLocal expr_type;
+ContextLocal template_probe;
+ContextLocal flush_tokens;
+ContextLocal register_module;
+ContextLocal registered_modules;
+
+void LoadModule(schir::Context& Context) {
+  schir::initModuleNames(Context, SCHIR_CLANG_LIB_STR, {
+    {"diag-error", ::diag_error.get(Context)},
+    {"diag-warning", ::diag_warning.get(Context)},
+    {"diag-note", ::diag_note.get(Context)},
+    {"hello-world", ::hello_world.get(Context)},
+    {"write-lexer", ::write_lexer.get(Context)},
+    {"lexer-writer", ::lexer_writer.get(Context)},
+    {"expr-eval", ::expr_eval.get(Context)},
+    {"expr->type", ::expr_type.get(Context)},
+    {"template-probe", ::template_probe.get(Context)},
+    {"flush-tokens", ::flush_tokens.get(Context)},
+    {"register-module", ::register_module.get(Context)},
+    {"registered-modules", ::registered_modules.get(Context)}
+  });
+}
 
 // The stuff we need to stay alive.
 struct InstanceTy {
@@ -60,12 +80,6 @@ struct InstanceTy {
 };
 
 static std::unique_ptr<InstanceTy> Instance;
-
-namespace schir_clang {
-schir::SchirScheme& getSchirSchemeInstance() {
-  return Instance->SchirScheme;
-}
-} // namespace schir_clang
 
 using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
@@ -334,21 +348,14 @@ public:
 
     schir::Context& Context = SchirScheme.getContext();
     schir::builtins::InitParseSourceFile(Context, ParseSourceFileFn);
-    SCHIR_CLANG_VAR(diag_error).set(Context,
-                                    Context.CreateLambda(diag_error));
-    SCHIR_CLANG_VAR(diag_warning).set(Context,
-                                      Context.CreateLambda(diag_warning));
-    SCHIR_CLANG_VAR(diag_note).set(Context,
-                                   Context.CreateLambda(diag_note));
-    SCHIR_CLANG_VAR(hello_world).set(Context,
-                                     Context.CreateLambda(hello_world));
-    SCHIR_CLANG_VAR(expr_eval).set(Context,
-                                    Context.CreateLambda(expr_eval));
-    SCHIR_CLANG_VAR(expr_type).set(Context,
-                                    Context.CreateLambda(expr_type));
-    SCHIR_CLANG_VAR(template_probe).set(Context,
-                                    Context.CreateLambda(template_probe));
-    SCHIR_CLANG_VAR(write_lexer).set(Context,
+    ::diag_error.set(Context, Context.CreateLambda(diag_error));
+    ::diag_warning.set(Context, Context.CreateLambda(diag_warning));
+    ::diag_note.set(Context, Context.CreateLambda(diag_note));
+    ::hello_world.set(Context, Context.CreateLambda(hello_world));
+    ::expr_eval.set(Context, Context.CreateLambda(expr_eval));
+    ::expr_type.set(Context, Context.CreateLambda(expr_type));
+    ::template_probe.set(Context, Context.CreateLambda(template_probe));
+    ::write_lexer.set(Context,
         Context.CreateLambda([&](schir::Context& C,
                                  schir::ValueRefs Args) mutable {
       schir::SourceLocation Loc;
@@ -389,7 +396,7 @@ public:
             SchirScheme.getFullSourceLocation(Loc)), Str);
     };
     auto LWF = schir::LexerWriterFnRef(LexerWriterFn);
-    SCHIR_CLANG_VAR(lexer_writer).set(Context, Context.CreateAny(LWF));
+    ::lexer_writer.set(Context, Context.CreateAny(LWF));
 
     // Create scheme proc to allow the user to
     // flush tokens and continue evaluation.
@@ -404,9 +411,9 @@ public:
       TheLexerWriter.PushResumeToken(Loc, this);
       HS.Break();
     };
-    SCHIR_CLANG_VAR(flush_tokens)
+    ::flush_tokens
       .set(Context, Context.CreateLambda(FlushTokens));
-    SchirScheme.RegisterModule(SCHIR_CLANG_LIB_STR, SCHIR_CLANG_LOAD_MODULE);
+    SchirScheme.RegisterModule(SCHIR_CLANG_LIB_STR, LoadModule);
   }
 
   void HandleParseExternalDeclaration(
@@ -457,3 +464,9 @@ public:
 
 static clang::PragmaHandlerRegistry::Add<SchirSchemePragmaHandler>
 PragmaHandler("schir_scheme", "embed compile-time scheme");
+
+namespace schir_clang {
+schir::SchirScheme& getSchirSchemeInstance() {
+  return Instance->SchirScheme;
+}
+}
