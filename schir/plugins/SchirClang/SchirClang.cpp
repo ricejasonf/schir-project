@@ -40,8 +40,6 @@ ContextLocal expr_eval;
 ContextLocal expr_type;
 ContextLocal template_probe;
 ContextLocal flush_tokens;
-ContextLocal register_module;
-ContextLocal registered_modules;
 
 void LoadModule(schir::Context& Context) {
   schir::initModuleNames(Context, SCHIR_CLANG_LIB_STR, {
@@ -54,9 +52,7 @@ void LoadModule(schir::Context& Context) {
     {"expr-eval", ::expr_eval.get(Context)},
     {"expr->type", ::expr_type.get(Context)},
     {"template-probe", ::template_probe.get(Context)},
-    {"flush-tokens", ::flush_tokens.get(Context)},
-    {"register-module", ::register_module.get(Context)},
-    {"registered-modules", ::registered_modules.get(Context)}
+    {"flush-tokens", ::flush_tokens.get(Context)}
   });
 }
 
@@ -465,6 +461,7 @@ public:
 static clang::PragmaHandlerRegistry::Add<SchirSchemePragmaHandler>
 PragmaHandler("schir_scheme", "embed compile-time scheme");
 
+// Give the PassPlugin stuff access to needed stuff.
 namespace schir_clang {
 schir::SchirScheme& getSchirSchemeInstance() {
   return Instance->SchirScheme;

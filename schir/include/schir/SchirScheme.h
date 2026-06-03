@@ -13,6 +13,7 @@
 #ifndef LLVM_SCHIR_SCHIRSCHEME_H
 #define LLVM_SCHIR_SCHIRSCHEME_H
 
+#include "schir/Context.h"
 #include "schir/Lexer.h"
 #include "schir/Source.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -22,15 +23,11 @@
 #include <memory>
 
 namespace schir {
-class Context;
 class SourceFileStorage;
 class SourceManager;
-class Value;
 class Environment;
 class FullSourceLocation;
 using ModuleLoadNamesFn = void(schir::Context&);
-using ValueRefs   = llvm::MutableArrayRef<schir::Value>;
-using ValueFnTy   = void (Context&, ValueRefs);
 
   namespace base {
     void eval(Context& C, ValueRefs Args);

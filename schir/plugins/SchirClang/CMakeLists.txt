@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.13.4)
 
-add_llvm_library(SchirClang MODULE SchirClang.cpp PLUGIN_TOOL clang)
+add_llvm_library(SchirClang
+  MODULE
+    SchirClang.cpp
+  PLUGIN_TOOL clang)
 
 # Use  -DClang_DIR=llvm_build/lib/cmake/clang.
 # (case sensitive)
