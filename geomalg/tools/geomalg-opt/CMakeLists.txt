@@ -4,16 +4,7 @@ add_executable(geomalg-opt geomalg_opt_main.cpp)
 
 target_link_libraries(geomalg-opt
   PRIVATE
-  MLIRBytecodeWriter
-  MLIRDebug
-  MLIROptLib
-  MLIRParser
-  MLIRPass
-  MLIRRemarkStreamer
-  MLIRSupport
-
-  MLIRRegisterAllDialects
-  MLIRRegisterAllPasses
+  MLIR
   GeomalgDialect
   )
 

@@ -13,14 +13,18 @@ set(GEOMALG_SOURCE_FILES
 add_library(GeomalgDialect ${GEOMALG_SOURCE_FILES})
 target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(GeomalgDialect ${GEOMALG_SOURCE_GEN_DEPS})
+target_link_libraries(GeomalgDialect
+  PRIVATE
+    LLVMCore
+    LLVMSupport
+    MLIR)
 
 add_library(Geomalg MODULE Geomalg.cpp ${GEOMALG_SOURCE_FILES})
 target_link_libraries(Geomalg
-  MLIRPass
-  MLIRIR # for debugging
-  MLIRRegisterAllDialects
-  MLIRRegisterAllExtensions
-  MLIRRegisterAllPasses)
+  PRIVATE
+    LLVMCore
+    LLVMSupport
+    MLIR)
 target_compile_options(Geomalg PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Geomalg ${GEOMALG_SOURCE_GEN_DEPS})
 
