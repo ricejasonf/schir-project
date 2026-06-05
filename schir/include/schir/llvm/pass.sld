@@ -6,7 +6,10 @@
   (import (schir base))
   (begin
     (load-plugin "SchirLLVMPass.so")
-    (define inject_module
-      (load_builtin "schir_llvm_pass_inject_module")
+    (define inject-module
+      (load-builtin "schir_llvm_pass_inject_module"))
+    (define init
+      (load-builtin "schir_llvm_pass_init"))
+    (init)
     ))
 

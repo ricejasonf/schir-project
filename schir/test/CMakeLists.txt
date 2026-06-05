@@ -5,6 +5,7 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
   )
 
+# TODO Use a variable to track tests to dependencies.
 add_lit_testsuite(check-schir "Running Schir tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
@@ -12,6 +13,7 @@ add_lit_testsuite(check-schir "Running Schir tests"
     schir-opt
     SchirClang
     SchirLLVMPass
+    SchirMlirAllPasses
     SchirHelloWorld
     FileCheck
 )

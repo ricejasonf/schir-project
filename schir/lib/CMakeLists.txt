@@ -34,20 +34,4 @@ add_dependencies(schir
 target_link_libraries(schir
   LLVMCore
   LLVMSupport
-  MLIRAnalysis
-  MLIRBytecodeReader
-  MLIRBytecodeWriter
-  MLIRFuncDialect
-  MLIRIR
-  MLIRParser
-  MLIRPass
-  MLIRSideEffectInterfaces
-  MLIRSupport
-  MLIRTransforms
-
-  MLIRRegisterAllDialects
-  MLIRRegisterAllPasses
-  MLIRRegisterAllExtensions
-  ${MLIR_DIALECT_LIBS}
-  ${MLIR_CONVERSION_LIBS}
-  ${MLIR_EXTENSION_LIBS})
+  MLIR)

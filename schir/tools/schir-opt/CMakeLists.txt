@@ -11,13 +11,7 @@ target_link_libraries(schir-opt
   PRIVATE
   LLVMCore
   LLVMSupport
-  MLIRBytecodeWriter
-  MLIRDebug
-  MLIROptLib
-  MLIRParser
-  MLIRPass
-  MLIRRemarkStreamer
-  MLIRSupport
+  MLIR
   schir
   )
 

@@ -1,9 +1,12 @@
 // Copyright Jason Rice 2026
 
 #include <schir/SchirScheme.h>
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include <mlir/Target/LLVMIR/Export.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Operation.h>
+#include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
@@ -18,6 +21,17 @@ namespace mlir {
 // List of Modules to convert to LLVM IR.
 static schir::ContextLocal InjectedModules;
 // Push a mlir::ModuleOp to the list.
+extern "C" void
+schir_llvm_pass_init(schir::Context& C, schir::ValueRefs Args) {
+  if (!C.MLIRContext)
+    return C.RaiseError("MLIRContext is not set");
+  // Ensure the LLVM Dialect is loaded.
+  C.MLIRContext->getOrLoadDialect<mlir::LLVM::LLVMDialect>();
+  mlir::registerBuiltinDialectTranslation(*C.MLIRContext);
+  mlir::registerLLVMDialectTranslation(*C.MLIRContext);
+  C.Cont();
+}
+
 extern "C" void
 schir_llvm_pass_inject_module(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
@@ -46,11 +60,28 @@ extern schir::SchirScheme& getSchirSchemeInstance();
 }
 
 namespace {
+class DiagnosticHandlerHolder {
+  llvm::LLVMContext& LLVMCtx;
+  std::unique_ptr<llvm::DiagnosticHandler> PrevHandler;
+public:
+  DiagnosticHandlerHolder(llvm::LLVMContext& LLVMCtx)
+    : LLVMCtx(LLVMCtx),
+      PrevHandler(LLVMCtx.getDiagnosticHandler())
+  { }
+
+  ~DiagnosticHandlerHolder() {
+    LLVMCtx.setDiagnosticHandler(std::move(PrevHandler));
+  }
+};
+
 class InjectPass : public llvm::PassInfoMixin<InjectPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Module& MainModule,
                               llvm::ModuleAnalysisManager& MA) {
     llvm::LLVMContext& LLVMCtx = MainModule.getContext();
+    // Hijack the DiagnosticHandler temporarily.
+    // It prints to llvm::errs() by default.
+    DiagnosticHandlerHolder DHH(LLVMCtx);
     schir::SchirScheme& SchirScheme = schir_clang::getSchirSchemeInstance();
     schir::Context& C = SchirScheme.getContext();
     schir::Value ModuleList = ::InjectedModules.get(C);
@@ -59,11 +90,16 @@ public:
       if (mlir::isa<mlir::ModuleOp>(Op)) {
         std::unique_ptr<llvm::Module> M
           = mlir::translateModuleToLLVMIR(Op, LLVMCtx);
-        if (!M || llvm::Linker::linkModules(MainModule, std::move(M))) {
-          llvm::Linker::linkModules(MainModule, std::move(M));
-        } else {
-          LLVMCtx.emitError("Schir inject IR failed.");
+        if (!M) {
+          LLVMCtx.emitError("Schir mlir translate to llvm failed.");
           return llvm::PreservedAnalyses::all();
+        } else {
+          M->setDataLayout(MainModule.getDataLayout());
+          M->setTargetTriple(MainModule.getTargetTriple());
+          if (llvm::Linker::linkModules(MainModule, std::move(M))) {
+            LLVMCtx.emitError("Schir llvm link module failed.");
+            return llvm::PreservedAnalyses::all();
+          }
         }
       } else {
         LLVMCtx.emitError("SchirClang unsupported injected operation: ");
@@ -78,9 +114,9 @@ public:
 };
 
 void RegisterPassBuilderCallbacks(llvm::PassBuilder& PB) {
-  PB.registerOptimizerEarlyEPCallback(
-    [](llvm::ModulePassManager& MPM, llvm::OptimizationLevel,
-       llvm::ThinOrFullLTOPhase) {
+  PB.registerPipelineStartEPCallback(
+    [](llvm::ModulePassManager& MPM, llvm::OptimizationLevel/*,
+       llvm::ThinOrFullLTOPhase*/) {
       MPM.addPass(InjectPass());
     });
 }
