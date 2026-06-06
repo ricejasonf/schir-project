@@ -32,6 +32,6 @@ add_dependencies(schir
   SchirPassesIncGen)
 
 target_link_libraries(schir
-  LLVMCore
-  LLVMSupport
-  MLIR)
+  PRIVATE
+    LLVM
+    MLIR)

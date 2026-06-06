@@ -15,16 +15,11 @@ target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(GeomalgDialect ${GEOMALG_SOURCE_GEN_DEPS})
 target_link_libraries(GeomalgDialect
   PRIVATE
-    LLVMCore
-    LLVMSupport
+    LLVM
     MLIR)
 
 add_library(Geomalg MODULE Geomalg.cpp ${GEOMALG_SOURCE_FILES})
-target_link_libraries(Geomalg
-  PRIVATE
-    LLVMCore
-    LLVMSupport
-    MLIR)
+target_link_libraries(Geomalg PRIVATE LLVM MLIR)
 target_compile_options(Geomalg PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Geomalg ${GEOMALG_SOURCE_GEN_DEPS})
 

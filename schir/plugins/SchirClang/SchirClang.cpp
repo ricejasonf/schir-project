@@ -463,7 +463,9 @@ PragmaHandler("schir_scheme", "embed compile-time scheme");
 
 // Give the PassPlugin stuff access to needed stuff.
 namespace schir_clang {
-schir::SchirScheme& getSchirSchemeInstance() {
-  return Instance->SchirScheme;
+schir::SchirScheme* getSchirSchemeInstance() {
+  if (Instance)
+    return &Instance->SchirScheme;
+  return nullptr;
 }
 }

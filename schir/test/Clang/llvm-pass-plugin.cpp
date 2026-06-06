@@ -1,4 +1,4 @@
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %S/Inputs \
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %geomalg_module_path \
 // RUN:   -fplugin=SchirClang.so -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -S -emit-llvm -o - | FileCheck %s
 

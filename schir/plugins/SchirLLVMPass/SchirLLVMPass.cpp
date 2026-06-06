@@ -56,7 +56,7 @@ schir_llvm_pass_inject_module(schir::Context& C, schir::ValueRefs Args) {
 
 namespace schir_clang {
 // Access a static instance (that is defined in SchirClang).
-extern schir::SchirScheme& getSchirSchemeInstance();
+extern schir::SchirScheme* getSchirSchemeInstance();
 }
 
 namespace {
@@ -78,13 +78,18 @@ class InjectPass : public llvm::PassInfoMixin<InjectPass> {
 public:
   llvm::PreservedAnalyses run(llvm::Module& MainModule,
                               llvm::ModuleAnalysisManager& MA) {
+    schir::SchirScheme* SchirScheme = schir_clang::getSchirSchemeInstance();
+    if (!SchirScheme)
+      return llvm::PreservedAnalyses::all();
+    schir::Context& C = SchirScheme->getContext();
     llvm::LLVMContext& LLVMCtx = MainModule.getContext();
     // Hijack the DiagnosticHandler temporarily.
     // It prints to llvm::errs() by default.
     DiagnosticHandlerHolder DHH(LLVMCtx);
-    schir::SchirScheme& SchirScheme = schir_clang::getSchirSchemeInstance();
-    schir::Context& C = SchirScheme.getContext();
+    // If ModuleList is not defined or is empty just skip.
     schir::Value ModuleList = ::InjectedModules.get(C);
+    if (!isa<schir::Pair>(ModuleList))
+      return llvm::PreservedAnalyses::all();
     for (schir::Value OpVal : ModuleList) {
       auto* Op = cast<mlir::Operation>(OpVal);
       if (mlir::isa<mlir::ModuleOp>(Op)) {

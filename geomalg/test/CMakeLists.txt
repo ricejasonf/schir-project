@@ -11,4 +11,8 @@ add_lit_testsuite(check-geomalg "Running Geomalg tests"
   Geomalg
   geomalg-opt
   schir-scheme
+  schir
+  SchirClang
+  SchirLLVMPass
+  SchirMlirAllPasses
 )

@@ -1,14 +1,51 @@
 #include <geomalg/Dialect.h>
+#include <geomalg/Passes.h>
 #include <geomalg/Type.h>
+#include <mlir/Dialect/Func/Transforms/Passes.h>
+#include <mlir/Dialect/Linalg/Passes.h>
+#include <mlir/Dialect/PDL/IR/PDL.h>
+#include <mlir/Dialect/PDLInterp/IR/PDLInterp.h>
+#include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
+#include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <schir/Context.h>
 #include <schir/MlirHelper.h>
 #include <schir/Value.h>
 
 extern "C" {
+schir::ContextLocal geomalg_current_module;
+
 void geomalg_init(schir::Context& C, schir::ValueRefs) {
   C.DialectRegistry->insert<geomalg::GeomalgDialect>();
+  C.DialectRegistry->insert<mlir::func::FuncDialect>();
+  C.DialectRegistry->insert<mlir::spirv::SPIRVDialect>();
+  C.DialectRegistry->insert<mlir::vector::VectorDialect>();
+  //C.DialectRegistry->insert<mlir::pdl::PDLDialect>();
+  //C.DialectRegistry->insert<mlir::pdl_interp::PDLInterpDialect>();
+
+  geomalg::registerGeomalgPasses();
+  geomalg::registerGeomalgToSPIRV();
+  geomalg::registerGeomalgToLLVM();
   C.Cont();
 }
+
+#if 0
+void geomalg_lower_to_llvm(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() > 1)
+    return C.RaiseError("invalid arity");
+  schir::Value ModuleVar;
+  if (Args.size() == 1)
+    ModuleVar = Args.front();
+  else
+    ModuleVar = geomalg_current_module.get(C);
+
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(ModuleVar);
+  auto ModuleOp = llvm::dyn_cast_if_present<mlir::ModuleOp>(Op);
+  if (!ModuleOp)
+    return C.RaiseError("expecting mlir.module: {}", ModuleVar);
+
+  
+}
+#endif
 
 void geomalg_basis_vector_type(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)

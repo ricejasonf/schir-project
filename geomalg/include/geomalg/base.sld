@@ -37,6 +37,8 @@
       (load-builtin "geomalg_init"))
     (define sum-impl
       (load-builtin "geomalg_sum_impl"))
+    (define geomalg-current-module
+      (load-builtin "geomalg_current_module"))
     (geomalg-init)
     (load-dialect "geomalg")
 
@@ -54,8 +56,8 @@
         ModuleOp))
 
     ;; Just initialize a monolithic module.
-    (define geomalg-current-module
-      (geomalg-module-init "geomalg_the_module"))
+    (set! geomalg-current-module
+      (geomalg-module-init "geomalg_main"))
 
     ;; If any function parameter type is unknown
     ;; then the func is used as a template.
