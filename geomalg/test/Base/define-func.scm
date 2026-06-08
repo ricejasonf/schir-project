@@ -39,8 +39,8 @@
 (newline)
 
 ; CHECK-LABEL: func.func @my_func3(
-; CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.blade<15>,
-; CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<15>)
+; CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.blade<23>,
+; CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<23>)
 ; CHECK-SAME: -> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]])
 ; CHECK-NEXT: geomalg.return [[SUM0]]

@@ -113,13 +113,9 @@ mlir::Type inferOuterProdResult(mlir::Value LHS, mlir::Value RHS) {
   }
 }
 
-// Create a type for a multivector.
-// The result may be a BladeType for a single term.
-// Do not combine blades equivalent by antisymmetric property
-// as we will expand these in passes that may prefer one ordering
-// over another. (ie because (e2^e1)(e2^e1) == 1)
-mlir::Type
-createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
+template <typename T>
+mlir::Type createMultivectorLikeType(
+                  llvm::MutableArrayRef<BladeType> BladeTypes) {
   assert(!BladeTypes.empty());
 
   // Sort by tag.
@@ -130,14 +126,20 @@ createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes) {
   BladeTypes = BladeTypes.take_front(
       std::distance(BladeTypes.begin(), EndItr));
 
-
   // Return a BladeType if we can.
   if (BladeTypes.size() == 1)
     return BladeTypes.front();
 
   mlir::MLIRContext* MLIRContext = BladeTypes.front().getContext();
-  return geomalg::MultivectorType::get(MLIRContext, BladeTypes);
+  return T::get(MLIRContext, BladeTypes);
 }
+
+template
+mlir::Type createMultivectorLikeType<MultivectorType>(
+                  llvm::MutableArrayRef<BladeType> BladeTypes);
+template
+mlir::Type createMultivectorLikeType<UnitVectorType>(
+                  llvm::MutableArrayRef<BladeType> BladeTypes);
 
 bool MultivectorType::isVector() const {
   for (geomalg::BladeType BT : getBlades()) {

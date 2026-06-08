@@ -11,6 +11,33 @@
 #include <schir/MlirHelper.h>
 #include <schir/Value.h>
 
+namespace {
+template <typename T>
+void CreateMultivectorLikeType(schir::Context& C, schir::ValueRefs Args) {
+  // Each argument is a possibly improper list of blade types.
+  // types used to construct blades.
+  llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
+  for (schir::Value List : Args) {
+    for (schir::Value BVArg : List) {
+      // Push the positive version of the tag.
+      auto Type = schir::any_cast<mlir::Type>(BVArg);
+      if (auto BladeType = dyn_cast_if_present<geomalg::BladeType>(Type))
+        BladeTypes.push_back(BladeType.getCanonicalType());
+      else
+        return C.RaiseError("expecting blade type: {}", BVArg);
+    }
+  }
+
+  if (BladeTypes.empty())
+    return C.RaiseError("multivector type must be nonempty");
+
+  mlir::Type Result = geomalg::createMultivectorLikeType<T>(BladeTypes);
+  schir::Value AnyVal = C.CreateAny<mlir::Type>(Result);
+  return C.Cont(AnyVal);
+}
+
+} // namespace
+
 extern "C" {
 schir::ContextLocal geomalg_current_module;
 
@@ -27,25 +54,6 @@ void geomalg_init(schir::Context& C, schir::ValueRefs) {
   geomalg::registerGeomalgToLLVM();
   C.Cont();
 }
-
-#if 0
-void geomalg_lower_to_llvm(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() > 1)
-    return C.RaiseError("invalid arity");
-  schir::Value ModuleVar;
-  if (Args.size() == 1)
-    ModuleVar = Args.front();
-  else
-    ModuleVar = geomalg_current_module.get(C);
-
-  mlir::Operation* Op = dyn_cast<mlir::Operation>(ModuleVar);
-  auto ModuleOp = llvm::dyn_cast_if_present<mlir::ModuleOp>(Op);
-  if (!ModuleOp)
-    return C.RaiseError("expecting mlir.module: {}", ModuleVar);
-
-  
-}
-#endif
 
 void geomalg_basis_vector_type(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
@@ -100,26 +108,11 @@ void geomalg_blade_type(schir::Context& C, schir::ValueRefs Args) {
 }
 
 void geomalg_multivector_type(schir::Context& C, schir::ValueRefs Args) {
-  // Each argument is a possibly improper list of blade types.
-  // types used to construct blades.
-  llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
-  for (schir::Value List : Args) {
-    for (schir::Value BVArg : List) {
-      // Push the positive version of the tag.
-      auto Type = schir::any_cast<mlir::Type>(BVArg);
-      if (auto BladeType = dyn_cast_if_present<geomalg::BladeType>(Type))
-        BladeTypes.push_back(BladeType.getCanonicalType());
-      else
-        return C.RaiseError("expecting blade type: {}", BVArg);
-    }
-  }
+  CreateMultivectorLikeType<geomalg::MultivectorType>(C, Args);
+}
 
-  if (BladeTypes.empty())
-    return C.RaiseError("multivector type must be nonempty");
-
-  mlir::Type Result = geomalg::createMultivectorType(BladeTypes);
-  schir::Value AnyVal = C.CreateAny<mlir::Type>(Result);
-  return C.Cont(AnyVal);
+void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
+  CreateMultivectorLikeType<geomalg::UnitVectorType>(C, Args);
 }
 
 // TODO This function is a workaround because we do not have a way

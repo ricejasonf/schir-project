@@ -132,9 +132,9 @@ geomalg::SumOp::inferReturnTypes(
   else if (llvm::all_equal(BladeTypes))
     ResultT = BladeTypes.front();
   else if (IsUnit)
-    ResultT = geomalg::UnitVectorType::get(Ctx, BladeTypes);
+    ResultT = createMultivectorLikeType<UnitVectorType>(BladeTypes);
   else
-    ResultT = geomalg::MultivectorType::get(Ctx, BladeTypes);
+    ResultT = createMultivectorLikeType<MultivectorType>(BladeTypes);
 
   InferredTypes.push_back(ResultT);
   return llvm::success();
@@ -291,7 +291,7 @@ geomalg::MatvecOp::inferReturnTypes(
   if (BladeTypes.empty())
     Result = ZeroType::get(Ctx);
   else
-    Result = createMultivectorType(BladeTypes);
+    Result = createMultivectorLikeType<MultivectorType>(BladeTypes);
 
   InferredTypes.push_back(Result);
   return llvm::success();

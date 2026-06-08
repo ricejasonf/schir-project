@@ -69,8 +69,13 @@
     (define e1 (basis-vector-type 1))
     (define e2 (basis-vector-type 2))
     (define e3 (basis-vector-type 4))
-    (define ni (basis-vector-type 8))
-    (define no (basis-vector-type 16))
+    (define no (basis-vector-type 8))
+    (define ni (basis-vector-type 16))
+
+    (define vec2 (multivector-type e1 e2))
+    (define vec3 (multivector-type e1 e2 e3))
+    (define uvec2 (multivector-type e1 e2 e3))
+    (define uvec3 (multivector-type e1 e2 e3))
 
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp

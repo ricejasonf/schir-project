@@ -67,8 +67,11 @@ mlir::Type inferOuterProdResult(mlir::Value LHS, mlir::Value RHS);
 // Create a canonicalized type for a multivector.
 // The result may be a BladeType for a single term.
 // Expect that BladeTypes is a nonempty list of BladeTypes.
+
+template <typename T>
 mlir::Type
-createMultivectorType(llvm::MutableArrayRef<geomalg::BladeType> BladeTypes);
+createMultivectorLikeType(llvm::MutableArrayRef<BladeType> BladeTypes);
+
 }  // namespace geomalg
 
 #endif
