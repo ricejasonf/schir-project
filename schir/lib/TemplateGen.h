@@ -136,6 +136,22 @@ private:
     return TemplateBase::VisitPair(P);
   }
 
+  TemplateResult VisitVector(Vector* Vec) {
+    if (Vec->getElements().empty())
+      return OpGen.create<VectorOp>(SourceLocation(),
+                                    llvm::ArrayRef<mlir::Value>{});
+
+    // Simply convert the Vector to a List
+    // and convert the final result via ToVectorOp.
+    // Then we can use an optimization pass later to
+    // use splices instead.
+    Value List = OpGen.getContext().CreateList(Vec->getElements());
+    TemplateResult ListResult = Visit(List);
+    if (OpGen.CheckError())
+      return ListResult;
+    return OpGen.create<ToVectorOp>(SourceLocation(), createValue(ListResult));
+  }
+
   mlir::Value GetPatternVar(schir::Symbol* S) {
     if (OpGen.CheckError())
       return OpGen.createUndefined();

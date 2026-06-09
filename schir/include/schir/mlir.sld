@@ -29,21 +29,22 @@
             (result-types: ResultTypes ...)
             (region: RegionName ((BlockArg : BlockArgType) ...)
                       RegionBody1 RegionBodyN ...) ...)
-           (let ((Op
-                    (old-create-op Name
-                      (loc (source-loc Loc (syntax-source-loc Name)))
-                      (operands Operands ...)
-                      (attributes (list 'AttrName Attr) ...)
-                      (result-types ResultTypes ...)
-                      (regions (length '(RegionName ...)))
-                      ))
+           (let ((Op (%create-op
+                       Name
+                       (source-loc Loc (syntax-source-loc Name))
+                       #((list 'AttrName Attr) ...)
+                       #(Operands ...)
+                       (length '(RegionName ...))
+                       #(ResultTypes ...)
+                       #() ; Successors
+                       ))
                   (BlockArgLocList (list (list (syntax-source-loc BlockArg) ...) ...))
                   (BlockArgTypesList (list (list BlockArgType ...) ...))
                   (UserFns (list (lambda (BlockArg ...)
                                        RegionBody1 RegionBodyN ...) ...)))
               (init-regions Op BlockArgLocList BlockArgTypesList UserFns)
-              Op)
-          )))
+              Op))
+          ))
     ) ; end of begin
 
    (export

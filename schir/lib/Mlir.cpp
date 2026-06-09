@@ -84,7 +84,7 @@ namespace schir::mlir_bind {
 //             _attrs_        : vector?
 //             _operands_     : vector?
 //             _regions_      : number?
-//             _result_types_ : vector?
+//             _result_types_ : vector? | null?
 //             _successors_   : vector?)
 void create_op_impl(Context& C, ValueRefs Args) {
   if (Args.size() != 7)
