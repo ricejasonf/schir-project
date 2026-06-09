@@ -97,7 +97,8 @@ void create_op_impl(Context& C, ValueRefs Args) {
   schir::Vector* ResultTypes  = cast<schir::Vector>(Args[5]);
   schir::Vector* Successors   = cast<schir::Vector>(Args[6]);
 
-  llvm::StringRef OpName = Args[0].getStringRef();
+  schir::Value OpNameArg = Args[0];
+  llvm::StringRef OpName = OpNameArg.getStringRef();
   if (OpName.empty())
     return C.RaiseError("expecting operation name: {}", Args[0]);
 
@@ -158,11 +159,34 @@ void create_op_impl(Context& C, ValueRefs Args) {
     OpState.regions.push_back(std::make_unique<mlir::Region>());
 
   // result-types
-  for (schir::Value V : ResultTypes->getElements()) {
-    auto MType = any_cast<mlir::Type>(V);
-    if (!MType)
-      return C.RaiseError("expecting mlir.type: {}", V);
-    OpState.types.push_back(MType);
+  if (ResultTypes) {
+    for (schir::Value V : ResultTypes->getElements()) {
+      auto MType = any_cast<mlir::Type>(V);
+      if (!MType)
+        return C.RaiseError("expecting mlir.type: {}", V);
+      OpState.types.push_back(MType);
+    }
+  } else {
+    // Infer the result types.
+    llvm::SmallVector<mlir::Type, 1> ResultTypesVec;
+    mlir::MLIRContext* MLIRContext = Builder->getContext();
+    std::optional<mlir::RegisteredOperationName>
+    RN = mlir::RegisteredOperationName::lookup(OpName, MLIRContext);
+    if (!RN)
+      return C.RaiseError("expecting registered operation: {}", OpNameArg);
+    if (auto Infer = RN->getInterface<mlir::InferTypeOpInterface>()) {
+      if (llvm::failed(
+        Infer->inferReturnTypes(MLIRContext, OpState.location, OpState.operands,
+                        OpState.attributes.getDictionary(MLIRContext),
+                        OpState.getRawProperties(), OpState.regions,
+                        ResultTypesVec)))
+        return C.RaiseError("failed to infer return types: {}", OpNameArg);
+
+      OpState.addTypes(ResultTypesVec);
+    } else {
+      return C.RaiseError(
+          "expecting operation with InferTypeOpInterface: {}", OpNameArg);
+    }
   }
 
   // successors
