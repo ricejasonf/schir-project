@@ -115,37 +115,4 @@ void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
   CreateMultivectorLikeType<geomalg::UnitVectorType>(C, Args);
 }
 
-// TODO This function is a workaround because we do not have a way
-//      to create an operation that implements `inferReturnTypes`.
-//      Implement creating operations without result-types when they
-//      are not needed (in SchirScheme.)
-// (%sum-impl Loc OpVal1 ... OpValN)
-void geomalg_sum_impl(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() < 1)
-    return C.RaiseError("invalid arity");
-
-  mlir::MLIRContext* MLIRContext = schir::mlir_helper::getCurrentContext(C);
-
-  // Loc
-  schir::SourceLocation Loc = Args[0].getSourceLocation();
-  // TODO Converting locations should be a function in SchirScheme.
-  mlir::Location MLoc = mlir::OpaqueLoc::get(Loc.getOpaqueEncoding(),
-                                             MLIRContext);
-
-  schir::ValueRefs Operands = Args.drop_front();
-  llvm::SmallVector<mlir::Value, 8> Vals;
-  for (schir::Value Operand : Operands) {
-    if (mlir::Value V = any_cast<mlir::Value>(Operand))
-      Vals.push_back(V);
-    else
-      return C.RaiseError("expecting mlir.value: {}", Operand);
-  }
-  mlir::OpBuilder* OpBuilder = schir::mlir_helper::getCurrentBuilder(C);
-  if (!OpBuilder)
-    return C.RaiseError("current mlir.builder not set");
-
-  auto SumOp = geomalg::SumOp::create(*OpBuilder, MLoc, Vals);
-  schir::Value Result = C.CreateAny<mlir::Value>(SumOp.getResult());
-  C.Cont(Result);
-}
 }  // extern "C"

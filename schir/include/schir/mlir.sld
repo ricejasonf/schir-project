@@ -25,6 +25,19 @@
           ((create-op Name
             (loc: Loc)
             (operands: Operands ...)
+            (attributes: (AttrName Attr) ...))
+           (%create-op
+            Name
+            (source-loc Loc (syntax-source-loc Name))
+            #((list 'AttrName Attr) ...)
+            #(Operands ...)
+            0 ; Regions
+            '() ; ResultTypes
+            #() ; Successors
+            ))
+          ((create-op Name
+            (loc: Loc)
+            (operands: Operands ...)
             (attributes: (AttrName Attr) ...)
             (result-types: ResultTypes ...)
             (region: RegionName ((BlockArg : BlockArgType) ...)
@@ -71,6 +84,7 @@
     value-attr
     string-attr
     flat-symbolref-attr
+    float-attr
     with-new-context
     with-builder
     load-dialect

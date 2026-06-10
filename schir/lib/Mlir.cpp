@@ -56,6 +56,7 @@ schir::ExternFunction type_attr;
 schir::ExternFunction value_attr;
 template <typename AttrTy>
 schir::ExternFunction string_attr;
+schir::ExternFunction float_attr;
 schir::ExternFunction with_new_context;
 schir::ExternFunction with_builder;
 schir::ExternFunction load_dialect;
@@ -94,7 +95,7 @@ void create_op_impl(Context& C, ValueRefs Args) {
   schir::Vector* Attributes   = cast<schir::Vector>(Args[2]);
   schir::Vector* Operands     = cast<schir::Vector>(Args[3]);
   int NumRegions              = cast<schir::Int>(Args[4]);
-  schir::Vector* ResultTypes  = cast<schir::Vector>(Args[5]);
+  schir::Vector* ResultTypes  = dyn_cast<schir::Vector>(Args[5]);
   schir::Vector* Successors   = cast<schir::Vector>(Args[6]);
 
   schir::Value OpNameArg = Args[0];
@@ -685,6 +686,25 @@ void string_attr(Context& C, ValueRefs Args) {
   C.Cont(C.CreateAny(Attr));
 }
 
+// This exists because number->string may print an integer
+// even if the underlying type is Float.
+// This also bypasses parsing the attribute which isnt bad.
+// (float-attr Num Type)
+void float_attr(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  if (!Args[0].isNumber())
+    return C.RaiseError("expecting a number: {}", Args[0]);
+  mlir::Type Type = any_cast<mlir::Type>(Args[1]);
+  if (!Type)
+    return C.RaiseError("expecting a mlir.type: {}", Args[1]);
+
+  double F = Number::getAsDouble(Args[0]);
+  mlir::MLIRContext* MLIRContext = getCurrentContext(C);
+  mlir::Attribute Attr = mlir::FloatAttr::get(Type, F);
+  C.Cont(C.CreateAny(Attr));
+}
+
 // (with-new-context _thunk_)
 void with_new_context(schir::Context& C, schir::ValueRefs Args) {
   // Create a new context, and call a
@@ -891,6 +911,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
     = schir::mlir_bind::string_attr<mlir::StringAttr>;
   SCHIR_MLIR_VAR(string_attr<mlir::FlatSymbolRefAttr>)
     = schir::mlir_bind::string_attr<mlir::FlatSymbolRefAttr>;
+  SCHIR_MLIR_VAR(float_attr) = schir::mlir_bind::float_attr;
   SCHIR_MLIR_VAR(load_dialect) = schir::mlir_bind::load_dialect;
   SCHIR_MLIR_VAR(with_builder) = schir::mlir_bind::with_builder;
   SCHIR_MLIR_VAR(with_new_context) = schir::mlir_bind::with_new_context;
@@ -923,6 +944,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"type-attr", SCHIR_MLIR_VAR(type_attr)},
     {"value-attr", SCHIR_MLIR_VAR(value_attr)},
     {"string-attr", SCHIR_MLIR_VAR(string_attr<mlir::StringAttr>)},
+    {"float-attr", SCHIR_MLIR_VAR(float_attr)},
     {"flat-symbolref-attr",
       SCHIR_MLIR_VAR(string_attr<mlir::FlatSymbolRefAttr>)},
     {"with-new-context", SCHIR_MLIR_VAR(with_new_context)},

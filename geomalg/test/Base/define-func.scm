@@ -13,10 +13,10 @@
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG2]], [[ARG3]])
 ; CHECK-NEXT: [[SUM1:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]], [[SUM0]])
 ; CHECK-NEXT: geomalg.return [[SUM1]]
-(define-func my_func1 ((arg0 : e1)
-                       (arg1 : e2)
-                       (arg2 : (blade-type e1 e2))
-                       (arg3 : (blade-type e2 e1)))
+(define-func my_func1 ((arg0 : !e1)
+                       (arg1 : !e2)
+                       (arg2 : (blade-type !e1 !e2))
+                       (arg3 : (blade-type !e2 !e1)))
   (sum arg0
        arg1
        (sum arg2 arg3)
@@ -30,8 +30,8 @@
 ; CHECK-SAME:-> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]])
 ; CHECK-NEXT: geomalg.return [[SUM0]]
-(define-func my_func2 ((arg0 : (blade-type e1 e2 e3))
-                       (arg1 : (blade-type e3 e2 e1)))
+(define-func my_func2 ((arg0 : (blade-type !e1 !e2 !e3))
+                       (arg1 : (blade-type !e3 !e2 !e1)))
   (sum arg0
        arg1
        ))
@@ -44,8 +44,8 @@
 ; CHECK-SAME: -> !geomalg.unknown {
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[ARG0]], [[ARG1]])
 ; CHECK-NEXT: geomalg.return [[SUM0]]
-(define-func my_func3 ((arg0 : (blade-type e1 e2 e3 ni))
-                       (arg1 : (blade-type ni e3 e2 e1)))
+(define-func my_func3 ((arg0 : (blade-type !e1 !e2 !e3 !ni))
+                       (arg1 : (blade-type !ni !e3 !e2 !e1)))
   (sum arg0
        arg1
        ))
@@ -53,7 +53,7 @@
 (newline)
 
 ; CHECK: func.func @my_func4([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <3>>) -> !geomalg.unknown {
-(define-func my_func4 ((arg0 : (multivector-type e1 e2 (blade-type e1 e2))))
+(define-func my_func4 ((arg0 : (multivector-type !e1 !e2 (blade-type !e1 !e2))))
   ; FIXME should be able to just return arg0 but it is not the !schir.unknown type.
   ;       (This can be fixed in the type inference pass.)
   (sum arg0))

@@ -8,14 +8,16 @@
     basis-vector-type
     blade-type
     multivector-type
-    scalar e1 e2 e3 ni no ;; Conformal GA basis vectors
-    ; k-blade ;; TODO make literal op?
+    !scalar !e1 !e2 !e3 !no !ni ;; Conformal GA basis vectors (types)
+    ;scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
+    scalar e1
     sum
-    outprod
-    inprod
+    oprod
+    iprod
     gprod
     rev
-    inv)
+    grade-invo
+    inverse)
   (import (schir base)
           (schir mlir))
   (begin
@@ -35,7 +37,7 @@
     ;; Register the geomalg dialect and such.
     (define geomalg-init
       (load-builtin "geomalg_init"))
-    (define sum-impl
+    #;(define sum-impl
       (load-builtin "geomalg_sum_impl"))
     (define geomalg-current-module
       (load-builtin "geomalg_current_module"))
@@ -62,20 +64,21 @@
     ;; If any function parameter type is unknown
     ;; then the func is used as a template.
     (define !geomalg.unknown (type "!geomalg.unknown"))
+    (define !f32 (type "f32"))
 
     ;; Go full 5-d Conformal Geometric Algebra since
     ;; everything we want is a subalgebra of that.
-    (define scalar (basis-vector-type 0))
-    (define e1 (basis-vector-type 1))
-    (define e2 (basis-vector-type 2))
-    (define e3 (basis-vector-type 4))
-    (define no (basis-vector-type 8))
-    (define ni (basis-vector-type 16))
+    (define !scalar (basis-vector-type 0))
+    (define !e1 (basis-vector-type 1))
+    (define !e2 (basis-vector-type 2))
+    (define !e3 (basis-vector-type 4))
+    (define !no (basis-vector-type 8))
+    (define !ni (basis-vector-type 16))
 
-    (define vec2 (multivector-type e1 e2))
-    (define vec3 (multivector-type e1 e2 e3))
-    (define uvec2 (multivector-type e1 e2 e3))
-    (define uvec3 (multivector-type e1 e2 e3))
+    (define !vec2 (multivector-type !e1 !e2))
+    (define !vec3 (multivector-type !e1 !e2 !e3))
+    (define !uvec2 (multivector-type !e1 !e2 !e3))
+    (define !uvec3 (multivector-type !e1 !e2 !e3))
 
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
@@ -120,38 +123,35 @@
                              ...
                              BodyExprN)))))
 
+    ; Shorcut to create ops with result only specifying
+    ; operands and inferring result type.
+    (define (%create-val OpName Loc . Operands)
+      (result
+        (create-op OpName
+                   (loc: Loc)
+                   (operands: Operands)
+                   (attributes:))))
+
     (define-syntax sum
       (syntax-rules ()
         ((sum V1 VN ...)
-         (sum-impl (syntax-source-loc V1) V1 VN ...))))
+         (%create-val "geomalg.sum"
+                      (syntax-source-loc V1)
+                      V1 VN ...))))
 
-    ;; TODO It would be nice to make a syntax to generate these
-    ;;      but local syntax is not yet supported in schir-scheme.
-    ;;      The impl functions prevent syntax garbage creation.
-
-    (define (outprod-impl Loc V1 V2)
-      (result (create-op "geomalg.outprod"
-                         (loc: Loc)
-                         (operands: V1 V2)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
-    (define-syntax outprod
+    (define-syntax oprod
       (syntax-rules ()
-        ((outprod V1 V2)
-         (outprod-impl (syntax-source-loc V1) V1 V2))))
+        ((oprod V1 V2)
+         (%create-val "geomalg.oprod"
+                      (syntax-source-loc V1)
+                      V1 V2))))
 
-    (define (inprod-impl Loc V1 V2)
-      (result (create-op "geomalg.inprod"
-                         (loc: Loc)
-                         (operands: V1 V2)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
-    (define-syntax inprod
+    (define-syntax iprod
       (syntax-rules ()
-        ((inprod V1 V2)
-         (inprod-impl (syntax-source-loc V1) V1 V2))))
+        ((iprod V1 V2)
+         (%create-val "geomalg.iprod"
+                      (syntax-source-loc V1)
+                      V1 V2))))
 
     (define (gprod-impl Loc V1 V2)
       (result (create-op "geomalg.gprod"
@@ -165,27 +165,55 @@
         ((gprod V1 V2)
          (gprod-impl (syntax-source-loc V1) V1 V2))))
 
-    (define (rev-impl Loc V)
-      (result (create-op "geomalg.rev"
-                         (loc: Loc)
-                         (operands: V)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
     (define-syntax rev
       (syntax-rules ()
         ((rev V)
-         (rev-impl (syntax-source-loc V) V))))
+         (%create-val "geomalg.rev"
+                      (syntax-source-loc V)
+                      V))))
 
-    (define (inv-impl Loc V)
-      (result (create-op "geomalg.inv"
-                         (loc: Loc)
-                         (operands: V)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
-    (define-syntax inv
+    (define-syntax grade-invo
       (syntax-rules ()
-        ((inv V)
-         (inv-impl (syntax-source-loc V) V))))
+        ((grade-invo V)
+         (create-val "geomalg.grade_invo"
+                     (syntax-source-loc V)
+                     V))))
+
+    (define-syntax inverse
+      (syntax-rules ()
+        ((inverse V)
+         (create-val "geomalg.inverse"
+                     (syntax-source-loc V)
+                     V))))
+
+    ; Shortcut to create basis blade constant.
+    ; (For scalar multiplication use iprod.)
+    (define (%create-blade-val OpName ResultType Loc Coeff)
+      (result
+        (create-op OpName
+                   (loc: Loc)
+                   (operands:)
+                   (attributes:
+                     ("coefficient"
+                       (float-attr Coeff !f32)))
+                   (result-types: ResultType)
+                   )))
+
+    ; TODO Local syntax would enable consolidating the boiler plate here
+    ;      ... probably.
+
+    (define-syntax scalar
+      (syntax-rules ()
+        ((scalar Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !scalar
+                            (syntax-source-loc Coeff)
+                            Coeff))))
+    (define-syntax e1
+      (syntax-rules ()
+        ((scalar Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !e1
+                            (syntax-source-loc Coeff)
+                            Coeff))))
     )) ;; define-library
