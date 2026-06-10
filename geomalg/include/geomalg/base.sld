@@ -9,12 +9,14 @@
     blade-type
     multivector-type
     !scalar !e1 !e2 !e3 !no !ni ;; Conformal GA basis vectors (types)
-    ;scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
-    scalar e1
+    scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
+    !zero
+    !vec2 !vec3 !uvec2 !uvec3
     sum
     oprod
     iprod
     gprod
+    negate
     rev
     grade-invo
     inverse)
@@ -64,6 +66,7 @@
     ;; If any function parameter type is unknown
     ;; then the func is used as a template.
     (define !geomalg.unknown (type "!geomalg.unknown"))
+    (define !zero (type "!geomalg.zero"))
     (define !f32 (type "f32"))
 
     ;; Go full 5-d Conformal Geometric Algebra since
@@ -79,6 +82,9 @@
     (define !vec3 (multivector-type !e1 !e2 !e3))
     (define !uvec2 (multivector-type !e1 !e2 !e3))
     (define !uvec3 (multivector-type !e1 !e2 !e3))
+
+    (define !vec4 (multivector-type !e1 !e2 !e3 !no))
+    (define !vec5 (multivector-type !e1 !e2 !e3 !no !ni))
 
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
@@ -134,6 +140,9 @@
 
     (define-syntax sum
       (syntax-rules ()
+        ((sum)
+         (%create-blade-val "geomalg.blade"
+                            !zero '() 0))
         ((sum V1 VN ...)
          (%create-val "geomalg.sum"
                       (syntax-source-loc V1)
@@ -165,6 +174,13 @@
         ((gprod V1 V2)
          (gprod-impl (syntax-source-loc V1) V1 V2))))
 
+    (define-syntax negate
+      (syntax-rules ()
+        ((negate V)
+         (%create-val "geomalg.negate"
+                     (syntax-source-loc V)
+                     V))))
+
     (define-syntax rev
       (syntax-rules ()
         ((rev V)
@@ -182,7 +198,7 @@
     (define-syntax inverse
       (syntax-rules ()
         ((inverse V)
-         (create-val "geomalg.inverse"
+         (%create-val "geomalg.inverse"
                      (syntax-source-loc V)
                      V))))
 
@@ -201,7 +217,7 @@
 
     ; TODO Local syntax would enable consolidating the boiler plate here
     ;      ... probably.
-
+    ; Construct basis blades with constant coefficient.
     (define-syntax scalar
       (syntax-rules ()
         ((scalar Coeff)
@@ -211,9 +227,37 @@
                             Coeff))))
     (define-syntax e1
       (syntax-rules ()
-        ((scalar Coeff)
+        ((e1 Coeff)
          (%create-blade-val "geomalg.blade"
                             !e1
+                            (syntax-source-loc Coeff)
+                            Coeff))))
+    (define-syntax e2
+      (syntax-rules ()
+        ((e2 Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !e2
+                            (syntax-source-loc Coeff)
+                            Coeff))))
+    (define-syntax e3
+      (syntax-rules ()
+        ((e3 Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !e3
+                            (syntax-source-loc Coeff)
+                            Coeff))))
+    (define-syntax no
+      (syntax-rules ()
+        ((no Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !no
+                            (syntax-source-loc Coeff)
+                            Coeff))))
+    (define-syntax ni
+      (syntax-rules ()
+        ((ni Coeff)
+         (%create-blade-val "geomalg.blade"
+                            !ni
                             (syntax-source-loc Coeff)
                             Coeff))))
     )) ;; define-library
