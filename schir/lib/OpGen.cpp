@@ -1527,7 +1527,10 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
         // Propagate the error to this instance.
         SetError(ResultErr);
       }
-      Context.PopEnvFrame(EF);
+      // FIXME Apparently we do not need to pop the env.
+      //       Popping it would lose local bindings. 
+      //       Remove this.
+      //Context.PopEnvFrame(EF);
       return toValue(Result);
     }
     default: {
@@ -1817,6 +1820,9 @@ schir::EnvEntry OpGen::LookupEnv(Value Id, Value ClosedEnv) {
     return LookupEnv(SC->Node, SC->Env);
 
   assert(isa<Symbol>(Id) && "syntax closure should be unwrapped");
+
+  if (!ClosedEnv)
+    ClosedEnv = Context.EnvStack;
 
   schir::EnvEntry Result;
   if (ClosedEnv) {

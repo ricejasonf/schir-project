@@ -164,9 +164,8 @@ std::pair<uintptr_t, uintptr_t> Context::GetIdentifierUniqueId(Value V) {
     return {Value(S).getOpaqueValue(), 0};
 
   auto* SC = cast<SyntaxClosure>(V);
-  Value Env = GetLocalEnvStack(SC->Env);
   return {Value(cast<Symbol>(SC->Node)->getString()).getOpaqueValue(),
-          Env.getOpaqueValue()};
+          Value(SC).getOpaqueValue()};
 }
 
 // Get the localiest EnvFrame.

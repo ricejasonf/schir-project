@@ -10,10 +10,43 @@
     (define (not x)
       (if (eq? x #f)
         #t #f))
+
+    ; Placeholder implementation based on R7RS
+    (define-syntax define-values
+      (syntax-rules ()
+        ((define-values (var) expr)
+         (define var expr))
+        ((define-values (varI ...) expr)
+         (begin
+           (define Hidden
+             (call-with-values (lambda () expr)
+                               list))
+           (define varI
+             (let ((v (car Hidden)))
+               (set! Hidden (cdr Hidden))
+               v)) ...))
+        ((define-values (varI ... . varN) expr)
+         (begin
+           (define Hidden
+             (call-with-values (lambda () expr)
+                               list))
+           (define varI
+             (let ((v (car Hidden)))
+               (set! Hidden (cdr Hidden))
+               v)) ...
+           (define varN
+             (let ((v Hidden))
+               (set! Hidden '())
+               (dump v)))))
+        ((define-values varN expr)
+         (define varN
+           (call-with-values (lambda () expr)
+                             list)))))
     ) ; end of begin
   (export
     define
     define-syntax
+    define-values
     if
     lambda
     case-lambda

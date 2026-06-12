@@ -1495,6 +1495,7 @@ public:
     Val = V;
   }
 
+  // TODO Move Binding::Lookup definition to Context.cpp.
   // Compare the binding to an equivalent symbol or syntax closure.
   EnvEntry Lookup(Value LookupId) {
     assert(Val && "null binding should not be a part of lookup");
