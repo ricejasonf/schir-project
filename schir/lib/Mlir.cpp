@@ -394,11 +394,20 @@ void add_argument(Context& C, ValueRefs Args) {
   C.Cont(Result);
 }
 
-// Get list of results of op.
+// Call continuation with mlir operation results.
 void results(Context& C, ValueRefs Args) {
-  // This might be useful for applying to operations
-  // via quasiquote splicing.
-  C.RaiseError("TODO not implemented");
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+
+  mlir::Operation* Op = schir::dyn_cast<mlir::Operation>(Args[0]);
+
+  if (!Op)
+    return C.RaiseError("expecting mlir.op, {}", Args[0]);
+
+  llvm::SmallVector<schir::Value, 8> Results;
+  for (mlir::Value V : Op->getResults())
+    Results.push_back(C.CreateAny(V));
+  C.Cont(Results);
 }
 
 // Get operation result by index (default = 0).

@@ -32,3 +32,18 @@
     (lambda () (values 1 1 2 4 8 16))
     +))
 (newline)
+
+(define-values ()
+  (values))
+
+(define-values (a)
+  (values 1))
+
+(define-values (a b)
+  (values 1 2))
+
+(define-values (a b . c)
+  (values 1 2 3 4))
+
+(define-values ValuesList
+  (values 1 2 3 4))

@@ -1064,13 +1064,39 @@ mlir::Value OpGen::createDefine(Value Id, Value DefineArgs, Value OrigCall) {
   if (!IsLocalDefineAllowed) return SetError("unexpected define", OrigCall);
   // Create the binding with an undefined object that secretly holds
   // its syntax in the current environment.
-  Value Env;
   Binding* B = Context.CreateBinding(Id, Undefined(DefineArgs));
   // Push to the local environment.
   Context.PushLocalBinding(B);
   mlir::Value BVal = createBinding(B, mlir::Value());
   assert(IsLocalDefineAllowed && "define should still be allowed");
   return BVal;
+}
+
+MatchArgsOp OpGen::createDefineValues(Value Formals, Value Expr) {
+  // TODO
+}
+
+MatchArgsOp OpGen::createMatchArgs(Value Formals, Value Expr) {
+  // Validate formals and create a MatchArgsOp to do so at runtime.
+  Formals = Context.UnwrapSyntaxClosure(Formals);
+  llvm::SmallVector<Value, 8> Ids;
+  HasRestParam = false;
+  if (C.CheckLambdaFormals(Formals, Ids, HasRestParam))
+    return MatchArgsOp();
+  RestParamKind RPK = HasRestParam ? RestParamKind::List
+                                   : RestParamKind::None;
+  mlir::FunctionType FT = OG.createFunctionType(Ids.size(), RPK);
+
+  // Evaluate the expr and get ValueRefs from the result.
+  mlir::Value ExprResult = Visit(Expr);
+  if (!isa<ValueRefsType>(ExprResult)) {
+    mlir::Operation* ResultOp = ExprResult.getDefiningOp();
+    assert(ResultOp && ResultOp->getNumResults() == 1 &&
+           "expecting valuerefs or a single result");
+    ExprResult = createContinuation(ResultOp);
+  }
+
+  return create<MatchArgsOp>(Loc, FT, ExprResult);
 }
 
 std::tuple<EnvEntry, Symbol*, String*>
@@ -1577,7 +1603,10 @@ mlir::Value OpGen::VisitPair(Pair* P) {
   schir::EnvEntry FnEnvEntry;
   schir::Value SyntaxOperator;
 
-  if (isIdentifier(P->Car)) {
+  if (isa<Syntax>(P->Car)) {
+    // So we can inject syntax from c++ without name lookup.
+    SyntaxOperator = P->Car;
+  } else if (isIdentifier(P->Car)) {
     FnEnvEntry = LookupEnv(P->Car);
     SyntaxOperator = Context.GetSyntax(FnEnvEntry).Value;
   }

@@ -139,21 +139,11 @@ void Context::Import(schir::ImportSet* ImportSet) {
   Cont();
 }
 
-EnvFrame* Context::PushLambdaFormals(Value Formals,
-                                     bool& HasRestParam) {
+EnvFrame* Context::PushLambdaFormals(Value Formals, bool& HasRestParam) {
   llvm::SmallVector<Value, 8> Ids;
   HasRestParam = false;
-  if (CheckLambdaFormals(Formals, Ids,
-                         HasRestParam)) return nullptr;
-
-  llvm::SmallSet<std::pair<uintptr_t, uintptr_t>, 8> IdSet;
-  // ensure uniqueness of names
-  for (Value Id : Ids) {
-    auto Result = IdSet.insert(GetIdentifierUniqueId(Id));
-    if (!Result.second) {
-      OpGen->SetError("duplicate parameter name", Id);
-    }
-  }
+  if (CheckLambdaFormals(Formals, Ids, HasRestParam))
+    return nullptr;
 
   return PushEnvFrame(Ids, /*IsLambdaScope=*/true);
 }
@@ -235,10 +225,28 @@ void Context::PopEnvFrame(EnvFrame* PopOff) {
   }
 }
 
-// CheckLambdaFormals - Returns true on error
+// Return true on error.
 bool Context::CheckLambdaFormals(Value Formals,
                                  llvm::SmallVectorImpl<Value>& Names,
                                  bool& HasRestParam) {
+  if (CheckLambdaFormals(Formals, Names, HasRestParam))
+    return true;
+  llvm::SmallSet<std::pair<uintptr_t, uintptr_t>, 8> IdSet;
+
+  // Ensure uniqueness of names.
+  for (Value Id : Ids) {
+    auto Result = IdSet.insert(GetIdentifierUniqueId(Id));
+    if (!Result.second) {
+      OpGen->SetError("duplicate parameter name", Id);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Context::CheckLambdaFormalsRec(Value Formals,
+                                    llvm::SmallVectorImpl<Value>& Names,
+                                    bool& HasRestParam) {
   Value V = Formals;
   if (isa<Empty>(V))
     return false;
@@ -260,7 +268,7 @@ bool Context::CheckLambdaFormals(Value Formals,
   }
   V = P->Car;
   Names.push_back(V);
-  return CheckLambdaFormals(P->Cdr, Names, HasRestParam);
+  return CheckLambdaFormalsRec(P->Cdr, Names, HasRestParam);
 }
 
 EnvEntry Context::Lookup(Value Id, Value Stack) {

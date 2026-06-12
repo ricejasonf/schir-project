@@ -339,6 +339,7 @@ public:
   mlir::Value createGlobal(SourceLocation Loc, llvm::StringRef MangledName);
   mlir::Value createBinding(Binding *B, mlir::Value Init);
   mlir::Value createDefine(Value Id, Value Args, Value OrigCall);
+  mlir::Value createDefineValues(Value Formals, Pair* Body);
   std::tuple<EnvEntry, Symbol*, String*> createTopLevelBindingInfo(Value Id);
   mlir::Value createTopLevelDefine(Value Id, Value Args, Value OrigCall);
   mlir::Value createExternalBinding(Value Id, Value ExtSymbol);

@@ -38,6 +38,7 @@ schir::ContextLocal        parse_source_file;
 
 schir::ExternBuiltinSyntax cond_expand;
 schir::ExternBuiltinSyntax define;
+schir::ExternBuiltinSyntax define_values;
 schir::ExternBuiltinSyntax define_binding;
 schir::ExternBuiltinSyntax define_syntax;
 schir::ExternBuiltinSyntax syntax_rules;
@@ -151,6 +152,18 @@ mlir::Value define(OpGen& OG, Pair* P) {
   return OG.createDefine(Id, P2, P);
 }
 
+mlir::Value define_values(OpGen& OG, Pair* P) {
+  SourceLocation Loc = P->getSourceLocation();
+  Context& C = OG.getContext();
+  Value Formals = P.cadr();
+  Pair* Body = dyn_cast_or_null<Pair>(P.cddr());
+  // Body has a single expr.
+  if (!Formals || !Cddr || !Body || !isa<Empty>(Body.Cdr))
+    return OG.SetError("invalid syntax for define-values", P);
+  return OG.createDefineValues(Formals, Body.Car);
+}
+
+// DEPRECATED use load-builtin
 // Binds a dynamically loaded schir::ContextLocal.
 mlir::Value define_binding(OpGen& OG, Pair* P) {
   Pair* P2 = dyn_cast<Pair>(P->Cdr);
@@ -1335,6 +1348,7 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   Context.DialectRegistry->insert<schir::SchirDialect>();
   // syntax
   SCHIR_BASE_VAR(define)          = schir::builtins::define;
+  SCHIR_BASE_VAR(define_values)   = schir::builtins::define_values;
   SCHIR_BASE_VAR(define_binding)  = schir::builtins::define_binding;
   SCHIR_BASE_VAR(define_syntax)   = schir::builtins::define_syntax;
   SCHIR_BASE_VAR(syntax_rules)    = schir::builtins::syntax_rules;
@@ -1436,6 +1450,7 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
   schir::initModuleNames(Context, SCHIR_BASE_LIB_STR, {
     // syntax
     {"define",        SCHIR_BASE_VAR(define)},
+    {"define-values", SCHIR_BASE_VAR(define_values)},
     {"define-binding",
                       SCHIR_BASE_VAR(define_binding)},
     {"define-syntax", SCHIR_BASE_VAR(define_syntax)},

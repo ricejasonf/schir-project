@@ -247,8 +247,11 @@ public:
   //                     Return the pushed EnvFrame or nullptr.
   EnvFrame* PushLambdaFormals(Value Formals, bool& HasRestParam);
 
-private:
   bool CheckLambdaFormals(Value Formals,
+                          llvm::SmallVectorImpl<Value>& Names,
+                          bool& HasRestParam);
+private:
+  bool CheckLambdaFormalsRec(Value Formals,
                           llvm::SmallVectorImpl<Value>& Names,
                           bool& HasRestParam);
 public:
