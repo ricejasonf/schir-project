@@ -1527,10 +1527,7 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
         // Propagate the error to this instance.
         SetError(ResultErr);
       }
-      // FIXME Apparently we do not need to pop the env.
-      //       Popping it would lose local bindings. 
-      //       Remove this.
-      //Context.PopEnvFrame(EF);
+      // Do not call PopEnvFrame here so we do not lose local binding info.
       return toValue(Result);
     }
     default: {

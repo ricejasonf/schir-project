@@ -50,5 +50,4 @@
   (write (list x y z u List1 List2 EmptyList))
   (newline)
   ))
-    
 (newline)
