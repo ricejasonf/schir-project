@@ -16,6 +16,7 @@
     oprod
     iprod
     gprod
+    vprod
     dot
     negate
     rev
