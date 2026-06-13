@@ -167,19 +167,28 @@ namespace {
 using geomalg::isUnknown;
 using geomalg::isZero;
 
-// Rewriters for expansion.
+template <typename Base_>
+struct RewriteMetricBase : Base_ {
+  using Base = RewriteMetricBase;
 
-struct ExpandConvert : mlir::OpRewritePattern<geomalg::ConvertOp> {
-  using Base = mlir::OpRewritePattern<geomalg::ConvertOp>;
-  using Base::OpRewritePattern;
+  // TODO Store as reference.
+  geomalg::Metric Metric;
 
-  void initialize() {
-    setDebugName("ExpandConvert");
-  }
-
-  llvm::LogicalResult matchAndRewrite(
-      geomalg::ConvertOp Op, mlir::PatternRewriter& Rewriter) const override;
+  template <typename ...Args>
+  RewriteMetricBase(geomalg::Metric M, Args&& ...args)
+    : Base_(std::forward<Args>(args)...)
+    , Metric(M)
+  { }
 };
+
+template <typename OpTy>
+using OpRewriteMetric = RewriteMetricBase<mlir::OpRewritePattern<OpTy>>;
+
+template <template <typename> class OpTraitTy>
+using OpTraitRewriteMetric
+  = RewriteMetricBase<mlir::OpTraitRewritePattern<OpTraitTy>>;
+
+// Rewriters for expansion.
 
 struct RemoveConvert : mlir::OpRewritePattern<geomalg::ConvertOp> {
   using Base = mlir::OpRewritePattern<geomalg::ConvertOp>;
@@ -388,9 +397,8 @@ struct SimplifyInverse : mlir::OpRewritePattern<geomalg::InverseOp> {
 
 // Expand the inverse to the reverse multiplied
 // by the inverse of its norm squared.
-struct ExpandInverse : mlir::OpRewritePattern<geomalg::InverseOp> {
-  using Base = mlir::OpRewritePattern<geomalg::InverseOp>;
-  using Base::OpRewritePattern;
+struct ExpandInverse : OpRewriteMetric<geomalg::InverseOp> {
+  using Base::Base;
 
   void initialize() {
     setDebugName("ExpandInverse");
@@ -603,39 +611,65 @@ static bool requiresMetric(mlir::Operation* Op) {
   return false;
 }
 
-llvm::LogicalResult
-ExpandConvert::matchAndRewrite(geomalg::ConvertOp Op,
-                               mlir::PatternRewriter& Rewriter) const {
-  mlir::Location Loc = Op.getLoc();
-  mlir::Value Arg = Op.getArg();
-  mlir::Value Result = Op.getResult();
-  mlir::Type ArgT = Arg.getType();
-  mlir::Type ResultT = Result.getType();
-
-  if (ArgT == ResultT) {
-    replaceOp(Rewriter, Op, Arg);
-    return llvm::success();
+static mlir::Value square(mlir::PatternRewriter& Rewriter,
+                          geomalg::Metric const& Metric,
+                          mlir::Location Loc, mlir::Value MV) {
+  mlir::Value Squared;
+  auto MVL = dyn_cast<MultivectorLike>(MV.getType());
+  if (false && MVL && Metric && isOrthogonalBasis(Metric, MVL, MVL)) {
+    mlir::Type ScalarT = geomalg::BladeType::get(MV.getContext(), 0);
+    Squared = geomalg::DotOp::create(Rewriter, Loc, ScalarT, MV, MV);
+  } else {
+    Squared = geomalg::InnerProdOp::create(Rewriter, Loc, MV, MV);
   }
-
-  // Vector to UnitVector
-  if (auto MV = dyn_cast<MultivectorLike>(ArgT);
-      MV && MV.isVector() && isa<UnitVectorType>(ResultT)) {
-    // Copy pasted from ExpandInverse.
-    mlir::Value Squared = geomalg::InnerProdOp
-      ::create(Rewriter, Loc, Arg, Arg);
-    mlir::Value SquareInverse = geomalg::InverseOp
-      ::create(Rewriter, Loc, Squared);
-
-    // Multiply the inverse of norm squared and the Arg vector.
-    mlir::Value IP = InnerProdOp::create(Rewriter, Loc, SquareInverse, Arg);
-    replaceOpWithNewOp<CastOp>(Rewriter, Op, ResultT, IP);
-    return llvm::success();
-  }
-
-  // ConvertOps must eventually be removed or expanded, but not
-  // necessarily at this point. (See RemoveConvert.)
-  return llvm::failure();
+  return Squared;
 }
+
+static mlir::Value squareInverse(
+                          mlir::PatternRewriter& Rewriter,
+                          geomalg::Metric const& Metric,
+                          mlir::Location Loc, mlir::Value MV) {
+  mlir::Value Squared = square(Rewriter, Metric, Loc, MV);
+  return geomalg::InverseOp::create(Rewriter, Loc, Squared);
+}
+
+struct ExpandConvert : OpRewriteMetric<geomalg::ConvertOp> {
+  using Base::Base;
+
+  void initialize() {
+    setDebugName("ExpandConvert");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+                        geomalg::ConvertOp Op,
+                        mlir::PatternRewriter& Rewriter) const override {
+    mlir::Location Loc = Op.getLoc();
+    mlir::Value Arg = Op.getArg();
+    mlir::Value Result = Op.getResult();
+    mlir::Type ArgT = Arg.getType();
+    mlir::Type ResultT = Result.getType();
+
+    if (ArgT == ResultT) {
+      replaceOp(Rewriter, Op, Arg);
+      return llvm::success();
+    }
+
+    // Vector to UnitVector
+    if (auto MV = dyn_cast<MultivectorLike>(ArgT);
+        MV && MV.isVector() && isa<UnitVectorType>(ResultT)) {
+
+      // Multiply the inverse of norm squared and the Arg vector.
+      mlir::Value SquareInverse = squareInverse(Rewriter, Metric, Loc, Arg);
+      mlir::Value IP = InnerProdOp::create(Rewriter, Loc, SquareInverse, Arg);
+      replaceOpWithNewOp<CastOp>(Rewriter, Op, ResultT, IP);
+      return llvm::success();
+    }
+
+    // ConvertOps must eventually be removed or expanded, but not
+    // necessarily at this point. (See RemoveConvert.)
+    return llvm::failure();
+  }
+};
 
 // Remove ConvertOps or throw an error if there is not conversion.
 llvm::LogicalResult
@@ -1296,12 +1330,8 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
     Reverse = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
   }
 
-  mlir::Value Squared = geomalg::InnerProdOp
-    ::create(Rewriter, Loc, Arg, Arg);
-  mlir::Value SquareInverse = geomalg::InverseOp
-    ::create(Rewriter, Loc, Squared);
-
   // Multiply the inverse of norm squared and reverse blade.
+  mlir::Value SquareInverse = squareInverse(Rewriter, Metric, Loc, Arg);
   replaceOpWithNewOp<geomalg::InnerProdOp>(
       Rewriter, InvOp, SquareInverse, Reverse);
   return llvm::success();
@@ -1364,12 +1394,7 @@ llvm::LogicalResult ApplyMetric::matchAndRewrite(
     auto MVL = dyn_cast<MultivectorLike>(LHS.getType());
     auto MVR = dyn_cast<MultivectorLike>(RHS.getType());
     if (MVL && MVR) {
-      bool IsOrthoBasis = true;
-      for (BladeType L : MVL.getBlades())
-        for (BladeType R : MVR.getBlades())
-          if (L != R && !Metric.isOrthogonal(L.getBladeTag(), R.getBladeTag()))
-            IsOrthoBasis = false;
-      if (IsOrthoBasis) {
+      if (isOrthogonalBasis(Metric, MVL, MVR)) {
         mlir::Type ScalarT = geomalg::BladeType::get(getContext(), 0);
         replaceOpWithNewOp<DotOp>(Rewriter, LC, ScalarT, LHS, RHS);
         return llvm::success();
@@ -1690,11 +1715,12 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          RemoveExpand,
          RemoveCast,
          RemoveConvert,
-         ExpandInverse,
          ExpandReverse,
          ExpandGradeInvo,
-         ExpandConvert,
          UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
+  PS.add<ExpandInverse,
+         ExpandConvert
+           >(Metric::get(MK), Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
   if (MK != MetricKind::unknown) {
     PS.add<ApplyMetric>(geomalg::Metric::get(MK), Ctx,

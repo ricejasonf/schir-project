@@ -1,6 +1,9 @@
 // RUN: geomalg-opt \
 // RUN:   --geomalg-expand="disable-patterns={ExpandMatvec}" %s \
 // RUN:   | FileCheck %s
+// RUN: geomalg-opt \
+// RUN:   --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" %s \
+// RUN:   | FileCheck --check-prefix="CGA" %s
 
 module {
 // CHECK-LABEL: func.func @sum_0()
@@ -461,10 +464,27 @@ func.func @inverse_uv0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
 }
 
 // Convert to unit_vector.
+// CGA-LABEL: @inverse_convert_to_uv
+// CGA-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
+// CGA: [[DOT:%[0-9]+]] = "geomalg.dot"([[ARG0]], [[ARG0]])
+// CGA: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"([[DOT]])
 // CHECK-LABEL: @inverse_convert_to_uv
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
-// TODO Check that this produces inverse of dot product
-// CHECK: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"
+// CHECK: [[ELS:%[0-9]+]]:3 = "geomalg.expand"([[ARG0]])
+// CHECK: [[DOT1:%[0-9]+]] = "geomalg.iprod"([[ELS]]#0, [[ELS]]#0)
+// CHECK: [[DOT2:%[0-9]+]] = "geomalg.iprod"([[ELS]]#0, [[ELS]]#1)
+// CHECK: [[DOT3:%[0-9]+]] = "geomalg.iprod"([[ELS]]#0, [[ELS]]#2)
+// CHECK: [[DOT4:%[0-9]+]] = "geomalg.iprod"([[ELS]]#1, [[ELS]]#0)
+// CHECK: [[DOT5:%[0-9]+]] = "geomalg.iprod"([[ELS]]#1, [[ELS]]#1)
+// CHECK: [[DOT6:%[0-9]+]] = "geomalg.iprod"([[ELS]]#1, [[ELS]]#2)
+// CHECK: [[DOT7:%[0-9]+]] = "geomalg.iprod"([[ELS]]#2, [[ELS]]#0)
+// CHECK: [[DOT8:%[0-9]+]] = "geomalg.iprod"([[ELS]]#2, [[ELS]]#1)
+// CHECK: [[DOT9:%[0-9]+]] = "geomalg.iprod"([[ELS]]#2, [[ELS]]#2)
+// CHECK: [[DOT:%[0-9]+]] = "geomalg.sum"(
+// CHECK-SAME: [[DOT1]], [[DOT2]], [[DOT3]], [[DOT4]]
+// CHECK-SAME: [[DOT5]], [[DOT6]], [[DOT7]], [[DOT8]]
+// CHECK-SAME: [[DOT9]])
+// CHECK: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"([[DOT]])
 // CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"
 // CHECK: [[CAST:%[0-9]+]] = "geomalg.cast"([[SUM]])
 // CHECK: return [[CAST]] : !geomalg.unit_vector<<1>, <2>, <4>>

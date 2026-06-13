@@ -149,4 +149,14 @@ bool MultivectorType::isVector() const {
   return true;
 }
 
+// Check that all basis blade elements are pairwise orthogonal
+// (to allow the use of dot product).
+bool isOrthogonalBasis(Metric const& M, MultivectorLike A, MultivectorLike B) {
+  for (BladeType BT1 : A.getBlades())
+    for (BladeType BT2 : B.getBlades())
+      if (BT1 != BT2 && !M.isOrthogonal(BT1.getBladeTag(), BT2.getBladeTag()))
+        return false;
+  return true;
+}
+
 }  // namespace geomalg

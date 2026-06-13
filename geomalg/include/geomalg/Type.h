@@ -72,6 +72,8 @@ template <typename T>
 mlir::Type
 createMultivectorLikeType(llvm::MutableArrayRef<BladeType> BladeTypes);
 
+bool isOrthogonalBasis(Metric const& M, MultivectorLike A, MultivectorLike B);
+
 }  // namespace geomalg
 
 #endif
