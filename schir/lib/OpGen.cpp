@@ -1022,7 +1022,7 @@ bool OpGen::WalkDefineInits(Value Env, IdSet& LocalIds) {
     return true;
   Init = UnwrapBinding(Init);
   create<SetOp>(Loc, BVal, Init);
-  return false;
+  return CheckError();
 }
 
 void OpGen::FinishLocalDefines() {

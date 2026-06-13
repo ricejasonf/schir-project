@@ -41,7 +41,7 @@ schir::ExternFunction create_op_impl;
 schir::ExternFunction get_region;
 schir::ExternFunction entry_block;
 schir::ExternFunction add_argument;
-schir::ExternFunction results;
+schir::ExternFunction result_values;
 schir::ExternFunction result;
 schir::ExternFunction at_block_begin;
 schir::ExternFunction at_block_end;
@@ -394,11 +394,19 @@ void add_argument(Context& C, ValueRefs Args) {
   C.Cont(Result);
 }
 
-// Get list of results of op.
-void results(Context& C, ValueRefs Args) {
-  // This might be useful for applying to operations
-  // via quasiquote splicing.
-  C.RaiseError("TODO not implemented");
+// Call current continuation with result values.
+void result_values(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::Operation* Op = schir::dyn_cast<mlir::Operation>(Args[0]);
+  if (!Op)
+    return C.RaiseError("expecting mlir.op: {}", Args[0]);
+
+  llvm::SmallVector<schir::Value, 8> Values;
+  for (mlir::Value MV : Op->getResults())
+    Values.push_back(C.CreateAny(MV));
+
+  C.Cont(Values);
 }
 
 // Get operation result by index (default = 0).
@@ -412,7 +420,7 @@ void result(Context& C, ValueRefs Args) {
   Value IndexArg = Args.size() > 1 ? Args[1] : Value(Int{0});
 
   if (!Op)
-    return C.RaiseError("expecting mlir.op, {}", Args[0]);
+    return C.RaiseError("expecting mlir.op: {}", Args[0]);
 
   if (!schir::isa<schir::Int>(IndexArg))
     return C.RaiseError("expecting index: {}", IndexArg);
@@ -893,7 +901,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   SCHIR_MLIR_VAR(get_region) = schir::mlir_bind::get_region;
   SCHIR_MLIR_VAR(entry_block) = schir::mlir_bind::entry_block;
   SCHIR_MLIR_VAR(add_argument) = schir::mlir_bind::add_argument;
-  SCHIR_MLIR_VAR(results) = schir::mlir_bind::results;
+  SCHIR_MLIR_VAR(result_values) = schir::mlir_bind::result_values;
   SCHIR_MLIR_VAR(result) = schir::mlir_bind::result;
   SCHIR_MLIR_VAR(at_block_begin) = schir::mlir_bind::at_block_begin;
   SCHIR_MLIR_VAR(at_block_end) = schir::mlir_bind::at_block_end;
@@ -929,7 +937,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"get-region", SCHIR_MLIR_VAR(get_region)},
     {"entry-block", SCHIR_MLIR_VAR(entry_block)},
     {"add-argument", SCHIR_MLIR_VAR(add_argument)},
-    {"results", SCHIR_MLIR_VAR(results)},
+    {"result-values", SCHIR_MLIR_VAR(result_values)},
     {"result", SCHIR_MLIR_VAR(result)},
     {"at-block-begin", SCHIR_MLIR_VAR(at_block_begin)},
     {"at-block-end", SCHIR_MLIR_VAR(at_block_end)},

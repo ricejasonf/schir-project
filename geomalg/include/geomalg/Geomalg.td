@@ -440,15 +440,8 @@ def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {
 
 def Geomalg_DotOp : Geomalg_Op<"dot", [ZeroAbsorb]> {
   let description = [{
-    Prevent expanding the dot product for vectors
-    represented by an orthogonal basis.
-
-    Notes:
-    We could possibly just use linalg.dot for this, but here
-    we assert the result is the scalar from our set of types.
-
-    If this does not end up transforming into a special
-    dot operation on the backend then we can get rid of it.
+    Take the inner product of two vectors that
+    we know share orthogonal bases.
   }];
 
   let arguments = (ins Geomalg_Value:$LHS, Geomalg_Value:$RHS);

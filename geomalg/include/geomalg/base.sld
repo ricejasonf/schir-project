@@ -5,9 +5,9 @@
     geomalg-current-module
     geomalg-module-init
     define-func
-    basis-vector-type
-    blade-type
-    multivector-type
+    !basis-vector
+    !blade
+    !multivector
     !scalar !e1 !e2 !e3 !no !ni ;; Conformal GA basis vectors (types)
     scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
     !zero
@@ -16,25 +16,29 @@
     oprod
     iprod
     gprod
+    dot
     negate
     rev
     grade-invo
-    inverse)
+    inverse
+    convert
+    expand
+    )
   (import (schir base)
           (schir mlir))
   (begin
     (load-plugin "libGeomalg.so")
     ;; Take a tag that is a power of two (not including the sign bit).
-    (define basis-vector-type
+    (define !basis-vector
       (load-builtin "geomalg_basis_vector_type"))
     ;; Each argument is a non-empty list of basis vectors
     ;; where the sign is determined by the order.
     ;; Alternatively, accept a raw tag value.
-    (define blade-type
+    (define !blade
       (load-builtin "geomalg_blade_type"))
-    ;; Take a nonempty list of blade-types.
+    ;; Take a nonempty list of !blades.
     ;; Sort terms by tag value.
-    (define multivector-type
+    (define !multivector
       (load-builtin "geomalg_multivector_type"))
     ;; Register the geomalg dialect and such.
     (define geomalg-init
@@ -71,20 +75,20 @@
 
     ;; Go full 5-d Conformal Geometric Algebra since
     ;; everything we want is a subalgebra of that.
-    (define !scalar (basis-vector-type 0))
-    (define !e1 (basis-vector-type 1))
-    (define !e2 (basis-vector-type 2))
-    (define !e3 (basis-vector-type 4))
-    (define !no (basis-vector-type 8))
-    (define !ni (basis-vector-type 16))
+    (define !scalar (!basis-vector 0))
+    (define !e1 (!basis-vector 1))
+    (define !e2 (!basis-vector 2))
+    (define !e3 (!basis-vector 4))
+    (define !no (!basis-vector 8))
+    (define !ni (!basis-vector 16))
 
-    (define !vec2 (multivector-type !e1 !e2))
-    (define !vec3 (multivector-type !e1 !e2 !e3))
-    (define !uvec2 (multivector-type !e1 !e2 !e3))
-    (define !uvec3 (multivector-type !e1 !e2 !e3))
+    (define !vec2 (!multivector !e1 !e2))
+    (define !vec3 (!multivector !e1 !e2 !e3))
+    (define !uvec2 (!multivector !e1 !e2 !e3))
+    (define !uvec3 (!multivector !e1 !e2 !e3))
 
-    (define !vec4 (multivector-type !e1 !e2 !e3 !no))
-    (define !vec5 (multivector-type !e1 !e2 !e3 !no !ni))
+    (define !vec4 (!multivector !e1 !e2 !e3 !no))
+    (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))
 
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
@@ -162,6 +166,19 @@
                       (syntax-source-loc V1)
                       V1 V2))))
 
+    (define (dot-impl Loc V1 V2)
+      (result (create-op "geomalg.dot"
+                         (loc: Loc)
+                         (operands: V1 V2)
+                         (attributes:)
+                         (result-types: !scalar))))
+
+    (define-syntax dot
+      (syntax-rules ()
+        ((dot V1 V2)
+         (dot-impl (syntax-source-loc V1)
+                   V1 V2))))
+
     (define (gprod-impl Loc V1 V2)
       (result (create-op "geomalg.gprod"
                          (loc: Loc)
@@ -173,6 +190,20 @@
       (syntax-rules ()
         ((gprod V1 V2)
          (gprod-impl (syntax-source-loc V1) V1 V2))))
+
+    (define (vprod-impl Loc Arg Versors)
+      (result (create-op "geomalg.vprod"
+                         (loc: Loc)
+                         (operands: Arg Versors)
+                         (attributes:)
+                         (result-types: !geomalg.unknown))))
+
+    (define-syntax vprod
+      (syntax-rules ()
+        ((vprod Arg Versors ...)
+         (vprod-impl (syntax-source-loc Arg)
+                     Arg
+                     (list Versors ...)))))
 
     (define-syntax negate
       (syntax-rules ()
@@ -260,4 +291,28 @@
                             !ni
                             (syntax-source-loc Coeff)
                             Coeff))))
+
+    (define-syntax convert
+      (syntax-rules ()
+        ((convert V Type)
+         (result
+           (create-op "geomalg.convert"
+                      (loc: (syntax-source-loc V))
+                      (operands: V)
+                      (attributes:)
+                      (result-types: Type))))))
+
+    (define (expand-impl Loc V)
+      (define Op
+        (create-op "geomalg.expand"
+                   (loc: Loc)
+                   (operands: V)
+                   (attributes:)))
+      (result-values Op))
+
+    (define-syntax expand
+      (syntax-rules ()
+        ((expand V)
+         (expand-impl (syntax-source-loc V) V))
+                    ))
     )) ;; define-library

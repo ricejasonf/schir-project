@@ -25,7 +25,6 @@ extern "C" vec2 test_vec_sum_1(vec2);
 extern "C" vec2 test_vec_sum_2(vec2, vec2);
 extern "C" vec2 test_vec_sum_3(vec2, vec2, vec2);
 extern "C" float test_negate(vec2);
-extern "C" float test_compose(vec2);
 
 #pragma schir_scheme
 {
@@ -55,13 +54,6 @@ extern "C" float test_compose(vec2);
 (define-func test_negate ((a : !vec2))
   (sum a (negate a)))
 
-#| // TODO Support internal calls.
-(define-func test_compose ((a : !vec2))
-  (sum (test_vec_sum2 a (test_basic_sum_1 (negate_ a)))
-       (test_bacis_sum_0)
-       (test_vec_sum_2 a (sum (e1 2) (e2 32)))))
-|#
-
 (run-passes geomalg-current-module
             "geomalg-to-llvm")
 (inject-module geomalg-current-module)
@@ -81,8 +73,4 @@ int main() {
                                         vec2{3.14, -3.14}),
                          vec2{3.14, -3.14}));
   SCHIR_ASSERT(test_negate(vec2{5, 6}) == 0.0);
-#if 0 // TODO Support calls.
-  SCHIR_ASSERT(vec_equal(test_compose(vec2{4, 32}),
-                            vec2{8, 64}));
-#endif
 }
