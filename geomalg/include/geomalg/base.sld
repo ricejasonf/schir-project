@@ -91,6 +91,19 @@
     (define !vec4 (!multivector !e1 !e2 !e3 !no))
     (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))
 
+    ; Args are checked within a pass.
+    (define-syntax %define-call-fn
+      (syntax-rules ()
+        ((%define-call-fn (FuncName ArgN ...))
+         (define (FuncName ArgN ...)
+           (result
+             (create-op "geomalg.call"
+                        (loc: (syntax-source-loc FuncName))
+                        (operands: ArgN ...)
+                        (attributes:
+                          ("callee" (flat-symbolref-attr 'FuncName)))
+                        (result-types: !geomalg.unknown)))))))
+
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
         (create-op "func.func"
@@ -124,15 +137,17 @@
       (syntax-rules()
         ((define-func FuncName ((ArgName : ArgType) ...)
                       BodyExprI ... BodyExprN)
-         (define-func-impl (syntax-source-loc FuncName)
-                           (syntax-source-loc BodyExprN)
-                           'FuncName
-                           (list ArgType ...)
-                           (list (syntax-source-loc ArgName) ...)
-                           (lambda (ArgName ...)
-                             BodyExprI
-                             ...
-                             BodyExprN)))))
+         (begin
+           (%define-call-fn (FuncName ArgName ...))
+           (define-func-impl (syntax-source-loc FuncName)
+                             (syntax-source-loc BodyExprN)
+                             'FuncName
+                             (list ArgType ...)
+                             (list (syntax-source-loc ArgName) ...)
+                             (lambda (ArgName ...)
+                               BodyExprI
+                               ...
+                               BodyExprN))))))
 
     ; Shorcut to create ops with result only specifying
     ; operands and inferring result type.
