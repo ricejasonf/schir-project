@@ -5,12 +5,21 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
 
+namespace schir {
+  class Context;
+}
+
 namespace geomalg {
 // List of supported metrics.
 enum class MetricKind {
   unknown = 0,
   cga = 1,
 };
+
+// Use current metric for calling passes from scheme.
+// (Implemented in Geomalg.cpp.)
+geomalg::MetricKind getCurrentMetric(schir::Context& C);
+void setCurrentMetric(schir::Context& C, geomalg::MetricKind MK);
 
 // We are deliberately not enforcing the grades or signed of entries
 // in the metric so that a full metric tensor could be built if desired.

@@ -21,6 +21,8 @@
 
 namespace schir {
 class Context;
+
+bool isPassDebugMode(schir::Context& C);
 }
 
 extern "C" {

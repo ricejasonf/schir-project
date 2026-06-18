@@ -27,6 +27,40 @@
     (define (memv obj list)
       (member-fast obj list eqv?))
 
+    ; Taken from r7rs
+    (define-syntax case
+      (syntax-rules (else =>)
+        ((case (key ...)
+           clauses ...)
+         (let ((atom-key (key ...)))
+           (case atom-key clauses ...)))
+        ((case key
+           (else => result))
+         (result key))
+        ((case key
+           (else result1 result2 ...))
+         (begin result1 result2 ...))
+        ((case key
+           ((atoms ...) => result))
+         (if (memv key (list atoms ...))
+           (result key)))
+        ((case key
+           ((atoms ...) => result)
+           clause clauses ...)
+         (if (memv key (list atoms ...))
+           (result key)
+           (case key clause clauses ...)))((case key
+           ((atoms ...) result1 result2 ...))
+         (if (memv key (list atoms ...))
+           (begin result1 result2 ...)))
+        
+        ((case key
+           ((atoms ...) result1 result2 ...)
+           clause clauses ...)
+         (if (memv key (list atoms ...))
+           (begin result1 result2 ...)
+           (case key clause clauses ...)))))
+
     (define (reverse InputList)
       (let Loop ((List InputList)
                  (NewList '()))
@@ -77,5 +111,6 @@
     caar cadr cdar cddr
     member memq memv
     reverse map
+    case
     )
 )

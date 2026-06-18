@@ -71,7 +71,8 @@
 ; CHECK-SAME: coefficient = 2.560000e+01 : f32
 ; CHECK-SAME: -> !geomalg.blade<4>
 ; CHECK-NEXT: [[SUM0:%[0-9]+]] = "geomalg.sum"([[E1]], [[E2]], [[E3]])
-; CHECK-NEXT: [[CALL0:%[0-9]+]] = "geomalg.call"([[SUM0]])
+; CHECK-NEXT: [[CALL0:%[0-9]+]] = geomalg.call @my_func4([[SUM0]])
+; CHECK-SAME: : (!geomalg.multivector<<1>, <2>, <4>>) -> !geomalg.unknown
 ; CHECK-NEXT: geomalg.return [[CALL0]]
 (define-func my_func5 ()
   (my_func4 (sum (e1 5) (e2 15.5) (e3 25.6))))
@@ -79,7 +80,7 @@
 (newline)
 
 ; CHECK: func.func @my_func6() -> !geomalg.unknown
-; CHECK-NEXT: [[CALL0:%[0-9]+]] = "geomalg.call"()
+; CHECK-NEXT: [[CALL0:%[0-9]+]] = geomalg.call @my_func5() : () -> !geomalg.unknown
 ; CHECK-NEXT: geomalg.return [[CALL0]]
 (define-func my_func6 ()
   (my_func5))

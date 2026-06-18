@@ -27,6 +27,8 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
         (schir mlir all-passes)
         (geomalg base))
 
+(with-metric 'cga)
+
 ; // Reflect a point over the axis created by a unit vector.
 (define-func test_dot ((point : !vec3) (axis : !uvec3))
   (dot point axis))
@@ -49,7 +51,7 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
   (sum v1 v2 v3))
 
 (run-passes geomalg-current-module 
-          "geomalg-to-llvm")
+            "geomalg-to-llvm")
 (inject-module geomalg-current-module)
 }
 

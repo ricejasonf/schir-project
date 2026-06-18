@@ -58,6 +58,10 @@
               (init-regions Op BlockArgLocList BlockArgTypesList UserFns)
               Op))
           ))
+
+      (define (set-pass-debug-mode V)
+        (set! %is-pass-debug-mode
+          (not (not V))))
     ) ; end of begin
 
    (export
@@ -65,6 +69,7 @@
     ; (schir mlir builtins)
     old-create-op
     current-builder
+    set-pass-debug-mode
     get-region
     entry-block
     add-argument

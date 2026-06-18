@@ -36,6 +36,7 @@
 namespace schir::mlir_bind_var {
 schir::ContextLocal   current_context;
 schir::ContextLocal   current_builder;
+schir::ContextLocal   is_pass_debug_mode_val;
 schir::ExternSyntax<> create_op;
 schir::ExternFunction create_op_impl;
 schir::ExternFunction get_region;
@@ -895,6 +896,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   schir::Value BuilderVal = C.CreateAny(mlir::OpBuilder(MC));
   SCHIR_MLIR_VAR(current_context).set(C, MC_Val);
   SCHIR_MLIR_VAR(current_builder).set(C, BuilderVal);
+  SCHIR_MLIR_VAR(is_pass_debug_mode_val).set(C, schir::Bool(false));
 
   SCHIR_MLIR_VAR(create_op) = schir::mlir_bind::create_op;
   SCHIR_MLIR_VAR(create_op_impl) = schir::mlir_bind::create_op_impl;
@@ -934,6 +936,8 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"old-create-op", SCHIR_MLIR_VAR(create_op)},
     {"%create-op", SCHIR_MLIR_VAR(create_op_impl)},
     {"current-builder", SCHIR_MLIR_VAR(current_builder).getBinding(C)},
+    {"%is-pass-debug-mode",
+                        SCHIR_MLIR_VAR(is_pass_debug_mode_val).getBinding(C)},
     {"get-region", SCHIR_MLIR_VAR(get_region)},
     {"entry-block", SCHIR_MLIR_VAR(entry_block)},
     {"add-argument", SCHIR_MLIR_VAR(add_argument)},
@@ -963,4 +967,12 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"value?", SCHIR_MLIR_VAR(is_value)},
   });
 }
+}
+
+
+bool schir::isPassDebugMode(schir::Context& C) {
+  schir::Value V = SCHIR_MLIR_VAR(is_pass_debug_mode_val).get(C);
+  if (!isa<schir::Bool>(V))
+    return false;
+  return static_cast<bool>(cast<schir::Bool>(V));
 }

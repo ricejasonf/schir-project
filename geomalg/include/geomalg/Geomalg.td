@@ -525,45 +525,21 @@ def CallOp : Op<Geomalg_Dialect, "call", []> {
 
   let arguments = (ins
     FlatSymbolRefAttr:$callee,
-    Variadic<AnyType>:$operands
+    Variadic<AnyType>:$args
   );
 
-  let results = (outs Variadic<AnyType>);
+  let results = (outs AnyType:$result);
 
   let builders = [
-    OpBuilder<(ins "mlir::SymbolRefAttr":$callee, "mlir::TypeRange":$results,
+    OpBuilder<(ins "mlir::SymbolRefAttr":$callee, "mlir::Type":$result,
       CArg<"mlir::ValueRange", "{}">:$operands), [{
       $_state.addOperands(operands);
       $_state.addAttribute("callee", callee);
-      $_state.addTypes(results);
+      $_state.addTypes(result);
     }]>
   ];
 
-  let extraClassDeclaration = [{
-    mlir::FunctionType getCalleeType();
-
-    /// Get the argument operands to the called function.
-    operand_range getArgOperands() {
-      return {arg_operand_begin(), arg_operand_end()};
-    }
-
-    mlir::MutableOperandRange getArgOperandsMutable() {
-      return getOperandsMutable();
-    }
-
-    operand_iterator arg_operand_begin() { return operand_begin(); }
-    operand_iterator arg_operand_end() { return operand_end(); }
-
-    /// Return the callee of this operation.
-    mlir::CallInterfaceCallable getCallableForCallee() {
-      return (*this)->getAttrOfType<mlir::SymbolRefAttr>("callee");
-    }
-
-    /// Set the callee for this operation.
-    void setCalleeFromCallable(mlir::CallInterfaceCallable callee) {
-      (*this)->setAttr("callee", cast<mlir::SymbolRefAttr>(callee));
-    }
-  }];
+  let assemblyFormat = "$callee `(` $args `)` attr-dict `:` functional-type($args, $result)";
 }
 
 #endif // GEOMALG_DIALECT_TD

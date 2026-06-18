@@ -1288,6 +1288,7 @@ inline Symbol* unwrapIdentifier(Value V) {
 
   return dyn_cast<Symbol>(V);
 }
+
 inline bool isIdentifier(Value V) {
   return unwrapIdentifier(V) != nullptr;
 }

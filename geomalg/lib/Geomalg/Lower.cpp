@@ -39,7 +39,10 @@ namespace geomalg {
 namespace geomalg {
 // Implemented in Passes.cpp
 mlir::LogicalResult
-applyUpdateReturnPatterns(mlir::Operation* Op);
+applyUpdateReturnPatterns(mlir::ModuleOp Op);
+
+mlir::LogicalResult
+applyUpdateCallPatterns(mlir::ModuleOp Op);
 }
 
 namespace arith = mlir::arith;
@@ -65,7 +68,7 @@ mlir::ValueRange expandVector(mlir::RewriterBase& R, mlir::Location Loc,
 }
 
 // All types will be converted a single scalar type
-// and tensors over said scalar type.
+// and vectors of that scalar type.
 struct TypeConverter : mlir::TypeConverter {
   TypeConverter(mlir::Type ScalarT)
     : mlir::TypeConverter()
@@ -75,7 +78,6 @@ struct TypeConverter : mlir::TypeConverter {
     addConversion([ScalarT](MultivectorLike MV) {
       int64_t Size = MV.getBlades().size();
       return mlir::VectorType::get(Size, ScalarT);
-      //return mlir::RankedTensorType::get(Size, ScalarT);
     });
   }
 };
@@ -425,7 +427,6 @@ public:
 
 struct LowerReturn : mlir::OpConversionPattern<ReturnOp>,
                      ::PatternBase {
-public:
   using Base::Base;
 
   llvm::LogicalResult matchAndRewrite(
@@ -459,6 +460,32 @@ public:
   }
 };
 
+struct LowerCall : mlir::OpConversionPattern<CallOp>,
+                   ::PatternBase {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        CallOp Op, CallOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    auto ModuleOp = Op->getParentOfType<mlir::ModuleOp>();
+    mlir::FlatSymbolRefAttr CalleeSym = Op.getCalleeAttr();
+    mlir::Operation* LookupOp = ModuleOp.lookupSymbol(CalleeSym.getAttr());
+    auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(LookupOp);
+    if (!FuncOp)
+      return llvm::failure();
+
+    // We have to get the result type from the ReturnOp.
+    mlir::Type ResultT = Op.getResult().getType();
+    mlir::Type ConvertedResultT = getTypeConverter()->convertType(ResultT);
+    assert(ConvertedResultT && "expecting a converted return type");
+
+    // Replace with new func::CallOp.
+    R.replaceOpWithNewOp<func::CallOp>(Op, Op.getCalleeAttr(), ConvertedResultT,
+                                       Adaptor.getOperands());
+    return llvm::success();
+  }
+};
+
 void populateLowerPasses(mlir::RewritePatternSet& PS,
                          ::TypeConverter const* TC) {
   mlir::MLIRContext* Ctx = PS.getContext();
@@ -470,14 +497,18 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
          DotToArith,
          InverseToArith,
          LowerCast,
-         LowerReturn
+         LowerReturn,
+         LowerCall
          >(*TC, Ctx);
 }
 
 llvm::LogicalResult
-applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::Operation* Op) {
+applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::ModuleOp Op) {
   // Fix return types of geomalg::ReturnOps.
   if (llvm::failed(applyUpdateReturnPatterns(Op)))
+    return llvm::failure();
+
+  if (llvm::failed(applyUpdateCallPatterns(Op)))
     return llvm::failure();
 
   // Do that actual Conversion.

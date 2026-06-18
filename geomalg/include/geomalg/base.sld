@@ -4,6 +4,7 @@
   (export
     geomalg-current-module
     geomalg-module-init
+    with-metric
     define-func
     !basis-vector
     !blade
@@ -29,25 +30,36 @@
           (schir mlir))
   (begin
     (load-plugin "libGeomalg.so")
+
     ;; Take a tag that is a power of two (not including the sign bit).
     (define !basis-vector
       (load-builtin "geomalg_basis_vector_type"))
+
     ;; Each argument is a non-empty list of basis vectors
     ;; where the sign is determined by the order.
     ;; Alternatively, accept a raw tag value.
     (define !blade
       (load-builtin "geomalg_blade_type"))
+
     ;; Take a nonempty list of !blades.
     ;; Sort terms by tag value.
     (define !multivector
       (load-builtin "geomalg_multivector_type"))
+
+    ; "Finalize" the function to ensure a deduced return type if needed.
+    (define finalize-func
+      (load-builtin "geomalg_finalize_func"))
+
     ;; Register the geomalg dialect and such.
     (define geomalg-init
       (load-builtin "geomalg_init"))
-    #;(define sum-impl
-      (load-builtin "geomalg_sum_impl"))
+
     (define geomalg-current-module
       (load-builtin "geomalg_current_module"))
+
+    (define current-metric
+      (load-builtin "geomalg_current_metric"))
+
     (geomalg-init)
     (load-dialect "geomalg")
 
@@ -67,6 +79,14 @@
     ;; Just initialize a monolithic module.
     (set! geomalg-current-module
       (geomalg-module-init "geomalg_main"))
+
+    (define (with-metric MetricTag)
+      (define IntVal
+        (case MetricTag
+          (('unknown) 0)
+          (('cga) 1)
+          (else (error "invalid metric tag: {}" MetricTag))))
+      (set! current-metric IntVal))
 
     ;; If any function parameter type is unknown
     ;; then the func is used as a template.
@@ -131,8 +151,11 @@
                      (attributes:)
                      (result-types:)))
         (if #f #f) ;; Return undefined.
-        )))
+        ))
+      (finalize-func FuncName FuncOp))
 
+    ; Define a lambda by the given FuncName that
+    ; creates a call to the generated function.
     (define-syntax define-func
       (syntax-rules()
         ((define-func FuncName ((ArgName : ArgType) ...)

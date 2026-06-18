@@ -1,8 +1,8 @@
 // RUN: geomalg-opt \
-// RUN:   --geomalg-expand="disable-patterns={ExpandMatvec}" %s \
+// RUN:   --geomalg-expand %s \
 // RUN:   | FileCheck %s
 // RUN: geomalg-opt \
-// RUN:   --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" %s \
+// RUN:   --geomalg-expand="metric=cga" %s \
 // RUN:   | FileCheck --check-prefix="CGA" %s
 
 module {

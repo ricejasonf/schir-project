@@ -60,4 +60,15 @@ func.func @rotate_point(%arg0: !vec3) -> !geomalg.unknown {
   %sum = "geomalg.sum"(%0, %no) : (!geomalg.unknown, !no) -> !geomalg.unknown
   geomalg.return %sum : !geomalg.unknown
 }
+
+// CHECK-LABEL: llvm.func @call_reflect
+func.func @call_reflect(%arg0: !vec3) -> !geomalg.unknown {
+  %1 = "geomalg.blade"() <{coefficient = 1.0e+00 : f32}> : () -> !e1
+  %2 = "geomalg.blade"() <{coefficient = 0.0e+00 : f32}> : () -> !e2
+  %3 = "geomalg.blade"() <{coefficient = 0.0e+00 : f32}> : () -> !e3
+  %sum = "geomalg.sum"(%1, %2, %3) : (!e1, !e2, !e3) -> !geomalg.unknown
+  %u0 = "geomalg.convert"(%sum) : (!geomalg.unknown) -> !uvec3
+  %call = geomalg.call @reflect_point(%arg0, %u0) : (!vec3, !uvec3) -> !geomalg.unknown
+  geomalg.return %call : !geomalg.unknown
+}
 }
