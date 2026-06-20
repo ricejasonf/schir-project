@@ -124,6 +124,7 @@ public: // Provide access in lib/Mlir bindings.
   std::unique_ptr<mlir::MLIRContext> MLIRContext;
 private:
   SourceLocation Loc = {}; // last known location for errors
+  SourceLocation PrevLoc = {}; // previously last known location for errors
   Value Err = nullptr; // FIXME Remove Context.Err I think.
   Value ExceptionHandlers = schir::Empty();
   mlir::Operation* ModuleOp = nullptr;
@@ -289,6 +290,7 @@ public:
 
   void setLoc(SourceLocation L) {
     if (L.isValid()) {
+      PrevLoc = Loc;
       Loc = L;
     }
   }
@@ -299,6 +301,7 @@ public:
   }
 
   SourceLocation getLoc() const { return Loc; }
+  SourceLocation getPrevLoc() const { return PrevLoc; }
 
   FullSourceLocation getFullSourceLocation() const {
     return getFullSourceLocation(Loc);

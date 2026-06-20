@@ -96,6 +96,7 @@ schir::ExternFunction load_module;
 schir::ExternFunction source_loc;
 schir::ExternFunction source_loc_valid;
 schir::ExternFunction dump_source_loc;
+schir::ExternFunction current_source_loc;
 schir::ExternFunction make_syntactic_closure;
 schir::ExternFunction load_plugin;
 schir::ExternFunction load_builtin;
@@ -473,6 +474,13 @@ void dump_source_loc(Context& C, ValueRefs Args) {
     llvm::errs() << "<<INVALID SOURCE LOCATION>>\n";
   }
   C.Cont();
+}
+
+// Return the current source location which in a practical
+// sense is the previous location since the call to
+// current-source-loc itself pushes a source location.
+void current_source_loc(Context& C, ValueRefs Args) {
+  C.Cont(C.CreateSourceValue(C.getPrevLoc()));
 }
 
 } // end of namespace schir::builtins
@@ -1343,6 +1351,8 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(if_)             = schir::builtins::if_;
   SCHIR_BASE_VAR(lambda)          = schir::builtins::lambda;
   SCHIR_BASE_VAR(case_lambda)     = schir::builtins::case_lambda;
+  SCHIR_BASE_VAR(current_source_loc)
+                                  = schir::builtins::current_source_loc;
   SCHIR_BASE_VAR(quasiquote)      = schir::builtins::quasiquote;
   SCHIR_BASE_VAR(quote)           = schir::builtins::quote;
   SCHIR_BASE_VAR(set)             = schir::builtins::set;
@@ -1460,6 +1470,7 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"source-loc",    SCHIR_BASE_VAR(source_loc)},
     {"source-loc-valid", SCHIR_BASE_VAR(source_loc_valid)},
     {"dump-source-loc", SCHIR_BASE_VAR(dump_source_loc)},
+    {"current-source-loc",    SCHIR_BASE_VAR(current_source_loc)},
     {"parse-source-file",
                       SCHIR_BASE_VAR(parse_source_file).get(Context)},
 

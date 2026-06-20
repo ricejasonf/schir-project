@@ -65,6 +65,7 @@
     source-loc
     source-loc-valid
     dump-source-loc
+    current-source-loc
     parse-source-file
     +
     -
