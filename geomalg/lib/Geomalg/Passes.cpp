@@ -18,6 +18,7 @@
 
 // Generated stuff
 namespace geomalg {
+#define GEN_PASS_DEF_EXPANDFUNCPASS
 #define GEN_PASS_DEF_EXPANDPASS
 #define GEN_PASS_DEF_SIMPLIFYPASS
 #define GEN_PASS_DEF_MATRIXPASS
@@ -38,13 +39,6 @@ void dumpBlock(mlir::Operation* Op) {
 void dumpBlock(mlir::Value V) {
   V.getParentBlock()->dump();
 }
-
-// For use in Lower.cpp
-llvm::LogicalResult
-applyUpdateReturnPatterns(mlir::ModuleOp Op);
-
-llvm::LogicalResult
-applyUpdateCallPatterns(mlir::ModuleOp Op);
 }
 
 using namespace geomalg;
@@ -859,27 +853,23 @@ ExpandMatvec::matchAndRewrite(mlir::Operation* Op,
   return llvm::success();
 }
 
-// Update the Region results to match the containing MatvecOp
-// or explicitly specified function return type.
-struct UpdateReturn : mlir::OpRewritePattern<ReturnOp> {
+struct UpdateMatvecReturn : mlir::OpRewritePattern<ReturnOp> {
   using Base = mlir::OpRewritePattern<ReturnOp>;
   using Base::OpRewritePattern;
 
   void initialize() {
-    setDebugName("UpdateReturn");
+    setDebugName("UpdateMatvecReturn");
   }
 
   llvm::LogicalResult matchAndRewrite(ReturnOp Op,
                         mlir::PatternRewriter& Rewriter) const override {
+    mlir::Value RetArg = Op.getArg();
+    mlir::Type RetT = RetArg.getType();
+
     // The target result type.
     mlir::Type ResultT;
     if (auto MM = dyn_cast<MatvecOp>(Op->getParentOp()))
       ResultT = MM.getResult().getType();
-    else if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op->getParentOp()))
-      ResultT = FuncOp.getResultTypes().front();
-
-    mlir::Value RetArg = Op.getArg();
-    mlir::Type RetT = RetArg.getType();
 
     if (!ResultT || isUnknown(ResultT) || isUnknown(RetT) ||
         RetT == ResultT || isLikeMultivector(ResultT, RetT))
@@ -894,6 +884,48 @@ struct UpdateReturn : mlir::OpRewritePattern<ReturnOp> {
   }
 };
 
+// Update the function result type if it is different from
+// the ReturnOp argument type.
+struct UpdateFuncReturnType : mlir::OpRewritePattern<mlir::func::FuncOp> {
+  using Base = mlir::OpRewritePattern<mlir::func::FuncOp>;
+  using Base::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(mlir::func::FuncOp FuncOp,
+                        mlir::PatternRewriter& Rewriter) const override {
+    mlir::FunctionType FT = FuncOp.getFunctionType();
+    if (FT.getNumResults() != 1)
+      return llvm::failure();
+
+    auto ReturnOp = dyn_cast<geomalg::ReturnOp>(
+        FuncOp.getBody().front().getTerminator());
+    if (!ReturnOp)
+      return llvm::failure();
+
+    mlir::Type ResultT = FT.getResult(0);
+    mlir::Type ReturnT = ReturnOp.getArg().getType();
+
+    if (ResultT == ReturnT)
+      return llvm::failure();
+
+    // The return argument must match an explicit
+    // function return type exactly.
+    if (!isUnknown(ResultT)) {
+      FuncOp->emitError("return type does not match function prototype");
+      return llvm::failure();
+    }
+
+    mlir::FunctionType NewFT = mlir::FunctionType::get(
+        getContext(), FT.getInputs(), ReturnT);
+    Rewriter.startOpModification(FuncOp);
+    FuncOp.setFunctionType(NewFT);
+    Rewriter.finalizeOpModification(FuncOp);
+
+    // Update relevant CallOp in ExpandPass loop.
+
+    return llvm::success();
+  }
+};
+
 struct UpdateCall : mlir::OpRewritePattern<CallOp> {
   using Base = mlir::OpRewritePattern<CallOp>;
   using Base::OpRewritePattern;
@@ -904,6 +936,7 @@ struct UpdateCall : mlir::OpRewritePattern<CallOp> {
 
   llvm::LogicalResult matchAndRewrite(CallOp Op,
                         mlir::PatternRewriter& Rewriter) const override {
+    return llvm::failure();
     auto ModuleOp = Op->getParentOfType<mlir::ModuleOp>();
     mlir::FlatSymbolRefAttr CalleeSym = Op.getCalleeAttr();
     mlir::Operation* LookupOp = ModuleOp.lookupSymbol(CalleeSym.getAttr());
@@ -911,22 +944,23 @@ struct UpdateCall : mlir::OpRewritePattern<CallOp> {
     if (!FuncOp)
       return llvm::failure();
 
-    // We have to get the result type from the ReturnOp.
-    mlir::Operation* ReturnOp = FuncOp.getBody().front().getTerminator();
-    mlir::Type ResultT = ReturnOp->getOperand(0).getType();
-
-    if (isUnknown(ResultT))
-      return llvm::failure();
+    mlir::FunctionType FT = FuncOp.getFunctionType();
+    assert(FT.getNumResults() == 1);
+    mlir::Type ResultT = FT.getResult(0);
+    mlir::Type CallResultT = Op.getResult().getType();
 
     mlir::TypeRange ArgTs = FuncOp.getFunctionType().getInputs();
     mlir::TypeRange OpArgTs = Op->getOperandTypes();
 
+#if 0
+    // TODO These need to be standalone checks that occur
+    //      after ExpandPass (with metric) and before lowering.
+    // Check the arguments types
     if (OpArgTs.size() != ArgTs.size()) {
       Op->emitError("call argument arity does not match callee");
       return llvm::failure();
     }
 
-    // Check the arguments types
     for (auto [OpArgT, ArgT] : llvm::zip(OpArgTs, ArgTs)) {
       if (isUnknown(OpArgT) || isUnknown(ArgT))
         return llvm::failure();
@@ -937,9 +971,7 @@ struct UpdateCall : mlir::OpRewritePattern<CallOp> {
         return llvm::failure();
       }
     }
-
-    if (isUnknown(ResultT) || ResultT == Op.getResult().getType())
-      return llvm::failure();
+#endif
 
     return setResultType(Rewriter, Op.getOperation(), ResultT);
   }
@@ -1732,23 +1764,6 @@ llvm::LogicalResult SimplifyDot::matchAndRewrite(
   return llvm::failure();
 }
 
-// Do greedy pattern stuff to get ready for lowering.
-llvm::LogicalResult
-geomalg::applyUpdateReturnPatterns(mlir::ModuleOp Op) {
-  mlir::RewritePatternSet PS(Op->getContext());
-  PS.add<UpdateReturn>(Op->getContext());
-  return mlir::applyPatternsGreedily(Op, std::move(PS));
-}
-
-// After we are done deducing types, check geomalg::CallOp
-// arguments before lowering.
-llvm::LogicalResult
-geomalg::applyUpdateCallPatterns(mlir::ModuleOp Op) {
-  mlir::RewritePatternSet PS(Op->getContext());
-  PS.add<UpdateCall>(Op->getContext());
-  return mlir::applyPatternsGreedily(Op, std::move(PS));
-}
-
 namespace {
 void populateDistributePatterns(mlir::RewritePatternSet& PS) {
   mlir::MLIRContext* Ctx = PS.getContext();
@@ -1779,6 +1794,7 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          RemoveConvert,
          ExpandReverse,
          ExpandGradeInvo,
+         UpdateCall,
          UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandInverse,
          ExpandConvert
@@ -1797,8 +1813,9 @@ void populateExpandSumPatterns(mlir::RewritePatternSet& PS) {
   PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
 }
 
-class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
-  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
+class ExpandFuncPass
+              : public geomalg::impl::ExpandFuncPassBase<ExpandFuncPass> {
+  using Base = geomalg::impl::ExpandFuncPassBase<ExpandFuncPass>;
   mlir::FrozenRewritePatternSet ExpandPatterns;
   mlir::FrozenRewritePatternSet ExpandSumPatterns;
 
@@ -1909,6 +1926,61 @@ public:
   }
 };
 
+// Expand all the functions in a module while updating
+// call operation result types in a loop as well as checking
+// call argument types at the end.
+class ExpandPass : public geomalg::impl::ExpandPassBase<ExpandPass> {
+  using Base = geomalg::impl::ExpandPassBase<ExpandPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+  geomalg::ExpandFuncPassOptions ExpandPassOpts;
+
+public:
+  using Base::Base;
+
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<UpdateFuncReturnType>(Ctx);
+    Patterns = mlir::FrozenRewritePatternSet(std::move(PS));
+
+    // All just to use the generated options :/
+    llvm::SmallVector<std::string>
+     disabledPatternsTemp((llvm::ArrayRef<std::string>(disabledPatterns)));
+    llvm::SmallVector<std::string>
+     enabledPatternsTemp((llvm::ArrayRef<std::string>(enabledPatterns)));
+    ExpandPassOpts = geomalg::ExpandFuncPassOptions{
+      .metric = metric,
+      .disabledPatterns = std::move(disabledPatternsTemp),
+      .enabledPatterns = std::move(enabledPatternsTemp)
+    };
+
+    return llvm::success();
+  }
+
+  void runOnOperation() override {
+    if (llvm::failed(run(getOperation())))
+      signalPassFailure();
+  }
+
+  llvm::LogicalResult run(mlir::ModuleOp ModuleOp) {
+    bool IRChanged = true;
+    while (IRChanged) {
+      // Run ExpandFuncPass with the metric on the nested FuncOps.
+      mlir::OpPassManager PM(mlir::func::FuncOp::getOperationName());
+      PM.addNestedPass<mlir::func::FuncOp>(
+          geomalg::createExpandFuncPass(ExpandPassOpts));
+
+      if (llvm::failed(runPipeline(PM, ModuleOp)))
+        return llvm::failure();
+
+      if (llvm::failed(mlir::applyPatternsGreedily(ModuleOp, Patterns,
+                  mlir::GreedyRewriteConfig(), &IRChanged)))
+        return llvm::failure();
+    }
+
+    return llvm::success();
+  }
+};
+
 // FIXME The name is too specific to SPIRV if we also use it for LLVM.
 // Since 'unknown' is mainly for testing, default to
 // 'cga' for the metric.
@@ -1927,7 +1999,7 @@ void geomalg::registerGeomalgToSPIRV() {
   auto BuildFn = [](mlir::OpPassManager& PM,
                     GeomalgToSPIRVOptions const& Options) {
     geomalg::ExpandPassOptions EPO{.metric = Options.MetricName};
-    PM.addNestedPass<mlir::func::FuncOp>(createExpandPass(EPO));
+    PM.addPass(createExpandPass(EPO));
     PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
     //PM.addPass(mlir::createSCCPPass());
     PM.addPass(createLowerPass());
@@ -1944,7 +2016,7 @@ void geomalg::registerGeomalgToLLVM() {
   auto BuildFn = [](mlir::OpPassManager& PM,
                     GeomalgToSPIRVOptions const& Options) {
     geomalg::ExpandPassOptions EPO{.metric = Options.MetricName};
-    PM.addNestedPass<mlir::func::FuncOp>(createExpandPass(EPO));
+    PM.addPass(createExpandPass(EPO));
     PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
     //PM.addPass(mlir::createSCCPPass());
     PM.addPass(createLowerPass());

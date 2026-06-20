@@ -58,6 +58,17 @@ void geomalg_init(schir::Context& C, schir::ValueRefs) {
   C.Cont();
 }
 
+// Set the current metric
+void geomalg_with_metric(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  schir::Value Arg = Args.front();
+  if (!isa<schir::Int>(Arg))
+    return C.RaiseError("expecting int: {}", Arg);
+  geomalg_current_metric.set(C, Arg);
+  C.Cont();
+}
+
 void geomalg_basis_vector_type(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
@@ -118,29 +129,28 @@ void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
   CreateMultivectorLikeType<geomalg::UnitVectorType>(C, Args);
 }
 
-// Finalize a function to deduce its return type which is needed for calls.
-void geomalg_finalize_func(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 2)
+// Run ExpandFuncPass with the current metric if it is known.
+// Update the function return type now so we have it for possible
+// introspection.
+void geomalg_apply_metric(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
     return C.RaiseError("invalid arity");
 
-  schir::Symbol* FuncId = dyn_cast<schir::Symbol>(Args.front());
-  if (!FuncId)
-    return C.RaiseError("expecting function name: {}", schir::Value(FuncId));
-
-  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args[1]);
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args.front());
   if (!Op)
-    return C.RaiseError("expecting mlir.operation: {}", Args[1]);
+    return C.RaiseError("expecting mlir.operation: {}", Args.front());
 
-  auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op);
+  auto FuncOp = dyn_cast<mlir::FunctionOpInterface>(Op);
   if (!FuncOp)
-    return C.RaiseError("expecting mlir::func::FuncOp: {}", Args[1]);
+    return C.RaiseError("expecting mlir.op of mlir::FunctionOpInterface: {}",
+                        Args.front());
 
   // Do nothing if the metric is unknown.
   geomalg::MetricKind MetricKind = geomalg::getCurrentMetric(C);
   if (MetricKind == geomalg::MetricKind::unknown)
     return C.Cont();
 
-  geomalg::ExpandPassOptions ExpandPassOpts{
+  geomalg::ExpandFuncPassOptions ExpandPassOpts{
     .metric = MetricKind
   };
 
@@ -148,9 +158,9 @@ void geomalg_finalize_func(schir::Context& C, schir::ValueRefs Args) {
   if (!MCtx)
     return C.RaiseError("mlir context not set");
 
-  // Run ExpandPass on the Op.
+  // Run ExpandFuncPass on the Op.
   mlir::PassManager PM(MCtx);
-  PM.addPass(geomalg::createExpandPass(ExpandPassOpts));
+  PM.addPass(geomalg::createExpandFuncPass(ExpandPassOpts));
 
   if (schir::isPassDebugMode(C)) {
 #ifndef NDEBUG
@@ -166,7 +176,7 @@ void geomalg_finalize_func(schir::Context& C, schir::ValueRefs Args) {
 
   // Attach mlir diagnostics as "notes" to the scheme error
   // to be raised if PassManager::run fails.
-  llvm::SmallVector<schir::Value, 1> Irrs{schir::Value(FuncId)};
+  llvm::SmallVector<schir::Value, 1> Irrs;
   mlir::ScopedDiagnosticHandler DH(MCtx,
       [&](mlir::Diagnostic& D) -> llvm::LogicalResult {
         std::string ErrMsg = D.str();
@@ -181,9 +191,22 @@ void geomalg_finalize_func(schir::Context& C, schir::ValueRefs Args) {
       });
 
   if (mlir::failed(PM.run(Op)))
-    return C.RaiseError("failed to finalize function: {}", Irrs);
+    return C.RaiseError("failed to apply metric to function: {}", Irrs);
 
-  // TODO Update the functions return type.
+  // Update the function return type.
+  auto FT = dyn_cast<mlir::FunctionType>(FuncOp.getFunctionType());
+  if (!FT || FT.getNumResults() != 1)
+    return C.RaiseError("func does not have valid function type: {}",
+                        schir::Value(Op));
+
+  mlir::Type ResultT = FT.getResult(0);
+  mlir::Operation* ReturnOp = FuncOp.getFunctionBody().front().getTerminator();
+  mlir::Type NewResultT = ReturnOp->getOperand(0).getType();
+  if (ResultT != NewResultT) {
+    mlir::FunctionType NewFT = mlir::FunctionType::get(
+        MCtx, FT.getInputs(), NewResultT);
+    FuncOp.setType(NewFT);
+  }
 
   C.Cont();
 }
@@ -200,6 +223,7 @@ geomalg::MetricKind geomalg::getCurrentMetric(schir::Context& C) {
   return static_cast<geomalg::MetricKind>(static_cast<int32_t>(Int));
 }
 
+// Not used
 void geomalg::setCurrentMetric(schir::Context& C, geomalg::MetricKind MK) {
   schir::Int Int(static_cast<int32_t>(MK));
   geomalg_current_metric.set(C, schir::Value(Int));

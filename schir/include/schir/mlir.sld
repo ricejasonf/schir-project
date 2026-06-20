@@ -84,6 +84,8 @@
     set-insertion-after
     type
     %function-type
+    function-type-results
+    function-type-inputs
     attr
     type-attr
     value-attr

@@ -1,5 +1,6 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Metric.h>
+#include <geomalg/Type.h>
 #include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
 #include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
@@ -34,15 +35,6 @@ namespace geomalg {
 #define GEN_PASS_DEF_LOWERTOSPIRVPASS
 #define GEN_PASS_DEF_LOWERTOLLVMPASS
 #include "geomalg/GeomalgPasses.h.inc"
-}
-
-namespace geomalg {
-// Implemented in Passes.cpp
-mlir::LogicalResult
-applyUpdateReturnPatterns(mlir::ModuleOp Op);
-
-mlir::LogicalResult
-applyUpdateCallPatterns(mlir::ModuleOp Op);
 }
 
 namespace arith = mlir::arith;
@@ -474,8 +466,13 @@ struct LowerCall : mlir::OpConversionPattern<CallOp>,
     if (!FuncOp)
       return llvm::failure();
 
-    // We have to get the result type from the ReturnOp.
     mlir::Type ResultT = Op.getResult().getType();
+
+    if (geomalg::isUnknown(ResultT)) {
+      Op->emitError("function should have deduced return type before lowering");
+      return llvm::failure();
+    }
+
     mlir::Type ConvertedResultT = getTypeConverter()->convertType(ResultT);
     assert(ConvertedResultT && "expecting a converted return type");
 
@@ -504,13 +501,6 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
 
 llvm::LogicalResult
 applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::ModuleOp Op) {
-  // Fix return types of geomalg::ReturnOps.
-  if (llvm::failed(applyUpdateReturnPatterns(Op)))
-    return llvm::failure();
-
-  if (llvm::failed(applyUpdateCallPatterns(Op)))
-    return llvm::failure();
-
   // Do that actual Conversion.
   ::ConversionTarget Target(*Ctx);
 

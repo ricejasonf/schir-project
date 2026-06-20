@@ -52,6 +52,8 @@ schir::ExternFunction set_insertion_point;
 schir::ExternFunction set_insertion_after;
 schir::ExternFunction type;
 schir::ExternFunction function_type_impl;
+schir::ExternFunction function_type_results;
+schir::ExternFunction function_type_inputs;
 schir::ExternFunction attr;
 schir::ExternFunction type_attr;
 schir::ExternFunction value_attr;
@@ -886,6 +888,49 @@ void is_value(Context& C, ValueRefs Args) {
   C.Cont(schir::Bool(Result));
 }
 
+// Handle getting a valid function type raising on invalid Args.
+// Accept any<mlir::Type> castable to mlir::FunctionType
+//  or a mlir::Operation* castable to FuncOp.
+static mlir::FunctionType getFunctionType(Context& C, Value Arg) {
+  mlir::FunctionType FT;
+  if (auto* Op = dyn_cast<mlir::Operation>(Arg)) {
+    if (auto FuncOp = dyn_cast<mlir::FunctionOpInterface>(Op))
+      FT = dyn_cast<mlir::FunctionType>(FuncOp.getFunctionType());
+  } else if (auto T = schir::any_cast<mlir::Type>(Arg)) {
+    FT = dyn_cast<mlir::FunctionType>(T);
+  }
+
+  if (!FT)
+    C.RaiseError("failed to get function-type: {}", Arg);
+  return FT;
+}
+
+void function_type_results(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::FunctionType FT = getFunctionType(C, Args.front());
+  if (!FT)
+    return;
+
+  llvm::SmallVector<Value, 1> Results;
+  for (mlir::Type ResultT : FT.getResults())
+    Results.push_back(C.CreateAny(ResultT));
+  C.Cont(Results);
+}
+
+void function_type_inputs(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::FunctionType FT = getFunctionType(C, Args.front());
+  if (!FT)
+    return;
+
+  llvm::SmallVector<Value, 4> Inputs;
+  for (mlir::Type InputT : FT.getResults())
+    Inputs.push_back(C.CreateAny(InputT));
+  C.Cont(Inputs);
+}
+
 }  // namespace schir::mlir_bind
 
 extern "C" {
@@ -914,6 +959,10 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   SCHIR_MLIR_VAR(set_insertion_after) = schir::mlir_bind::set_insertion_after;
   SCHIR_MLIR_VAR(type) = schir::mlir_bind::type;
   SCHIR_MLIR_VAR(function_type_impl) = schir::mlir_bind::function_type_impl;
+  SCHIR_MLIR_VAR(function_type_results)
+                                = schir::mlir_bind::function_type_results;
+  SCHIR_MLIR_VAR(function_type_inputs)
+                                = schir::mlir_bind::function_type_inputs;
   SCHIR_MLIR_VAR(attr) = schir::mlir_bind::attr;
   SCHIR_MLIR_VAR(type_attr) = schir::mlir_bind::type_attr;
   SCHIR_MLIR_VAR(value_attr) = schir::mlir_bind::value_attr;
@@ -952,6 +1001,8 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"set-insertion-after", SCHIR_MLIR_VAR(set_insertion_after)},
     {"type", SCHIR_MLIR_VAR(type)},
     {"%function-type", SCHIR_MLIR_VAR(function_type_impl)},
+    {"function-type-results", SCHIR_MLIR_VAR(function_type_results)},
+    {"function-type-inputs", SCHIR_MLIR_VAR(function_type_inputs)},
     {"attr", SCHIR_MLIR_VAR(attr)},
     {"type-attr", SCHIR_MLIR_VAR(type_attr)},
     {"value-attr", SCHIR_MLIR_VAR(value_attr)},

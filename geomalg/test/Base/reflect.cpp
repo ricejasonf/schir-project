@@ -24,10 +24,12 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
 {
 (import (schir base)
         (schir llvm pass)
+        (schir mlir)
         (schir mlir all-passes)
         (geomalg base))
 
 (with-metric 'cga)
+(set-pass-debug-mode #t)
 
 ; // Reflect a point over the axis created by a unit vector.
 (define-func test_dot ((point : !vec3) (axis : !uvec3))
@@ -41,7 +43,7 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
       p
       (no 1)
       (iprod (iprod (scalar .5)
-                 (dot p p))
+                 (test_dot p p))
              (ni 1))))
   (define point2
     (vprod point ReflAxis))

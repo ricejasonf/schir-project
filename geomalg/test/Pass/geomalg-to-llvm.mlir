@@ -25,8 +25,7 @@ func.func @gprod(%arg0: !vec3, %arg1: !vec3)
 }
 
 // CHECK-LABEL: llvm.func @reflect_point
-func.func @reflect_point(%arg0: !vec3, %arg1: !uvec3)
-        -> !geomalg.unknown {
+func.func @reflect_point(%arg0: !vec3, %arg1: !uvec3) -> !vec3 {
   %1 = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !no
   %2 = "geomalg.blade"() <{coefficient = 5.000000e-01 : f32}> : () -> !s
   %3 = "geomalg.dot"(%arg0, %arg0) : (!vec3, !vec3) -> !s
@@ -62,13 +61,13 @@ func.func @rotate_point(%arg0: !vec3) -> !geomalg.unknown {
 }
 
 // CHECK-LABEL: llvm.func @call_reflect
-func.func @call_reflect(%arg0: !vec3) -> !geomalg.unknown {
+func.func @call_reflect(%arg0: !vec3) -> !vec3 {
   %1 = "geomalg.blade"() <{coefficient = 1.0e+00 : f32}> : () -> !e1
   %2 = "geomalg.blade"() <{coefficient = 0.0e+00 : f32}> : () -> !e2
   %3 = "geomalg.blade"() <{coefficient = 0.0e+00 : f32}> : () -> !e3
   %sum = "geomalg.sum"(%1, %2, %3) : (!e1, !e2, !e3) -> !geomalg.unknown
   %u0 = "geomalg.convert"(%sum) : (!geomalg.unknown) -> !uvec3
-  %call = geomalg.call @reflect_point(%arg0, %u0) : (!vec3, !uvec3) -> !geomalg.unknown
-  geomalg.return %call : !geomalg.unknown
+  %call = geomalg.call @reflect_point(%arg0, %u0) : (!vec3, !uvec3) -> !vec3
+  geomalg.return %call : !vec3
 }
 }

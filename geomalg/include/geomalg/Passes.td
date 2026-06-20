@@ -21,14 +21,25 @@ def MetricOption :
            "A metric determines the result of certain operations.",
            [{geomalg::getMetricKindEnumValues()}]>;
 
-def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::func::FuncOp"> {
+def ExpandFuncPass : GeomalgPass<"geomalg-expand-func", "mlir::func::FuncOp"> {
   let summary = "expand operations for geometric algebra";
   let description = [{
-    Expand and simplify Geomalg operations by distribution of multilinear
-    operations over multivectors and expansion of k-blades until they are
-    all operations on 1-blades or scalars. If a metric is specified then
-    it will resolve the inner product for specified entries or by assuming
-    orthonormal 1-blades.
+    For a function, expand and simplify Geomalg operations by distribution
+    of multilinear operations over multivectors and expansion of k-blades
+    until they are all operations on 1-blades or scalars. If a metric is
+    specified then it will resolve the inner product for specified entries
+    or by assuming orthonormal 1-blades.
+  }];
+
+  let options =  [MetricOption] # RewritePassUtils.options;
+}
+
+def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::ModuleOp"> {
+  let summary = "expand operations for geometric algebra";
+  let description = [{
+    For a module, iterate ExpandFuncPass on functions and then update
+    function types and call operation result types iteratively until nothing
+    changes.
   }];
 
   let options =  [MetricOption] # RewritePassUtils.options;

@@ -46,9 +46,9 @@
     (define !multivector
       (load-builtin "geomalg_multivector_type"))
 
-    ; "Finalize" the function to ensure a deduced return type if needed.
-    (define finalize-func
-      (load-builtin "geomalg_finalize_func"))
+    ; Expand function using current metric.
+    (define apply-metric
+      (load-builtin "geomalg_apply_metric"))
 
     ;; Register the geomalg dialect and such.
     (define geomalg-init
@@ -57,8 +57,8 @@
     (define geomalg-current-module
       (load-builtin "geomalg_current_module"))
 
-    (define current-metric
-      (load-builtin "geomalg_current_metric"))
+    (define %with-metric
+      (load-builtin "geomalg_with_metric"))
 
     (geomalg-init)
     (load-dialect "geomalg")
@@ -86,7 +86,7 @@
           (('unknown) 0)
           (('cga) 1)
           (else (error "invalid metric tag: {}" MetricTag))))
-      (set! current-metric IntVal))
+      (%with-metric IntVal))
 
     ;; If any function parameter type is unknown
     ;; then the func is used as a template.
@@ -111,18 +111,19 @@
     (define !vec4 (!multivector !e1 !e2 !e3 !no))
     (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))
 
-    ; Args are checked within a pass.
+    ; Args are checked within after expanding with metric.
     (define-syntax %define-call-fn
       (syntax-rules ()
-        ((%define-call-fn (FuncName ArgN ...))
-         (define (FuncName ArgN ...)
-           (result
-             (create-op "geomalg.call"
-                        (loc: (syntax-source-loc FuncName))
-                        (operands: ArgN ...)
-                        (attributes:
-                          ("callee" (flat-symbolref-attr 'FuncName)))
-                        (result-types: !geomalg.unknown)))))))
+        ((%define-call-fn FuncOp (FuncName ArgN ...))
+         (set! FuncName
+           (lambda (ArgN ...)
+             (result
+               (create-op "geomalg.call"
+                          (loc: (syntax-source-loc FuncName))
+                          (operands: ArgN ...)
+                          (attributes:
+                            ("callee" (flat-symbolref-attr 'FuncName)))
+                          (result-types: (function-type-results FuncOp)))))))))
 
     (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
@@ -152,7 +153,8 @@
                      (result-types:)))
         (if #f #f) ;; Return undefined.
         ))
-      (finalize-func FuncName FuncOp))
+      (apply-metric FuncOp)
+      FuncOp)
 
     ; Define a lambda by the given FuncName that
     ; creates a call to the generated function.
@@ -161,16 +163,19 @@
         ((define-func FuncName ((ArgName : ArgType) ...)
                       BodyExprI ... BodyExprN)
          (begin
-           (%define-call-fn (FuncName ArgName ...))
-           (define-func-impl (syntax-source-loc FuncName)
-                             (syntax-source-loc BodyExprN)
-                             'FuncName
-                             (list ArgType ...)
-                             (list (syntax-source-loc ArgName) ...)
-                             (lambda (ArgName ...)
-                               BodyExprI
-                               ...
-                               BodyExprN))))))
+           (define FuncName '()) ; Define with a placeholder.
+           (let ((FuncOp
+               (define-func-impl (syntax-source-loc FuncName)
+                                 (syntax-source-loc BodyExprN)
+                                 'FuncName
+                                 (list ArgType ...)
+                                 (list (syntax-source-loc ArgName) ...)
+                                 (lambda (ArgName ...)
+                                   BodyExprI
+                                   ...
+                                   BodyExprN))))
+             (%define-call-fn FuncOp (FuncName ArgName ...))
+             )))))
 
     ; Shorcut to create ops with result only specifying
     ; operands and inferring result type.

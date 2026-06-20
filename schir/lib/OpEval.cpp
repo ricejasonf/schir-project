@@ -263,10 +263,8 @@ private:
       }
     }
 
-    if (!IsValidArity) {
-      schir::SourceLocation Loc = getSourceLocation(F.getLoc());
-      return SetError(Loc, "invalid arity");
-    }
+    if (!IsValidArity)
+      return SetError(schir::SourceLocation(), "invalid arity");
 
     BlockItrTy Itr = Body.begin();
     while (Itr != BlockItrTy())
