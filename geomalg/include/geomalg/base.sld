@@ -119,7 +119,7 @@
            (lambda (ArgN ...)
              (result
                (create-op "geomalg.call"
-                          (loc: (syntax-source-loc FuncName))
+                          (loc: (current-source-loc))
                           (operands: ArgN ...)
                           (attributes:
                             ("callee" (flat-symbolref-attr 'FuncName)))

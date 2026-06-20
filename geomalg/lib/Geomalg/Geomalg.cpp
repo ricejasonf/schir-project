@@ -191,7 +191,7 @@ void geomalg_apply_metric(schir::Context& C, schir::ValueRefs Args) {
       });
 
   if (mlir::failed(PM.run(Op)))
-    return C.RaiseError("failed to apply metric to function: {}", Irrs);
+    return C.RaiseError("failed to apply metric to function}", Irrs);
 
   // Update the function return type.
   auto FT = dyn_cast<mlir::FunctionType>(FuncOp.getFunctionType());

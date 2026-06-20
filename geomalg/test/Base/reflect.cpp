@@ -29,7 +29,6 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
         (geomalg base))
 
 (with-metric 'cga)
-(set-pass-debug-mode #t)
 
 ; // Reflect a point over the axis created by a unit vector.
 (define-func test_dot ((point : !vec3) (axis : !uvec3))

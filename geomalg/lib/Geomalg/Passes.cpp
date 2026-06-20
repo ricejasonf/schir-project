@@ -596,6 +596,47 @@ static bool requiresMetric(mlir::Operation* Op) {
   return false;
 }
 
+// Given a CallOp and its corresponding callee FuncOp,
+// emit an error if known call argument types do not match exactly.
+llvm::LogicalResult checkCallArgs(mlir::func::FuncOp FuncOp,
+                                  geomalg::CallOp CallOp) {
+  mlir::TypeRange ParamTs = FuncOp.getArgumentTypes();
+  mlir::TypeRange ArgTs = CallOp->getOperandTypes();
+  if (ParamTs.size() != ArgTs.size()) {
+    CallOp->emitError("call arguments do not match callee arity");
+    return llvm::failure();
+  }
+  for (auto [ParamT, ArgT] : llvm::zip(ParamTs, ArgTs)) {
+    if (!isUnknown(ArgT) && ArgT != ParamT) {
+      CallOp->emitError("call arguments do not match function prototype");
+      return llvm::failure();
+    }
+  }
+  return llvm::success();
+}
+
+
+// Walk the body of the FuncOp to check nested CallOps
+// emitting an error on failure.
+llvm::LogicalResult checkCallArgs(mlir::func::FuncOp ParentFuncOp) {
+  bool Result = true;
+  auto ModuleOp = ParentFuncOp->getParentOfType<mlir::ModuleOp>();
+  ParentFuncOp->walk([&](geomalg::CallOp CallOp)
+      -> mlir::WalkResult {
+    mlir::FlatSymbolRefAttr CalleeSym = CallOp.getCalleeAttr();
+    mlir::Operation* LookupOp = ModuleOp.lookupSymbol(CalleeSym.getAttr());
+    auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(LookupOp);
+    if (!FuncOp)
+      CallOp->emitError("callee is invalid");
+    else if (llvm::succeeded(checkCallArgs(FuncOp, CallOp)))
+      return mlir::WalkResult::advance();
+
+    Result = false;
+    return mlir::WalkResult::interrupt();
+  });
+  return llvm::success(Result);
+}
+
 static mlir::Value square(mlir::PatternRewriter& Rewriter,
                           geomalg::Metric const& Metric,
                           mlir::Location Loc, mlir::Value MV) {
@@ -951,27 +992,6 @@ struct UpdateCall : mlir::OpRewritePattern<CallOp> {
 
     mlir::TypeRange ArgTs = FuncOp.getFunctionType().getInputs();
     mlir::TypeRange OpArgTs = Op->getOperandTypes();
-
-#if 0
-    // TODO These need to be standalone checks that occur
-    //      after ExpandPass (with metric) and before lowering.
-    // Check the arguments types
-    if (OpArgTs.size() != ArgTs.size()) {
-      Op->emitError("call argument arity does not match callee");
-      return llvm::failure();
-    }
-
-    for (auto [OpArgT, ArgT] : llvm::zip(OpArgTs, ArgTs)) {
-      if (isUnknown(OpArgT) || isUnknown(ArgT))
-        return llvm::failure();
-
-      // Check call arguments while we are at it.
-      if (OpArgT != ArgT) {
-        Op->emitError("call argument does not match");
-        return llvm::failure();
-      }
-    }
-#endif
 
     return setResultType(Rewriter, Op.getOperation(), ResultT);
   }
@@ -1877,6 +1897,11 @@ public:
       }
       AnyIRChanged |= IRChanged;
     }
+
+    // Check the call args in the body of the function.
+    if (llvm::failed(checkCallArgs(FuncOp)))
+        return llvm::failure();
+
     return llvm::success();
   }
 };
