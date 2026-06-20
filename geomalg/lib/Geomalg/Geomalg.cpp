@@ -133,17 +133,18 @@ void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
 // Update the function return type now so we have it for possible
 // introspection.
 void geomalg_apply_metric(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 1)
+  if (Args.size() != 2)
     return C.RaiseError("invalid arity");
 
-  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args.front());
+  schir::Value FuncName = Args[0];
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args[1]);
   if (!Op)
-    return C.RaiseError("expecting mlir.operation: {}", Args.front());
+    return C.RaiseError("expecting mlir.operation: {}", Args[1]);
 
   auto FuncOp = dyn_cast<mlir::FunctionOpInterface>(Op);
   if (!FuncOp)
     return C.RaiseError("expecting mlir.op of mlir::FunctionOpInterface: {}",
-                        Args.front());
+                        Args[1]);
 
   // Do nothing if the metric is unknown.
   geomalg::MetricKind MetricKind = geomalg::getCurrentMetric(C);
@@ -170,28 +171,12 @@ void geomalg_apply_metric(schir::Context& C, schir::ValueRefs Args) {
     PM.enableIRPrinting();
   }
 
-  // TODO The ScopedDiagnosticHandler stuff should have a helper
-  //      in MlirHelpers or something.
-  //      This code is redundant with (schir mlir all-passes).
-
-  // Attach mlir diagnostics as "notes" to the scheme error
-  // to be raised if PassManager::run fails.
-  llvm::SmallVector<schir::Value, 1> Irrs;
-  mlir::ScopedDiagnosticHandler DH(MCtx,
-      [&](mlir::Diagnostic& D) -> llvm::LogicalResult {
-        std::string ErrMsg = D.str();
-        mlir::Location ErrLoc = D.getLocation();
-        auto Loc = schir::SourceLocation(mlir::OpaqueLoc
-          ::getUnderlyingLocationOrNull<
-              schir::SourceLocationEncoding*>(ErrLoc));
-        schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
-                                           schir::Empty());
-        Irrs.push_back(Error);
-        return llvm::failure();
-      });
-
-  if (mlir::failed(PM.run(Op)))
-    return C.RaiseError("failed to apply metric to function}", Irrs);
+  llvm::LogicalResult PassResult =
+    schir::mlir_helper::WithDiagnosticsHandler(C,
+          [&] { return PM.run(Op); },
+          "failed to apply metric to function: {}", FuncName);
+  if (mlir::failed(PassResult))
+    return;
 
   // Update the function return type.
   auto FT = dyn_cast<mlir::FunctionType>(FuncOp.getFunctionType());

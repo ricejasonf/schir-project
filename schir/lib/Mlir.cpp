@@ -473,7 +473,7 @@ void with_builder(Context& C, ValueRefs Args) {
     Thunk = Args[0];
   }
 
-  return with_builder_impl(C, Builder, Thunk);
+  return WithBuilderImpl(C, Builder, Thunk);
 }
 
 static mlir::Block* get_arg_block(Context& C, ValueRefs Args) {

@@ -153,7 +153,7 @@
                      (result-types:)))
         (if #f #f) ;; Return undefined.
         ))
-      (apply-metric FuncOp)
+      (apply-metric FuncName FuncOp)
       FuncOp)
 
     ; Define a lambda by the given FuncName that

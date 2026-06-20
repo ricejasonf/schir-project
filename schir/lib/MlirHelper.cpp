@@ -46,8 +46,8 @@ mlir::Operation* getSingleOpArg(schir::Context& C, schir::ValueRefs Args) {
   return Op;
 }
 
-void with_builder_impl(Context& C, mlir::OpBuilder const& Builder,
-                       schir::Value Thunk) {
+void WithBuilderImpl(Context& C, mlir::OpBuilder const& Builder,
+                     schir::Value Thunk) {
   schir::Value PrevBuilder = C.CreateBinding(schir::Empty());
   schir::Value NewBuilder = C.CreateAny(Builder);
 
@@ -76,4 +76,36 @@ void with_builder_impl(Context& C, mlir::OpBuilder const& Builder,
 
   C.DynamicWind(Before, Thunk, After);
 }
+
+llvm::LogicalResult WithDiagnosticsHandler(
+                               schir::Context& C,
+                               llvm::function_ref<llvm::LogicalResult()> Thunk,
+                               llvm::StringRef ErrorMsg,
+                               schir::Value Irr) {
+  mlir::MLIRContext* MCtx = getCurrentContext(C);
+  // Attach mlir diagnostics as "notes" to the scheme error
+  // to be raised if PassManager::run fails.
+  llvm::SmallVector<schir::Value, 1> Irrs;
+  if (!isa<schir::Undefined>(Irr))
+    Irrs.push_back(Irr);
+  mlir::ScopedDiagnosticHandler DH(MCtx,
+      [&](mlir::Diagnostic& D) -> llvm::LogicalResult {
+        std::string ErrMsg = D.str();
+        mlir::Location ErrLoc = D.getLocation();
+        auto Loc = schir::SourceLocation(mlir::OpaqueLoc
+          ::getUnderlyingLocationOrNull<
+              schir::SourceLocationEncoding*>(ErrLoc));
+        schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
+                                           schir::Empty());
+        Irrs.push_back(Error);
+        return llvm::failure();
+      });
+
+  if (mlir::failed(Thunk())) {
+    C.RaiseError(ErrorMsg, Irrs);
+    return llvm::failure();
+  }
+  return llvm::success();
+}
+
 }  // end namespace schir::mlir_helper
