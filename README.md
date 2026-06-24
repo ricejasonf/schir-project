@@ -1,6 +1,6 @@
 # Schir Project
 
-This repository is an umbrella project for the R7RS Scheme compiler,
+This repository is an umbrella project for the Schir R7RS Scheme compiler,
 the Nbdl state managment library, and the Geomalg Geometric Algrebra compiler.
 Each of these subprojects are implemented using C++ and MLIR each with their
 own dialect.
