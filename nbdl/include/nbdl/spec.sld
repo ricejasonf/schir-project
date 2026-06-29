@@ -230,6 +230,9 @@
               (result-types: !nbdl.variant)
               )))))
 
+    ; A StoreFunctional either a Store (operation) or a
+    ;   map: ParentStore -> NewStore.
+    ; These are created using syntax like `store` or `store-compose`.
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
@@ -250,15 +253,14 @@
                         (define (ProcessBody BodyEl)
                           (set! Parent
                             (cond
+                              ; StoreFunctional
                               ((procedure? BodyEl)
                                 (BodyEl Parent))
-                              ; Allow specifying a single store
+                              ; Store
                               ((value? !nbdl.unit Parent)
-                               (begin
-                                 ; TODO Delete the dangling nbdl.unit operation here.
-                                 BodyEl))
+                                 BodyEl)
                               (else
-                                (error "expecting store functional: {}" BodyEl)))))
+                                (error "expecting store: {}" BodyEl)))))
                         (ProcessBody StoreFunctionalN) ...
                         (create-op "nbdl.cont"
                           (loc: (syntax-source-loc Name))
@@ -760,6 +762,8 @@
       (dump Op)
       (newline))
 
+    (define (dump-nbdl-module)
+      (dump current-nbdl-module))
 
   ) ; end of... begin
   (export
@@ -777,6 +781,7 @@
     noop
     dump-cpp
     dump-op
+    dump-nbdl-module
     ; reexport some base stuff
     define
     define-syntax

@@ -114,7 +114,7 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
 
   // Call the thunk with a Builder at the entry point.
   Builder = mlir::OpBuilder(FuncOp.getBody());
-  mlir_helper::with_builder_impl(C, Builder, Thunk);
+  mlir_helper::WithBuilderImpl(C, Builder, Thunk);
 }
 
 // Translate a nbdl dialect operation to C++.
