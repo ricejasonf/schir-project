@@ -8,6 +8,13 @@
       "deps": [
         [
           {
+            "name": "ricejasonf/schir-project",
+            "type": "docker",
+            "revision": "sha256:d9526cb999c6989caa65dd68e105bccb5a327ee394c224426a54649f1ec27848"
+          }
+        ],
+        [
+          {
             "name": "ricejasonf/boost",
             "tag": "1_85_0",
             "type": "docker",

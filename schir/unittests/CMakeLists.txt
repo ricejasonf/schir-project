@@ -1,6 +1,9 @@
+if (NOT CMAKE_TESTING_ENABLED)
+ return()
+endif()
+
 add_custom_target(SchirUnitTests)
 
-find_package(GTest REQUIRED)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unittests)
 
 function(add_schir_unittest test_name)

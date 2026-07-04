@@ -31,7 +31,10 @@ set(CMAKE_CXX_FLAGS
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${CMAKE_BINARY_DIR}/include)
 
-enable_testing()
+find_package(GTest)
+if (GTest_FOUND)
+  enable_testing()
+endif()
 
 add_subdirectory(schir)
 add_subdirectory(geomalg)
