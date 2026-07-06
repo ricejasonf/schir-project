@@ -57,25 +57,18 @@ std::string Mangler::mangleModuleName(Twine Prefix, Value Spec) {
   return mangleName(Cont, Prefix + Twine('L'), P->Car);
 }
 
-std::string Mangler::mangleVariable(Twine ModulePrefix, Value Name) {
+std::string Mangler::mangleEntity(Twine EntityPrefix,
+                                  Twine ModulePrefix,
+                                  Value Name) {
   auto Cont = [&](Twine Result) { return Result.str(); };
-  return mangleName(Cont, ModulePrefix + Twine('V'), Name);
+  return mangleName(Cont, ModulePrefix + Twine(EntityPrefix), Name);
 }
 
-std::string Mangler::mangleVariable(Twine ModulePrefix, llvm::StringRef Name) {
+std::string Mangler::mangleEntity(Twine EntityPrefix,
+                                  Twine ModulePrefix,
+                                  llvm::StringRef Name) {
   auto Cont = [&](Twine Result) { return Result.str(); };
-  return mangleName(Cont, ModulePrefix + Twine('V'), Name);
-}
-
-std::string Mangler::mangleFunction(Twine ModulePrefix, llvm::StringRef Name) {
-  auto Cont = [&](Twine Result) { return Result.str(); };
-  return mangleName(Cont, ModulePrefix + Twine('F'), Name);
-}
-
-std::string Mangler::mangleAnonymousId(Twine ModulePrefix, size_t Id) {
-  auto Cont = [&](Twine Result) { return Result.str(); };
-  Twine Name = Twine('A') + Twine(Id);
-  return Cont(ModulePrefix + Name);
+  return mangleName(Cont, ModulePrefix + Twine(EntityPrefix), Name);
 }
 
 std::string Mangler::mangleSpecialName(Twine ModulePrefix,
@@ -194,11 +187,12 @@ std::string Mangler::mangleCharHexCode(Continuation Cont, Twine Prefix,
   return mangleNameSegment(Cont, "???", Str.drop_front(1));
 }
 
-bool Mangler::isExternalVariable(llvm::StringRef ModulePrefix,
+bool Mangler::isExternalVariable(llvm::StringRef ManglePrefix,
+                                 llvm::StringRef ModulePrefix,
                                  llvm::StringRef VarName) {
   if (!VarName.starts_with(ModulePrefix))
     return true;
-  llvm::StringRef Result = parseModulePrefix(VarName);
+  llvm::StringRef Result = parseModulePrefix(VarName, ManglePrefix);
   // VarName is external if it does NOT have the same prefix.
   return Result != ModulePrefix;
 }
@@ -234,8 +228,9 @@ bool consumeNameSegment(llvm::StringRef& Buf) {
 // parseModulePrefix - Parse the module prefix of a valid symbol name.
 //                     The prefix for an invalid name should be safe,
 //                     but is undefined and may trigger assertions.
-llvm::StringRef Mangler::parseModulePrefix(llvm::StringRef Name) {
-  llvm::StringRef Ending = Name.drop_front(getManglePrefix().size());
+llvm::StringRef Mangler::parseModulePrefix(llvm::StringRef Name,
+                                           llvm::StringRef ManglePrefix) {
+  llvm::StringRef Ending = Name.drop_front(ManglePrefix.size());
   size_t PrevEndingSize = 0;
   while (Ending.size() > 0) {
     // Check for progress.
@@ -244,6 +239,7 @@ llvm::StringRef Mangler::parseModulePrefix(llvm::StringRef Name) {
     PrevEndingSize = Ending.size();
 
     switch (Ending[0]) {
+      // FIXME Hopefully, we do not need to hard code these.
       case 'V': case 'F': case 'A':
         // Break from the loop
         break;

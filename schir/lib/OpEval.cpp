@@ -369,7 +369,8 @@ private:
     // (The IR refers to an extern global definition of the variable.
     //  ie not the function itself.)
     auto TopModuleOp = cast<mlir::ModuleOp>(Context.ModuleOp);
-    llvm::StringRef ModuleName = Mangler::parseModulePrefix(MangledName);
+    llvm::StringRef ModuleName = Mangler::parseModulePrefix(
+                                          MangledName, schir::ManglePrefix);
     auto M = dyn_cast_or_null<mlir::ModuleOp>(
         TopModuleOp.lookupSymbol(ModuleName));
     schir::FuncOp F;

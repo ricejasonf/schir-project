@@ -124,12 +124,11 @@ OpGen::~OpGen() {
 }
 
 std::string OpGen::mangleModule(schir::Value NameSpec) {
-  schir::Mangler Mangler(Context);
-  return Mangler.mangleModule(NameSpec);
+  return createMangler().mangleModule(NameSpec);
 }
 
 std::string OpGen::mangleFunctionName(llvm::StringRef Name) {
-  schir::Mangler Mangler(Context);
+  schir::Mangler Mangler = createMangler();
   if (Name.empty()) {
     return Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
   }
@@ -137,13 +136,12 @@ std::string OpGen::mangleFunctionName(llvm::StringRef Name) {
 }
 
 std::string OpGen::mangleVariable(schir::Value Name) {
-  schir::Mangler Mangler(Context);
-  return Mangler.mangleVariable(getModulePrefix(), Name);
+  return createMangler().mangleVariable(getModulePrefix(), Name);
 }
 
 // Mangle the variable name of a syntax object.
 std::string OpGen::mangleSyntax(schir::Value Name) {
-  schir::Mangler Mangler(Context);
+  schir::Mangler Mangler = createMangler();
   return Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
 }
 
@@ -360,7 +358,8 @@ void OpGen::FinishLibrary() {
       }
     } else if (auto G = dyn_cast<schir::GlobalOp>(&Op)) {
 
-      if (G.isExternal() && !Mangler::isExternalVariable(getModulePrefix(),
+      if (G.isExternal() && !Mangler::isExternalVariable(schir::ManglePrefix,
+                                                         getModulePrefix(),
                                                          G.getSymName())) {
         // Find a LoadGlobalOp referencing this to get a source location.
         schir::SourceLocation Loc;
@@ -1107,7 +1106,8 @@ OpGen::createTopLevelBindingInfo(Value Id) {
 
   Entry = Env->Lookup(Context, S);
   if (Entry.Value && Entry.MangledName) {
-    if (Mangler::isExternalVariable(getModulePrefix(),
+    if (Mangler::isExternalVariable(schir::ManglePrefix,
+                                    getModulePrefix(),
                                     Entry.MangledName->getView())) {
       SetError("define overwrites imported global", S);
       return Result;
@@ -1119,7 +1119,7 @@ OpGen::createTopLevelBindingInfo(Value Id) {
     return Result;
   }
 
-  schir::Mangler Mangler(Context);
+  schir::Mangler Mangler = createMangler();
   std::string MangledNameStr = Mangler.mangleVariable(getModulePrefix(), S);
   if (MangledNameStr.empty())
     return Result;
@@ -1369,7 +1369,7 @@ mlir::Value OpGen::VisitSymbol(Symbol* S, Value ClosedEnv) {
     if (!Context.GetTopLevelEnvironment(ClosedEnv))
       return SetError("identifier is undefined in syntax closure: {}", S);
     // Default to the name of a global
-    schir::Mangler Mangler(Context);
+    schir::Mangler Mangler = createMangler();
     std::string MangledName = Mangler.mangleVariable(getModulePrefix(), S);
     if (MangledName.empty())
       return Error();

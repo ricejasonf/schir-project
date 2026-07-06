@@ -16,12 +16,13 @@ namespace {
 
 TEST(MangleTest, mangleLibraryName) {
   auto Context = schir::Context();
-  auto Mangler = schir::Mangler(Context);
+  auto Mangler = schir::Mangler(Context, schir::ManglePrefix);
   auto mangle = [&](llvm::StringRef Name) {
     schir::Value Spec = Context.ParseLiteral(Name);
     return Mangler.mangleModule(Spec);
   };
 
+  EXPECT_EQ(mangle("(one)"), "_SCHIRL3Sone");
   EXPECT_EQ(mangle("(schir base)"), "_SCHIRL5SschirL4Sbase");
   EXPECT_EQ(mangle("(schir clang)"), "_SCHIRL5SschirL5Sclang");
   EXPECT_EQ(mangle("(schir mlir)"), "_SCHIRL5SschirL4Smlir");
@@ -34,7 +35,7 @@ TEST(MangleTest, mangleLibraryName) {
 
 TEST(MangleTest, parseLibraryName) {
   auto Context = schir::Context();
-  auto Mangler = schir::Mangler(Context);
+  auto Mangler = schir::Mangler(Context, schir::ManglePrefix);
 
   std::string MangledNameStr;
   auto mangle = [&](llvm::StringRef Name) {

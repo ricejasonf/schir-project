@@ -877,7 +877,7 @@ void Context::CreateImportSet(Value Spec) {
       Module* M = cast<schir::Module>(Args[0]);
       C.Cont(new (*this) ImportSet(M));
     });
-    schir::Mangler Mangler(*this);
+    schir::Mangler Mangler(*this, schir::ManglePrefix);
     std::string ModuleNameStr = Mangler.mangleModule(Spec);
     if (ModuleNameStr.empty())
       return;
@@ -982,7 +982,7 @@ namespace {
 #endif
 
     llvm::StringRef Input = MangledName;
-    Input.consume_front(Mangler::getManglePrefix());
+    Input.consume_front(schir::ManglePrefix);
     while (!Input.empty()) {
       unsigned PrevLen = Output.size();
       if (!Mangler::parseLibraryName(Input, Output))
@@ -1231,7 +1231,7 @@ void schir::initModuleNames(schir::Context& C, llvm::StringRef ModuleMangledName
                             ModuleInitListTy InitList) {
   Module* M = C.Modules[ModuleMangledName].get();
   assert(M && "module must be registered");
-  schir::Mangler Mangler(C);
+  schir::Mangler Mangler(C, schir::ManglePrefix);
   for (ModuleInitListPairTy const& X : InitList) {
     Value Val = X.second;
     llvm::StringRef Id = X.first;

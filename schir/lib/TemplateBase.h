@@ -204,7 +204,7 @@ protected:
       MangledName = Entry.MangledName->getStringRef();
     } else {
       // Default to the name of a global
-      schir::Mangler Mangler(Context);
+      schir::Mangler Mangler = OpGen.createMangler();
       MangledNameStr = Mangler.mangleVariable(OpGen.getModulePrefix(), P);
       if (MangledNameStr.empty())
         return OpGen.createUndefined();

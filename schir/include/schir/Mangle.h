@@ -82,11 +82,15 @@
 
 namespace schir {
 
+static constexpr char const* ManglePrefix = "_SCHIR";
+
+// Mangle is designed to be created and used on the stack
+// as it does not take ownership of ManglePrefix.
 class Mangler {
   using Twine = llvm::Twine;
   using StringRef = llvm::StringRef;
   using Continuation = llvm::function_ref<std::string(Twine)>;
-  static constexpr char const* ManglePrefix = "_SCHIR";
+  llvm::StringRef ManglePrefix;
 
   schir::Context& Context;
   llvm::StringRef NameBuffer = {};
@@ -107,28 +111,54 @@ class Mangler {
   std::string mangleCharHexCode(Continuation, Twine Prefix, StringRef);
 
 public:
-  Mangler(schir::Context& C)
-    : Context(C)
+  Mangler(schir::Context& C, llvm::StringRef ManglePrefix_)
+    : Context(C),
+      ManglePrefix(ManglePrefix_)
   { }
 
-  static llvm::StringRef getManglePrefix() { return ManglePrefix; }
-  static bool isExternalVariable(llvm::StringRef ModulePrefix,
+  llvm::StringRef getManglePrefix(this auto const& self) {
+    return self.ManglePrefix;
+  }
+
+  static bool isExternalVariable(llvm::StringRef ManglePrefix,
+                                 llvm::StringRef ModulePrefix,
                                  llvm::StringRef VarName);
-  static llvm::StringRef parseModulePrefix(llvm::StringRef Name);
+  static llvm::StringRef parseModulePrefix(llvm::StringRef Name,
+                                           llvm::StringRef ManglePrefix);
   static bool parseNameSegment(llvm::StringRef& Input,
                                llvm::SmallVectorImpl<char>& Output);
   static bool parseLibraryName(llvm::StringRef& Input,
                                llvm::SmallVectorImpl<char>& Output);
 
   std::string mangleModule(Value Spec);
-  std::string mangleVariable(Twine ModulePrefix, Value Name);
-  std::string mangleVariable(Twine ModulePrefix, llvm::StringRef Name);
-  std::string mangleFunction(Twine ModulePrefix, llvm::StringRef Name);
+
+  std::string mangleEntity(Twine EntityPrefix,
+                           Twine ModulePrefix,
+                           llvm::StringRef Name);
+  std::string mangleEntity(Twine EntityPrefix,
+                           Twine ModulePrefix,
+                           Value Name);
+
   std::string mangleSpecialName(Twine ModulePrefix, llvm::StringRef Name);
 
-  // mangleAnonymousId - Id is meant to be strictly monotonic but is 
+  // NameT is a schir::Value or llvm::StringRef.
+  // A Value must be StringLike or Int.
+
+  template <typename NameT>
+  std::string mangleVariable(Twine ModulePrefix, NameT Name) {
+    return mangleEntity(Twine('V'), ModulePrefix, Name);
+  }
+
+  template <typename NameT>
+  std::string mangleFunction(Twine ModulePrefix, NameT Name) {
+    return mangleEntity(Twine('F'), ModulePrefix, Name);
+  }
+
+  // mangleAnonymousId - Id is meant to be strictly monotonic but is
   //                     managed external to this class
-  std::string mangleAnonymousId(Twine ModulePrefix, size_t Id);
+  std::string mangleAnonymousId(Twine ModulePrefix, int32_t Id) {
+    return mangleEntity(Twine('A'), ModulePrefix, Value(Int(Id)));
+  }
 };
 
 }

@@ -173,6 +173,10 @@ public:
 
   schir::Context& getContext() { return Context; }
 
+  schir::Mangler createMangler() {
+    return Mangler(Context, schir::ManglePrefix);
+  }
+
   // CheckError
   //  - Returns true if there is an error or exception
   //  - Builtins will have to check this to stop evaluation
@@ -198,7 +202,7 @@ public:
 
   llvm::StringRef getModulePrefix() {
     if (!ModulePrefix || ModulePrefix->getStringRef().empty()) {
-      return schir::Mangler::getManglePrefix();
+      return ManglePrefix;
     }
     return ModulePrefix->getStringRef();
   }
