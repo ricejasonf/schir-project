@@ -1,11 +1,5 @@
 //===------- Mangle.cpp - SchirScheme Mangler Implementation --------------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-//
 // Implementations for name mangling of scheme libraries, variables,
 // and functions
 //
@@ -41,18 +35,14 @@ bool isSpecialChar(char c) {
 }
 
 namespace schir {
-
-std::string Mangler::mangleModule(Value Spec) {
-  return mangleModuleName(ManglePrefix, Spec);
-}
-
-std::string Mangler::mangleModuleName(Twine Prefix, Value Spec) {
+// Note the user calls mangleModule with the desired ManglePrefix.
+std::string Mangler::mangleModule(Twine Prefix, Value Spec) {
   if (isa<Empty>(Spec)) return Prefix.str();
   Pair* P = dyn_cast<Pair>(Spec);
   if (!P) return setError("expected library name", Spec);
 
   auto Cont = [&](Twine Result) {
-    return mangleModuleName(Result, P->Cdr);
+    return mangleModule(Result, P->Cdr);
   };
   return mangleName(Cont, Prefix + Twine('L'), P->Car);
 }
@@ -239,7 +229,7 @@ llvm::StringRef Mangler::parseModulePrefix(llvm::StringRef Name,
     PrevEndingSize = Ending.size();
 
     switch (Ending[0]) {
-      // FIXME Hopefully, we do not need to hard code these.
+      // Entity prefixes such as variable, function, anonymous
       case 'V': case 'F': case 'A':
         // Break from the loop
         break;
@@ -292,8 +282,10 @@ bool Mangler::parseNameSegment(llvm::StringRef& Input,
   return true;
 }
 
-bool Mangler::parseLibraryName(llvm::StringRef& Input, 
-                               llvm::SmallVectorImpl<char>& Output) {
+// Parse a Library name which begins with 'L'.
+// (ie no ManglePrefix)
+bool Mangler::parseModuleNameNode(llvm::StringRef& Input, 
+                                  llvm::SmallVectorImpl<char>& Output) {
   if (Input.empty() || Input[0] != 'L')
     return false;
 
@@ -304,6 +296,4 @@ bool Mangler::parseLibraryName(llvm::StringRef& Input,
       return false;
   return true;
 }
-
-}
-
+} // namespace schir

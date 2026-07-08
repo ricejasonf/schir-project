@@ -84,13 +84,10 @@ namespace schir {
 
 static constexpr char const* ManglePrefix = "_SCHIR";
 
-// Mangle is designed to be created and used on the stack
-// as it does not take ownership of ManglePrefix.
 class Mangler {
   using Twine = llvm::Twine;
   using StringRef = llvm::StringRef;
   using Continuation = llvm::function_ref<std::string(Twine)>;
-  llvm::StringRef ManglePrefix;
 
   schir::Context& Context;
   llvm::StringRef NameBuffer = {};
@@ -103,34 +100,11 @@ class Mangler {
 
   // This continuation passing style with twines could easily have
   // been a preallocated string buffer.
-  std::string mangleModuleName(Twine Prefix, Value Name);
   std::string mangleName(Continuation, Twine Prefix, Value Name);
   std::string mangleName(Continuation, Twine Prefix, llvm::StringRef);
   std::string mangleNameSegment(Continuation, Twine Prefix, StringRef);
   std::string mangleSpecialChar(Continuation, Twine Prefix, StringRef);
   std::string mangleCharHexCode(Continuation, Twine Prefix, StringRef);
-
-public:
-  Mangler(schir::Context& C, llvm::StringRef ManglePrefix_)
-    : Context(C),
-      ManglePrefix(ManglePrefix_)
-  { }
-
-  llvm::StringRef getManglePrefix(this auto const& self) {
-    return self.ManglePrefix;
-  }
-
-  static bool isExternalVariable(llvm::StringRef ManglePrefix,
-                                 llvm::StringRef ModulePrefix,
-                                 llvm::StringRef VarName);
-  static llvm::StringRef parseModulePrefix(llvm::StringRef Name,
-                                           llvm::StringRef ManglePrefix);
-  static bool parseNameSegment(llvm::StringRef& Input,
-                               llvm::SmallVectorImpl<char>& Output);
-  static bool parseLibraryName(llvm::StringRef& Input,
-                               llvm::SmallVectorImpl<char>& Output);
-
-  std::string mangleModule(Value Spec);
 
   std::string mangleEntity(Twine EntityPrefix,
                            Twine ModulePrefix,
@@ -139,6 +113,23 @@ public:
                            Twine ModulePrefix,
                            Value Name);
 
+public:
+  Mangler(schir::Context& C)
+    : Context(C)
+  { }
+
+  static bool isExternalVariable(llvm::StringRef ManglePrefix,
+                                 llvm::StringRef ModulePrefix,
+                                 llvm::StringRef VarName);
+  static llvm::StringRef parseModulePrefix(llvm::StringRef Name,
+                                           llvm::StringRef ManglePrefix);
+  static bool parseNameSegment(llvm::StringRef& Input,
+                               llvm::SmallVectorImpl<char>& Output);
+  // Parse <module-name-node> consuming from Input.
+  static bool parseModuleNameNode(llvm::StringRef& Input,
+                                  llvm::SmallVectorImpl<char>& Output);
+
+  std::string mangleModule(Twine ManglePrefix, Value Name);
   std::string mangleSpecialName(Twine ModulePrefix, llvm::StringRef Name);
 
   // NameT is a schir::Value or llvm::StringRef.

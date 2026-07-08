@@ -877,8 +877,8 @@ void Context::CreateImportSet(Value Spec) {
       Module* M = cast<schir::Module>(Args[0]);
       C.Cont(new (*this) ImportSet(M));
     });
-    schir::Mangler Mangler(*this, schir::ManglePrefix);
-    std::string ModuleNameStr = Mangler.mangleModule(Spec);
+    schir::Mangler Mangler(*this);
+    std::string ModuleNameStr = Mangler.mangleModule(schir::ManglePrefix, Spec);
     if (ModuleNameStr.empty())
       return;
     Symbol* ModuleName = CreateSymbol(ModuleNameStr, Spec.getSourceLocation());
@@ -974,18 +974,11 @@ namespace {
   // Append to Output the relative path to a module sans any file extension.
   void getModulePath(schir::Context& C, llvm::StringRef MangledName,
                      llvm::SmallVectorImpl<char>& Output) {
-#if 0 // TODO REMOVE
-    llvm::StringRef ModulePath =
-        SCHIR_BASE_VAR(module_path).get(C).getStringRef();
-    if (!ModulePath.empty())
-      llvm::Twine(ModulePath, "/").toVector(Output);
-#endif
-
+    MangledName.consume_front(schir::ManglePrefix);
     llvm::StringRef Input = MangledName;
-    Input.consume_front(schir::ManglePrefix);
     while (!Input.empty()) {
       unsigned PrevLen = Output.size();
-      if (!Mangler::parseLibraryName(Input, Output))
+      if (!Mangler::parseModuleNameNode(Input, Output))
         return C.RaiseError("invalid module mangling");
       // Check characters
       auto LibraryNamePart
@@ -1231,7 +1224,7 @@ void schir::initModuleNames(schir::Context& C, llvm::StringRef ModuleMangledName
                             ModuleInitListTy InitList) {
   Module* M = C.Modules[ModuleMangledName].get();
   assert(M && "module must be registered");
-  schir::Mangler Mangler(C, schir::ManglePrefix);
+  schir::Mangler Mangler(C);
   for (ModuleInitListPairTy const& X : InitList) {
     Value Val = X.second;
     llvm::StringRef Id = X.first;

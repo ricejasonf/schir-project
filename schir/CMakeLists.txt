@@ -54,6 +54,7 @@ add_subdirectory(unittests)
 add_subdirectory(plugins/HelloWorld)
 add_subdirectory(plugins/SchirClang)
 add_subdirectory(plugins/SchirLLVMPass)
+add_subdirectory(plugins/SchirMangle)
 add_subdirectory(plugins/SchirMlirAllPasses)
 
 add_subdirectory(cmake/modules)

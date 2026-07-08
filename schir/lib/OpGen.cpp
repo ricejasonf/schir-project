@@ -124,7 +124,7 @@ OpGen::~OpGen() {
 }
 
 std::string OpGen::mangleModule(schir::Value NameSpec) {
-  return createMangler().mangleModule(NameSpec);
+  return createMangler().mangleModule(schir::ManglePrefix, NameSpec);
 }
 
 std::string OpGen::mangleFunctionName(llvm::StringRef Name) {

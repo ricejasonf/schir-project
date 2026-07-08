@@ -174,7 +174,7 @@ public:
   schir::Context& getContext() { return Context; }
 
   schir::Mangler createMangler() {
-    return Mangler(Context, schir::ManglePrefix);
+    return Mangler(Context);
   }
 
   // CheckError
@@ -202,7 +202,7 @@ public:
 
   llvm::StringRef getModulePrefix() {
     if (!ModulePrefix || ModulePrefix->getStringRef().empty()) {
-      return ManglePrefix;
+      return schir::ManglePrefix;
     }
     return ModulePrefix->getStringRef();
   }

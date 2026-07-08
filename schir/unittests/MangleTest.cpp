@@ -16,10 +16,10 @@ namespace {
 
 TEST(MangleTest, mangleLibraryName) {
   auto Context = schir::Context();
-  auto Mangler = schir::Mangler(Context, schir::ManglePrefix);
+  auto Mangler = schir::Mangler(Context);
   auto mangle = [&](llvm::StringRef Name) {
     schir::Value Spec = Context.ParseLiteral(Name);
-    return Mangler.mangleModule(Spec);
+    return Mangler.mangleModule(schir::ManglePrefix, Spec);
   };
 
   EXPECT_EQ(mangle("(one)"), "_SCHIRL3Sone");
@@ -29,71 +29,71 @@ TEST(MangleTest, mangleLibraryName) {
   EXPECT_EQ(mangle("(schir foo-bar)"), "_SCHIRL5SschirL3Sfoomi3Sbar");
   EXPECT_EQ(mangle("(schir foo.bar 42)"), "_SCHIRL5SschirL3Sfoodt3SbarL2S42");
   EXPECT_EQ(mangle("(foo_bar3)"), "_SCHIRL8Sfoo_bar3");
-  EXPECT_EQ(mangle("(foo_bar3 (woof))"), "");
   EXPECT_EQ(mangle("(rmrf *)"), "_SCHIRL4SrmrfLml");
+  EXPECT_EQ(mangle("(foo_bar3 (woof))"), "");
 }
 
-TEST(MangleTest, parseLibraryName) {
+TEST(MangleTest, parseModuleNameNode) {
   auto Context = schir::Context();
-  auto Mangler = schir::Mangler(Context, schir::ManglePrefix);
+  auto Mangler = schir::Mangler(Context);
 
   std::string MangledNameStr;
   auto mangle = [&](llvm::StringRef Name) {
     schir::Value Spec = Context.ParseLiteral(Name);
-    MangledNameStr = Mangler.mangleModule(Spec);
+    MangledNameStr = Mangler.mangleModule(schir::ManglePrefix, Spec);
     auto MangledName = llvm::StringRef(MangledNameStr);
-    // Strip the _SCHIR prefix.
-    MangledName.consume_front(Mangler.getManglePrefix());
+    MangledName.consume_front(schir::ManglePrefix);
     return MangledName;
   };
   llvm::SmallString<32> Output;
   llvm::StringRef MangledName;
+  llvm::StringRef ManglePrefix = schir::ManglePrefix;
 
   MangledName = mangle("(schir base)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "schir");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "base");
   Output.clear();
 
   MangledName = mangle("(schir clang)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "schir");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "clang");
   Output.clear();
 
   MangledName = mangle("(schir foo-bar)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "schir");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "foo-bar");
   Output.clear();
 
   MangledName = mangle("(schir foo.bar 42)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "schir");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "foo.bar");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "42");
   Output.clear();
 
   MangledName = mangle("(foo_bar3)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "foo_bar3");
   Output.clear();
 
   MangledName = mangle("(rmrf *)");
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "rmrf");
   Output.clear();
-  EXPECT_TRUE(Mangler.parseLibraryName(MangledName, Output));
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
   EXPECT_EQ(std::string(Output), "*");
   Output.clear();
 }

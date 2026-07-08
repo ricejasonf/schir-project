@@ -12,8 +12,9 @@ add_lit_testsuite(check-schir "Running Schir tests"
     schir-scheme
     schir-opt
     SchirClang
-    SchirLLVMPass
-    SchirMlirAllPasses
     SchirHelloWorld
+    SchirLLVMPass
+    SchirMangle
+    SchirMlirAllPasses
     FileCheck
 )
