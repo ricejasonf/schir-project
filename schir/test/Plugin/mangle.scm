@@ -34,3 +34,23 @@
 ;; TODO Check failure.
 ;(test-mangle-module '(foo_bar3 (woof)))
 
+(define ModulePrefix
+  (mangle-module '_LOL '(LOL base)))
+(define (test-mangle-func FuncName)
+  (write (mangle-function-name ModulePrefix FuncName))
+  (newline))
+
+; CHECK: _LOLL3SLOLL4SbaseF2Sid
+(test-mangle-func "id")
+
+; CHECK: _LOLL3SLOLL4SbaseF3Srunmi4Sfunc
+(test-mangle-func "run-func")
+
+; CHECK: _LOLL3SLOLL4SbaseF13Ssnake_func_fn
+(test-mangle-func "snake_func_fn")
+
+; CHECK: _LOLL3SLOLL4SbaseF10SPascalFunc
+(test-mangle-func "PascalFunc")
+
+; CHECK: _LOLL3SLOLL4SbaseF3Sdotdt4Sfuncdt2Sfn
+(test-mangle-func "dot.func.fn")
