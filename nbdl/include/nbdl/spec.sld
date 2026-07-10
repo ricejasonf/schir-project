@@ -23,6 +23,8 @@
       (load-builtin "nbdl_spec_get_store_alts"))
     (define !nbdl.store 
       (load-builtin "nbdl_spec_create_store_type"))
+    (define get-member-name
+      (load-builtin "nbdl_get_member_name"))
 
     ;; Initialize the mlir module.
     (module-init)
@@ -429,7 +431,7 @@
       (define KeyAlts (get-store-alts Key))
       (define MatchedAlts
         (if (and StoreAlts KeyAlts)
-          (apply append (map (map ReflectAlts StoreAlts) KeyAlts))
+          (apply append (map apply (map ReflectAlts StoreAlts) KeyAlts))
           '()))
       (define StoreT
         (apply !nbdl.store MatchedAlts))
@@ -472,12 +474,47 @@
           )))
 
     (define (build-node-get Store Loc KeyVal)
+      ;; Infer type for single alternatives only.
+      (define StoreAlts (get-store-alts Store))
+      (define KeyAlts (get-store-alts KeyVal))
+      (define StoreT
+        (if (and (pair? StoreAlts) (eq? (cdr StoreAlts) '()))
+          (car StoreAlts)
+          #f))
+      (define KeyT
+        (if (and (pair? KeyAlts) (eq? (cdr KeyAlts) '()))
+          (car KeyAlts)
+          #f))
+      (define KeyValMemberName
+        (if (value? !nbdl.member_name KeyVal)
+          (get-member-name KeyVal)
+          #f))
+      ;; Try to get the alternative from the C++ expr type.
+      (define Expr
+        (cond
+          ((and StoreT KeyValMemberName)
+           (string-append
+             "nbdl::detail::declval<" StoreT ">()."
+             KeyValMemberName))
+          ((and StoreT KeyT)
+            (string-append
+              "nbdl::get(nbdl::detail::declval<" StoreT ">,"
+              "          nbdl::detail::declval<" KeyVal ">"))
+
+          (else #f)))
+      (define ExprT
+        (and (string? Expr)
+             (expr->type Expr)))
+      (define ResultType
+        (if ExprT
+          (!nbdl.store (expr->type Expr))
+          (!nbdl.store)))
       (define Op
         (create-op "nbdl.get"
           (loc: Loc)
           (operands: Store KeyVal)
           (attributes:)
-          (result-types: (!nbdl.store))))
+          (result-types: ResultType)))
       (result Op))
 
     (define (build-resolve-params Loc FnVal ParamVals)

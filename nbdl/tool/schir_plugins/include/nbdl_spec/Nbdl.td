@@ -105,7 +105,7 @@ def Nbdl_Variant : TypeDef<Nbdl_Dialect, "Variant", []> {
 */
 }
 
-def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "member_name"> {
+def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "MemberName"> {
   let mnemonic = "member_name";
   let description = [{
     Represent a string that is a valid C++ identifier.

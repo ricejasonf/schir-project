@@ -23,14 +23,17 @@ using arr_vec = std::array<std::vector<int>, 3>;
              (init-args: MessageReceiver))))
 
   (match-params-fn flatten (Context Fn)
-    (match-each (get Context '.lol)
-      (lambda (SubList)
-        (match-each SubList
-          (lambda (X)
-            (visit '.push_back
-                   (get Context '.receiver)
-                   X)
-            (Fn 42))))))
+    (match Context
+      ('::foo::context =>
+        (lambda (Context)
+          (match-each (get Context '.lol)
+            (lambda (SubList)
+              (match-each SubList
+                (lambda (X)
+                  (visit '.push_back
+                         (get Context '.receiver)
+                         X)
+                  (Fn 42)))))))))
 } // schir_scheme
 } // namespace foo
 } // namespace

@@ -5,11 +5,8 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 //
 
-#include <nbdl/assign.hpp>
+#include <nbdl/spec.hpp>
 #include <nbdl/apply_action.hpp>
-#include <nbdl/match.hpp>
-#include <nbdl/strong_alias.hpp>
-#include <nbdl/variant_holder.hpp>
 
 #include <catch.hpp>
 #include <string>

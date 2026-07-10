@@ -255,4 +255,24 @@ void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
 
   C.Cont(C.CreateList(Results));
 }
+
+// Get the name of a mlir.value of type !nbdl.member_name by
+// visiting its defining operation (which we expect should exist).
+void nbdl_get_member_name(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+
+  mlir::Value V = schir::any_cast<mlir::Value>(Args.front());
+  if (!V || !isa<nbdl_spec::MemberNameType>(V.getType()))
+    return C.RaiseError("expecting mlir.value of type !nbdl.member_name: {}",
+                        Args.front());
+
+  auto Op = V.getDefiningOp<nbdl_spec::MemberNameOp>();
+  if (!Op)
+    return C.RaiseError("mlir.value of type !nbdl.member_name"
+                        "should be defined by nbdl_spec::MemberNameOp");
+
+  llvm::StringRef Name = Op.getName();
+  return C.Cont(C.CreateSymbol(Name));
+}
 } //  extern "C"

@@ -32,9 +32,18 @@ struct probe {
   using apply = int;
 };
 
+// Implement our own declval to use in an evaluated context.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-type"
+template <typename T>
+T&& declval() { }
+#pragma clang diagnostic pop
+#else
 template <typename T>
 T&& declval();
+#endif // defined(__clang__)
 } // namespace nbdl::detail
 
 
-#endif
+#endif // NBDL_SPEC_HPP
