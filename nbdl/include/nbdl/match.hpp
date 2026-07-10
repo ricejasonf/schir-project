@@ -36,7 +36,7 @@ namespace nbdl {
       };
   }
 
-  template<Store Store, typename Key, typename Fn>
+  template <Store Store, typename Key, typename Fn>
   constexpr void match_fn::operator()(Store&& s, Key&& k, Fn&& fn) const {
     using Tag = hana::tag_of_t<Store>;
     using Impl = match_impl<Tag>;
@@ -45,7 +45,7 @@ namespace nbdl {
                 std::forward<Fn>(fn));
   };
 
-  template<typename Store, typename Fn>
+  template <typename Store, typename Fn>
   constexpr void match_fn::operator()(Store&& s, Fn&& fn) const {
     using Tag = hana::tag_of_t<Store>;
     using Impl = match_impl<Tag>;
@@ -63,7 +63,7 @@ namespace nbdl {
     }
   };
 
-  template<State Tag>
+  template <State Tag>
   struct match_impl<Tag> {
     template <typename Store, typename Key, typename Fn>
     static constexpr void apply(Store&& s, Key&& k, Fn&& fn) {
@@ -73,8 +73,7 @@ namespace nbdl {
     }
   };
 
-  template<typename T>
-    requires nbdl::Store<T> && (!nbdl::State<T>)
+  template <typename T>
   struct match_impl<std::reference_wrapper<T>> {
     template <typename Store, typename ...Args>
     static constexpr void apply(Store s, Args&& ...args) {

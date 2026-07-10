@@ -16,6 +16,7 @@
 #include <nbdl/variant.hpp>
 #include <nbdl/variant_holder.hpp>
 #include <boost/hana/functional/overload.hpp>
+#include <algorithm>
 #include <concepts>
 #include <type_traits>
 #include <utility>

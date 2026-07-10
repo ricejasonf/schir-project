@@ -43,7 +43,8 @@ using fav_games = std::unordered_map<std::string, std::string>;
 
   ; // A strong alias to a variant that implements nbdl::match.
   (define-store message ()
-    (variant (store message_1)
+    (variant (store 'std::monostate)
+             (store message_1)
              (store message_2)
              (store message_3)
              (store message_4)))
@@ -78,6 +79,8 @@ using fav_games = std::unordered_map<std::string, std::string>;
       (visit '.erase
              (get context '.fav_games)
              (get msg '.name)))
+    ; // Note that message here might not be a variant
+      // depending on how apply_message is called.
     (match message
       ('my::message_1 => receive-message-1)
       ('my::message_2 => insert-fav-game)

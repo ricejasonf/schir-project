@@ -356,6 +356,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<VisitOp>(Op))        return Visit(cast<VisitOp>(Op));
     else if (isa<NoOp>(Op))           return Visit(cast<NoOp>(Op));
     else if (isa<MatchIfOp>(Op))      return Visit(cast<MatchIfOp>(Op));
+    else if (isa<MatchEachOp>(Op))    return Visit(cast<MatchEachOp>(Op));
     else if (isa<FuncOp>(Op))         return Visit(cast<FuncOp>(Op));
     else if (isa<StoreComposeOp>(Op)) return Visit(cast<StoreComposeOp>(Op));
     else if (isa<ScopeOp>(Op))
@@ -524,6 +525,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     if (ST.getAlts().size() == 1)
       TypeStr = llvm::StringRef(ST.getAlts().front());
 
+    ValueMapScope Scope(ValueMap);
     OS << "[&]";
     // Write parameters.
     OS << "([[maybe_unused]] ";
@@ -555,6 +557,25 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       VisitRegion(Op.getElseRegion());
       OS << "}\n";
     }
+  }
+
+  void Visit(MatchEachOp Op) {
+    mlir::Region& Body = Op.getBody();
+    mlir::BlockArgument& Arg = Body.getArguments().front();
+    mlir::Value Begin = Op.getBegin();
+    mlir::Value End = Op.getEnd();
+
+    OS << "std::ranges::for_each(";
+    WriteExpr(Begin);
+    OS << ", ";
+    WriteExpr(End);
+
+    ValueMapScope Scope(ValueMap);
+    OS << ", [&]([[maybe_unused]] auto&& "
+       << SetLocalVarName(Arg, "arg_");
+    OS << ") {\n";
+    VisitRegion(Body);
+    OS << "});\n";
   }
 
   void Visit(MemberNameOp) {
@@ -641,8 +662,6 @@ public:
     OS << "class " << Name << " {\n";
     OS << "public:\n";
     WriteMemberDecls(Op);
-    if (!Op.getBody().getArguments().empty())
-      OS << Name << "() = default;\n";
     WriteConstructor(Op);
     OS << "};\n";
     Flush();

@@ -33,11 +33,13 @@
 
     ; FIXME change to "!nbdl.variant" once its in the compiler.
     (define !nbdl.variant (type "!nbdl.store")) ;"!nbdl.variant"))
-    (define !nbdl.tag (type "!nbdl.tag"))
     (define !nbdl.member_name (type "!nbdl.member_name"))
-    (define !nbdl.empty (type "!nbdl.empty"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define i32 (type "i32"))
+
+    ;; Not used types
+    ; (define !nbdl.tag (type "!nbdl.tag")) ; Not used.
+    ; (define !nbdl.empty (type "!nbdl.empty"))
 
     (define %probe-id 0)
     (define (make-probe-name)
@@ -574,7 +576,7 @@
                    (attributes:)
                    (result-types:))))
 
-    (define (visit-impl MatchingResults? Loc ParamsSpec)
+    (define (visit-aux MatchingResults? Loc ParamsSpec)
       (close-previous-scope)
       ;; This %expr is for the whole visit expr (ie its result).
       (if MatchingResults?
@@ -612,15 +614,38 @@
                  (lambda (Loc Fn)
                    (%match-expr Loc StoreN Fn)))
                ...))
-           (visit-impl matching-results? CalleeLoc ParamsSpec)
+           (visit-aux matching-results? CalleeLoc ParamsSpec)
            ))))
 
-    ;; TODO Figure out what this returns exactly.
-    ;; Visit each element of a range.
-    (define (for-each path proc)
-      (if (path? path)
-        (error "TODO Implement for-each")
-        (error "expecting a path")))
+    (define (match-each-aux Begin End Fn)
+      (define ParamsSpec (list Begin End))
+      (%match-results ParamsSpec
+        (lambda (ParamVals)
+          (%top-level
+            (lambda ()
+              (create-op "nbdl.match_each"
+                         (loc: 0)
+                         (operands: ParamVals)
+                         (attributes:)
+                         (result-types:)
+                         (region: "body" ((Element : (!nbdl.store)))
+                            (Fn Element))))))))
+
+    ;; Match each element of a range. (side effects only)
+    (define-syntax match-each
+      (syntax-rules ()
+        ((match-each Range Fn)
+         (match-each (visit '.begin Range)
+                     (visit '.end Range)
+                     Fn))
+        ((match-each Begin End Fn)
+          (match-each-aux (%expr (syntax-source-loc Begin)
+                                 (lambda (Loc K)
+                                   (%match-expr Loc Begin K)))
+                          (%expr (syntax-source-loc End)
+                                 (lambda (Loc K)
+                                   (%match-expr Loc End K)))
+                          Fn))))
 
     (define-syntax match-aux
       (syntax-rules (=>)
@@ -665,6 +690,8 @@
            (Type1 => Fn1)
            (TypeN => FnN) ...
            ("" => DefaultFn)))
+        ; TODO Do we want this to be (%expr Store) to allow visit?
+        ;      (Which would also require %match-results in match-aux)
         ((match Store
            (Type1 => Fn1)
            (TypeN => FnN) ...)
@@ -775,6 +802,7 @@
     get
     match
     match-cond
+    match-each
     match-if
     match-params-fn
     visit

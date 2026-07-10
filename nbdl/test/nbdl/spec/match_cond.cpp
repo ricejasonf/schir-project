@@ -60,6 +60,8 @@ namespace foo {
     (my-concat (get context '.val2))
     (my-concat (get context '.val3))
     (fn 5))
+
+    ;; // TODO Test (test => recipient) style match-cond.
 }
 }  // namespace foo
 }  // namespace
@@ -68,14 +70,14 @@ TEST_CASE("Branch on conditionals over stores", "[spec][match-cond]") {
   foo::context ctx1(foo::weighted_string{0, "foo"},
                     foo::weighted_string{0, "bar"},
                     foo::weighted_string{0, "baz"});
-  foo::context ctx2(foo::weighted_string{43, "foo"}, 
-                    foo::weighted_string{5, "bar"}, 
+  foo::context ctx2(foo::weighted_string{43, "foo"},
+                    foo::weighted_string{5, "bar"},
                     foo::weighted_string{100, "baz"});
-  foo::context ctx3(foo::weighted_string{0, "foo"}, 
-                    foo::weighted_string{5, "bar"}, 
+  foo::context ctx3(foo::weighted_string{0, "foo"},
+                    foo::weighted_string{5, "bar"},
                     foo::weighted_string{100, "baz"});
-  foo::context ctx4(foo::weighted_string{43, "foo"}, 
-                    foo::weighted_string{9000, "bar"}, 
+  foo::context ctx4(foo::weighted_string{43, "foo"},
+                    foo::weighted_string{9000, "bar"},
                     foo::weighted_string{100, "baz"});
   combo_concat(ctx1, nbdl::noop);
   combo_concat(ctx2, nbdl::noop);

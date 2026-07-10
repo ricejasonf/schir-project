@@ -327,8 +327,8 @@ def Nbdl_ContOp : Nbdl_Op<"cont", [Terminator]> {
 def Nbdl_StoreOp : Nbdl_Op<"store", []> {
   let description = [{
     Construct a store object. The name should be a
-    symbol that refers to a CreateStoreOp which can
-    be external.
+    symbol that refers to a DefineStoreOp which can
+    be external (ie just the name of C++ type.)
   }];
 
   let arguments = (ins
@@ -426,6 +426,17 @@ def Nbdl_ScopeOp : Nbdl_Op<"scope", []> {
   let builders = [
     OpBuilder<(ins "std::unique_ptr<::mlir::Region>&&":$body)>
   ];
+}
+
+def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
+  let description = [{
+    Match each element in a Range. The body is invoked for each element
+    in the Range.
+  }];
+
+  let arguments = (ins Nbdl_Type:$begin, Nbdl_Type:$end);
+  let results = (outs);
+  let regions = (region SizedRegion<1>:$body);
 }
 
 #endif

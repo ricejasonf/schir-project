@@ -17,6 +17,7 @@ namespace nbdl
   {
       using std::string::string;
       using std::string::operator=;
+      using std::string::operator[];
 
       string(std::string const& s)
         : std::string(s)

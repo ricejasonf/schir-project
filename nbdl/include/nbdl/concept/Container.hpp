@@ -7,8 +7,7 @@
 #ifndef NBDL_CONCEPT_CONTAINER_HPP
 #define NBDL_CONCEPT_CONTAINER_HPP
 
-#include<mpdef/list.hpp>
-
+#include <nbdl/concept/Store.hpp>
 #include <array> // for std::tuple_size
 #include <iterator>
 #include <utility>
@@ -24,7 +23,9 @@ namespace nbdl {
 
   template <typename T>
   concept ContiguousContainer = Container<T> && requires (T t) {
+    // Trying to check the result types here is a nightmare.
     std::data(t);
+    t[0];
   };
 
   template <typename T>

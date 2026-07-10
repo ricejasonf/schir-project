@@ -39,7 +39,7 @@ namespace nbdl {
     return Impl::apply(std::forward<State>(s));
   };
 
-  template <typename T> requires State<T>
+  template <typename T>
   struct get_impl<std::reference_wrapper<T>> {
     template <typename State>
     static constexpr decltype(auto) apply(State s) {

@@ -19,6 +19,7 @@ set(TEST_NBDL_SPEC_SOURCE_LIST
   context.cpp
   match.cpp
   match_cond.cpp
+  match_each.cpp
   visit.cpp
 )
 

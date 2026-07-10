@@ -9,6 +9,7 @@ nbdl_catch_test_suite(build_targets "test.nbdl.core"
   actor_init.cpp
   api_signature.cpp
   apply_action.cpp
+  concept/Container.cpp
   context.cpp
   context_match.cpp
   context_state_consumer.cpp
