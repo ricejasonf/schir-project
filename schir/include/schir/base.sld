@@ -11,6 +11,19 @@
       (if (eq? x #f)
         #t #f))
 
+    (define (string-join List Delim)
+      (cond
+        ((null? List)
+         "")
+        ((and (pair? List) (null? (cdr List)))
+         (car List))
+        ((and (pair? List) (pair? (cdr List)))
+         (string-append (car List)
+                        Delim
+                        (string-join (cdr List) Delim)))
+        ((pair? List)
+         (error "expecting proper list: {}" List))))
+
     ; Placeholder implementation based on R7RS
     (define-syntax define-values
       (syntax-rules ()
@@ -97,6 +110,7 @@
     string-copy
     string-ref
     string-length
+    string-join
     values
     with-exception-handler
     write

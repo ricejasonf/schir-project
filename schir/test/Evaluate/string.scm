@@ -1,5 +1,5 @@
-; RUN: schir-scheme %s | FileCheck %s
-(import (schir builtins))
+; RUN: schir-scheme --module-path=%schir_module_path %s | FileCheck %s
+(import (schir base))
 
 ; CHECK: (#t #t #f #f #f)
 (write (list (string? "")
@@ -103,3 +103,23 @@
 ; CHECK-NEXT: "3.1400001"
 (write (number->string 3.14))(newline)
 
+
+; CHECK-NEXT: ""
+(write
+  (string-join '() ", "))
+(newline)
+
+; CHECK-NEXT: "foo"
+(write
+  (string-join '("foo") ", "))
+(newline)
+
+; CHECK-NEXT: "foo, bar"
+(write
+  (string-join '("foo" "bar") ", "))
+(newline)
+
+; CHECK-NEXT: "foo, bar, baz"
+(write
+  (string-join '("foo" "bar" "baz") ", "))
+(newline)
