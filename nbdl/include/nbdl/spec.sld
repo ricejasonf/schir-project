@@ -594,6 +594,18 @@
         (lambda ()
           (set! matching-results? prev))))
 
+    ;; Map a list of mlir store values
+    ;; to strings of C++ exprs type inference.
+    ;; Return #f if any of the values do no map to a single alternative.
+    (define (get-infer-args Args)
+      (define (DeclVal T)
+        (string-append "::nbdl::detail::declval<" T ">()"))
+      (define StoreAlts
+        (map get-single-alternative Args))
+      (if (every symbol? StoreAlts)
+        (map DeclVal StoreAlts)
+        #f))
+
     ;; Return !nbdl.store possibly denoting an alternative
     ;; iff all the operands are singletons.
     (define (infer-visit-result Results)
@@ -602,19 +614,12 @@
           (if MN
             (get-member-name MN)
             #f)))
-      (define ArgResults
+      (define Args
         (if MemberName
           (cdr Results)
           Results))
       (define StoreAlts
-        (let ()
-          (define (DeclVal T)
-            (string-append "::nbdl::detail::declval<" T ">()"))
-          (define StoreAltResults
-            (map get-single-alternative ArgResults))
-          (if (every symbol? StoreAltResults)
-            (map DeclVal StoreAltResults)
-            #f)))
+        (get-infer-args Args))
       (define Expr
         (cond
           ((not StoreAlts)
@@ -693,18 +698,33 @@
            (visit-aux matching-results? CalleeLoc ParamsSpec)
            ))))
 
+    (define (infer-match-each-element ParamVals)
+      ;; Since we will not likely support the
+      ;; projection argument, we can get the result
+      ;; of dereferencing the result of begin expr.
+      (define Args
+        (get-infer-args ParamVals))
+      (define Begin
+        (car Args))
+      (if Begin
+        (!nbdl.store
+          (expr->type (string-append "*(" Begin ")")))
+        (!nbdl.store)))
+
     (define (match-each-aux Begin End Fn)
       (define ParamsSpec (list Begin End))
       (%match-results ParamsSpec
         (lambda (ParamVals)
           (%top-level
             (lambda ()
+              (define ElementT
+                (infer-match-each-element ParamVals))
               (create-op "nbdl.match_each"
                          (loc: 0)
                          (operands: ParamVals)
                          (attributes:)
                          (result-types:)
-                         (region: "body" ((Element : (!nbdl.store)))
+                         (region: "body" ((Element : ElementT))
                             (Fn Element))))))))
 
     ;; Match each element of a range. (side effects only)
