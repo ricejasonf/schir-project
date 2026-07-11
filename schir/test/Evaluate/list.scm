@@ -205,3 +205,36 @@
     '(b e h)
     '(c f i 'oof)))
 (newline)
+
+; CHECK-NEXT: #t
+(write
+  (and
+    (every number? '())
+    (every number? '(1))
+    (every number? '(1 2 3 4))))
+(newline)
+
+; CHECK-NEXT: #f
+(write
+  (or
+    (every number? '(foo))
+    (every number? '(1 foo))
+    (every number? '(1 2 3 #t 4))))
+(newline)
+
+; CHECK-NEXT: #f
+(write
+  (or
+    (any number? '())
+    (any number? '(foo))
+    (any number? '(foo #t bar baz))))
+(newline)
+
+; CHECK-NEXT: #t
+(write
+  (and
+    (any number? '(1))
+    (any number? '(foo 1))
+    (any number? '(1 foo))
+    (any number? '(1 2 3 #t 4))))
+(newline)

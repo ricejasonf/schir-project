@@ -114,6 +114,7 @@
     caar cadr cdar cddr
     member memq memv
     reverse map
+    every any
 
     ; eval stuff
     compile

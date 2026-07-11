@@ -1,6 +1,13 @@
 (import (schir builtins))
 
 (define-library (schir base list)
+  (export
+    caar cadr cdar cddr
+    member memq memv
+    reverse map
+    case
+    every any
+    )
   (import (schir builtins)
           (schir base r7rs-syntax)
           (only (schir base int) < <=))
@@ -42,6 +49,8 @@
          (begin result1 result2 ...))
         ((case key
            ((atoms ...) => result))
+         ; FIXME Atoms are actually datums so quote should be used
+         ;       like in the reference implementation.
          (if (memv key (list atoms ...))
            (result key)))
         ((case key
@@ -53,7 +62,7 @@
            ((atoms ...) result1 result2 ...))
          (if (memv key (list atoms ...))
            (begin result1 result2 ...)))
-        
+
         ((case key
            ((atoms ...) result1 result2 ...)
            clause clauses ...)
@@ -106,11 +115,34 @@
               Result)))
         (reverse ReverseResult)))
 
-    ) ; end of begin
-  (export
-    caar cadr cdar cddr
-    member memq memv
-    reverse map
-    case
-    )
-)
+    (define (every Pred List . Lists)
+      (define (every-lol Pred Lists)
+        (if (pair? Lists)
+          (and
+            (every Pred (car Lists))
+            (every-lol Pred (cdr Lists)))
+          #t))
+      (define Result
+        (if (pair? List)
+          (and (Pred (car List))
+               (every Pred (cdr List)))
+          #t))
+      (and Result
+           (every-lol Pred Lists)))
+
+    (define (any Pred List . Lists)
+      (define (any-lol Pred Lists)
+        (if (pair? Lists)
+          (or
+            (any Pred (car Lists))
+            (any-lol Pred (cdr Lists)))
+          #f))
+      (define Result
+        (if (pair? List)
+          (or (Pred (car List))
+              (any Pred (cdr List)))
+          #f))
+      (or Result
+          (any-lol Pred Lists)))
+
+    )) ; end define-library
