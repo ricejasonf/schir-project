@@ -862,6 +862,7 @@ void module_lookup(Context& C, schir::ValueRefs Args) {
 // (value? obj)
 // (value? _typestr_ obj)
 // (value? mlir.type obj)
+// Return obj if predicate is satisfied.
 void is_value(Context& C, ValueRefs Args) {
   if (Args.size() < 1 || Args.size() > 2)
     return C.RaiseError("invalid arity");
@@ -883,9 +884,10 @@ void is_value(Context& C, ValueRefs Args) {
     Args = Args.drop_front();
   }
 
-  mlir::Value Value = any_cast<mlir::Value>(Args[0]);
+  schir::Value Obj = Args.front();
+  mlir::Value Value = any_cast<mlir::Value>(Obj);
   bool Result = Value && (!Type || Value.getType() == Type);
-  C.Cont(schir::Bool(Result));
+  C.Cont(Result ? Obj : schir::Value(schir::Bool(false)));
 }
 
 // Handle getting a valid function type raising on invalid Args.

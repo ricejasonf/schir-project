@@ -635,10 +635,20 @@ private:
     }
   }
 
-  void VisitAny(Any* T) {
-    OS << "#any{";
-    OS << uintptr_t(T->getOpaquePtr())
-       << '}';
+  void VisitAny(Any* A) {
+    if (mlir::Value V = schir::any_cast<mlir::Value>(A)) {
+      OS << "#mlir.value{";
+      V.print(OS);
+      OS << '}';
+    } else if (mlir::Type T = schir::any_cast<mlir::Type>(A)) {
+      OS << "#mlir.type{";
+      T.print(OS);
+      OS << '}';
+    } else {
+      OS << "#any{";
+      OS << uintptr_t(A->getOpaquePtr())
+         << '}';
+    }
   }
 
   void VisitOperation(Operation* Op) {

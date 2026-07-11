@@ -580,7 +580,7 @@ void string_append(Context& C, ValueRefs Args) {
   size_t TotalLength = 0;
   for (Value Arg : Args) {
     if (!isa<String, Symbol>(Arg))
-      return C.RaiseError("expecting string-like object");
+      return C.RaiseError("expecting string-like object: {}", Arg);
     TotalLength += Arg.getStringRef().size();
   }
   String* TargetStr = C.CreateString(TotalLength, '\0');
@@ -598,10 +598,12 @@ void string_append(Context& C, ValueRefs Args) {
 }
 
 void string_length(Context& C, ValueRefs Args) {
-  if (Args.size() != 1 || !isa<String, Symbol>(Args[0]))
-    return C.RaiseError("expecting string-like object");
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  if (!isa<String, Symbol>(Args[0]))
+    return C.RaiseError("expecting string-like object: {}", Args.front());
 
-  auto Utf8View = detail::Utf8View(Args[0].getStringRef());
+  auto Utf8View = detail::Utf8View(Args.front().getStringRef());
 
   int Size = 0;
   while (Utf8View.drop_front())
@@ -614,8 +616,8 @@ void string_ref(Context& C, ValueRefs Args) {
   size_t K = 0;
   if (Args.size() != 2)
     return C.RaiseError("invalid arity");
-  if (!isa<String, Symbol>(Args[0]))
-    return C.RaiseError("expecting string-like object");
+  if (!isa<String, Symbol>(Args.front()))
+    return C.RaiseError("expecting string-like object: {}", Args.front());
   if (Args.size() == 2) {
     if (isa<Int>(Args[1]) && cast<Int>(Args[1]) >= 0)
       K = static_cast<size_t>(cast<Int>(Args[1]));

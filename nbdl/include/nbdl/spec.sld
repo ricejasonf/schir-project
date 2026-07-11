@@ -21,7 +21,7 @@
       (load-builtin "nbdl_spec_module_init"))
     (define get-store-alts
       (load-builtin "nbdl_spec_get_store_alts"))
-    (define !nbdl.store 
+    (define !nbdl.store
       (load-builtin "nbdl_spec_create_store_type"))
     (define get-member-name
       (load-builtin "nbdl_get_member_name"))
@@ -75,6 +75,14 @@
       ; Unnest the alternatives.
       (apply append Result)
       )
+
+    ;; Return single alternative of a store value
+    ;; or false if there is not exacly one.
+    (define (get-single-alternative Value)
+      (define Alts (get-store-alts Value))
+      (if (and (pair? Alts) (eq? (cdr Alts) '()))
+        (car Alts)
+        #f))
 
     ;; Create a thunk that should receive a location and callback
     ;; to resolve a value once its dependencies are resolved.
@@ -298,7 +306,7 @@
       (lambda ParamsSpec_
         (define (ToExpr Param)
           (%expr Loc
-                 (lambda (Loc Fn) 
+                 (lambda (Loc Fn)
                    (%match-expr Loc Param Fn))))
         (define ParamsSpec
           (map ToExpr ParamsSpec_))
@@ -474,17 +482,10 @@
           )))
 
     (define (build-node-get Store Loc KeyVal)
+      ; TODO Use get-single-alternative
       ;; Infer type for single alternatives only.
-      (define StoreAlts (get-store-alts Store))
-      (define KeyAlts (get-store-alts KeyVal))
-      (define StoreT
-        (if (and (pair? StoreAlts) (eq? (cdr StoreAlts) '()))
-          (car StoreAlts)
-          #f))
-      (define KeyT
-        (if (and (pair? KeyAlts) (eq? (cdr KeyAlts) '()))
-          (car KeyAlts)
-          #f))
+      (define StoreT (get-single-alternative Store))
+      (define KeyT (get-single-alternative KeyVal))
       (define KeyValMemberName
         (if (value? !nbdl.member_name KeyVal)
           (get-member-name KeyVal)
@@ -593,10 +594,48 @@
         (lambda ()
           (set! matching-results? prev))))
 
+    ;; Return !nbdl.store possibly denoting an alternative
+    ;; iff all the operands are singletons.
+    (define (infer-visit-result Results)
+      (define MemberName
+        (let ((MN (value? !nbdl.member_name (car Results))))
+          (if MN
+            (get-member-name MN)
+            #f)))
+      (define ArgResults
+        (if MemberName
+          (cdr Results)
+          Results))
+      (define StoreAlts
+        (let ()
+          (define (DeclVal T)
+            (string-append "::nbdl::detail::declval<" T ">()"))
+          (define StoreAltResults
+            (map get-single-alternative ArgResults))
+          (if (every symbol? StoreAltResults)
+            (map DeclVal StoreAltResults)
+            #f)))
+      (define Expr
+        (cond
+          ((not StoreAlts)
+            #f)
+          (MemberName
+            (string-append (car StoreAlts) "." MemberName "("
+                           (string-join (cdr StoreAlts) ", ")
+                           ")"))
+          (else
+            (string-append (car StoreAlts) "("
+                           (string-join (cdr StoreAlts) ", ")
+                           ")"))))
+
+      (if Expr
+        (!nbdl.store (expr->type Expr))
+        (!nbdl.store)))
+
     (define (build-visit MatchingResults? Loc Results)
       (define ResultType
         (if MatchingResults?
-          (!nbdl.store)
+          (infer-visit-result Results)
           !nbdl.unit))
       (define VisitResult
         (result
