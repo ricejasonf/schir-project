@@ -25,26 +25,6 @@ translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op);
 }
 
 extern "C" {
-schir::ContextLocal nbdl_current_module;
-}
-
-// Create a builder that appends to the nbdl module.
-static std::optional<mlir::OpBuilder> getModuleBuilder(schir::Context& C) {
-  schir::Value V = nbdl_current_module.get(C);
-  mlir::Operation* Op = schir::cast<mlir::Operation>(V);
-  mlir::ModuleOp ModuleOp = schir::dyn_cast_or_null<mlir::ModuleOp>(Op);
-  if (!ModuleOp) {
-    schir::Error* E = C.CreateError(C.getLoc(),
-        "invalid current-nbdl-module", schir::Empty());
-    C.Raise(E);
-    return {};
-  }
-  mlir::OpBuilder Builder(ModuleOp);
-  Builder.setInsertionPointToEnd(ModuleOp.getBody());
-  return Builder;
-}
-
-extern "C" {
 // Create a function and call the thunk with a new builder
 // to insert into the function body.
 // _num_store_params_ N
@@ -55,10 +35,9 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
   if (Args.size() != 3)
     return C.RaiseError("invalid arity");
 
-  std::optional<mlir::OpBuilder> BuilderOpt = getModuleBuilder(C);
-  if (!BuilderOpt)
-    return;
-  mlir::OpBuilder Builder = BuilderOpt.value();
+  mlir::OpBuilder* Builder = mlir_helper::getCurrentBuilder(C);
+  if (!Builder)
+    return;  // error is already raised by getCurrentBuilder
 
   schir::SourceLocation Loc = Args[0].getSourceLocation();
   // Require a schir::Symbol so it has a source location.
@@ -77,24 +56,24 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
     return C.RaiseError("expecting function name (symbol literal)");
 
   mlir::Location MLoc = mlir::OpaqueLoc::get(Loc.getOpaqueEncoding(),
-                                             Builder.getContext());
+                                             Builder->getContext());
 
   // Create the function type.
   llvm::SmallVector<mlir::Type, 8> InputTypes;
   for (unsigned i = 0; i < static_cast<uint32_t>(NumParams); i++) {
-    mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext());
+    mlir::Type StoreT = nbdl_spec::StoreType::get(Builder->getContext());
     InputTypes.push_back(StoreT);
   }
 
   // Push the visitor fn argument.
-  mlir::Type StoreT = nbdl_spec::StoreType::get(Builder.getContext());
+  mlir::Type StoreT = nbdl_spec::StoreType::get(Builder->getContext());
   InputTypes.push_back(StoreT);
 
-  mlir::FunctionType FT = Builder.getFunctionType(InputTypes,
+  mlir::FunctionType FT = Builder->getFunctionType(InputTypes,
                                                   /*ResultTypes*/{});
 
   // Create the function.
-  auto FuncOp = mlir::func::FuncOp::create(Builder, MLoc, Name, FT);
+  auto FuncOp = mlir::func::FuncOp::create(*Builder, MLoc, Name, FT);
   FuncOp.addEntryBlock();
 
   schir::Value Thunk = C.CreateLambda([FuncOp](Context& C, ValueRefs) mutable {
@@ -112,9 +91,9 @@ void nbdl_spec_build_match_params(Context& C, ValueRefs Args) {
     C.Apply(Callback, BlockArgs);
   }, CaptureList{Callback});
 
-  // Call the thunk with a Builder at the entry point.
-  Builder = mlir::OpBuilder(FuncOp.getBody());
-  mlir_helper::WithBuilderImpl(C, Builder, Thunk);
+  // Call the thunk with a NewBuilder at the entry point.
+  auto NewBuilder = mlir::OpBuilder(FuncOp.getBody());
+  mlir_helper::WithBuilderImpl(C, NewBuilder, Thunk);
 }
 
 // Translate a nbdl dialect operation to C++.
@@ -195,17 +174,28 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
-// Initialize the nbdl_spec mlir module.
-void nbdl_spec_module_init(schir::Context& C, schir::ValueRefs) {
+// TODO Since top level ModuleOps are not owned by MLIRContext,
+//      we need to use std::shared_ptr here once support for it
+//      is added in Schir.
+// Return a new top level mlir module.
+void nbdl_spec_create_top_module(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef Name = Args.front().getStringRef();
+  if (Name.empty())
+    return C.RaiseError("module name should be non-empty string-like: {}",
+                        Args.front());
+
+  // Register the nbdl mlir dialect.
+  // This could be its own function but why pollute the symbol table.
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
 
   // Assume that the MLIRContext cleans up ModuleOps.
   mlir::OpBuilder Builder(C.MLIRContext.get());
   mlir::Location Loc = Builder.getUnknownLoc();
   mlir::ModuleOp ModuleOp
-    = mlir::ModuleOp::create(Builder, Loc, "nbdl_spec_module");
-  nbdl_current_module.set(C, ModuleOp.getOperation());
-  C.Cont();
+    = mlir::ModuleOp::create(Builder, Loc, Name);
+  C.Cont(ModuleOp.getOperation());
 }
 
 // Take an arbitrary set of string-like arguments that represent

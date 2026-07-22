@@ -17,8 +17,8 @@
       (load-builtin "nbdl_spec_translate_cpp"))
     (define close-previous-scope
       (load-builtin "nbdl_spec_close_previous_scope"))
-    (define module-init
-      (load-builtin "nbdl_spec_module_init"))
+    (define create-top-module
+      (load-builtin "nbdl_spec_create_top_module"))
     (define get-store-alts
       (load-builtin "nbdl_spec_get_store_alts"))
     (define !nbdl.store
@@ -26,12 +26,54 @@
     (define get-member-name
       (load-builtin "nbdl_get_member_name"))
 
-    ;; Initialize the mlir module.
-    (module-init)
-    (define-binding current-nbdl-module "nbdl_current_module")
+    ;; "Cpp" module will translate to c++ via translate-cpp.
+    ;; "Shader" module will lower to SPIRV.
+    (define module-cpp (create-top-module "nbdl_spec_module_cpp"))
+    (define module-shader (create-top-module "nbdl_spec_module_shader"))
+
+    ;; Nbdl dialect have to be loaded after it is registered
+    ;; (in call to create-top-module).
     (load-dialect "func")
     (load-dialect "schir")
     (load-dialect "nbdl")
+
+    ;; Create new builder context for inserting module level operations.
+    (define (with-module-builder ModuleOp Thunk)
+      (with-builder
+        (lambda ()
+          (at-block-end (entry-block ModuleOp))
+          (Thunk))))
+
+    ;; Thunk should return a new top level operation using the provided
+    ;; module builder. The new operation is immediately translated to
+    ;; that also translates to C++.
+    ;; This is done immediately to make the C++ type available for
+    ;; introspection when making subsequent operations. This is due
+    ;; to the way we allow interleaving C++ and Scheme, but in practice
+    ;; it might not be necessary to support this.
+    (define (top-level-cpp-op Thunk)
+      (with-module-builder
+        module-cpp
+        (lambda ()
+          (define TopLevelOp (Thunk))
+          ; The verify pass may also raise a more specific error.
+          (unless (verify TopLevelOp)
+            (error "operation failed verification: {}" TopLevelOp))
+          (translate-cpp TopLevelOp lexer-writer)
+          (flush-tokens)
+          TopLevelOp)))
+
+    ;; Similar to top-level-cpp-op except insert into a separate shader module
+    ;; to be lowered to SPIRV in a single lowering.
+    (define (top-level-shader-op Thunk)
+      (with-module-builder
+        module-shader
+        (lambda ()
+          (define TopLevelOp (Thunk))
+          ; The verify pass may also raise a more specific error.
+          (unless (verify TopLevelOp)
+            (error "operation failed verification: {}" TopLevelOp))
+          TopLevelOp)))
 
     ; FIXME change to "!nbdl.variant" once its in the compiler.
     (define !nbdl.variant (type "!nbdl.store")) ;"!nbdl.variant"))
@@ -242,49 +284,50 @@
               (result-types: !nbdl.variant)
               )))))
 
+    (define (define-store-aux Loc BodyThunk)
+      (define Parent (build-unit))
+      (define (ProcessBody BodyEl)
+        (set! Parent
+          (cond
+            ; StoreFunctional
+            ((procedure? BodyEl)
+             (BodyEl Parent))
+            ; Store
+            ((value? !nbdl.unit Parent)
+             BodyEl)
+            (else
+              (error "expecting store: {}" BodyEl)))))
+      (BodyThunk ProcessBody)
+      (create-op "nbdl.cont"
+                 (loc: Loc)
+                 (operands: Parent)
+                 (attributes:)
+                 (result-types:)))
+
     ; A StoreFunctional either a Store (operation) or a
     ;   map: ParentStore -> NewStore.
     ; These are created using syntax like `store` or `store-compose`.
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
-          (begin
-            (define Name 'Name)
-            (with-builder
-              (lambda ()
-                (at-block-end (entry-block current-nbdl-module))
-                (let ()
-                  (define Op
-                    (create-op "nbdl.define_store"
-                      (loc: (syntax-source-loc Name))
-                      (operands:)
-                      (attributes: ("sym_name" (string-attr Name)))
-                      (result-types:)
-                      (region: "body" ((InitParams : (!nbdl.store)) ...)
-                        (define Parent (build-unit))
-                        (define (ProcessBody BodyEl)
-                          (set! Parent
-                            (cond
-                              ; StoreFunctional
-                              ((procedure? BodyEl)
-                                (BodyEl Parent))
-                              ; Store
-                              ((value? !nbdl.unit Parent)
-                                 BodyEl)
-                              (else
-                                (error "expecting store: {}" BodyEl)))))
-                        (ProcessBody StoreFunctionalN) ...
-                        (create-op "nbdl.cont"
-                          (loc: (syntax-source-loc Name))
-                          (operands: Parent)
-                          (attributes:)
-                          (result-types:))
-                        )))
-                  (unless (verify Op)
-                    (error "operation failed verification: {}" Op))
-                  (translate-cpp Op lexer-writer)
-                  (flush-tokens)
-                  Op)))))))
+         (begin
+           (define Name 'Name)
+           (top-level-cpp-op
+             (lambda ()
+               (define Loc (syntax-source-loc Name))
+               (create-op
+                 "nbdl.define_store"
+                 (loc: Loc)
+                 (operands:)
+                 (attributes: ("sym_name" (string-attr Name)))
+                 (result-types:)
+                 (region: "body" ((InitParams : (!nbdl.store)) ...)
+                          (define-store-aux
+                            Loc
+                            (lambda (ProcessBody)
+                              ;; Ensure nonempty lambda.
+                              (ProcessBody StoreFunctionalN) ... #t)
+                          )))))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -325,21 +368,18 @@
         ((match-params-fn name (stores ... fn) body ...)
          (begin
            (define name 'name)
-           (let ((FuncOp
-                  (%build-match-params
-                    'name
-                    (length '(stores ...))
-                    (lambda (stores ... %FnVal)
-                      (define Loc (source-loc name))
-                      (define Fn
-                        (%match-params-resolver Loc %FnVal))
-                      ((lambda (fn) body ...) Fn)
-                      ))))
-              (unless (verify FuncOp)
-                (error "verification failed: {0} {1}" 'name FuncOp))
-              (translate-cpp FuncOp lexer-writer)
-              (flush-tokens)
-              FuncOp)))))
+           (top-level-cpp-op
+             (lambda ()
+               (%build-match-params
+                 'name
+                 (length '(stores ...))
+                 (lambda (stores ... %FnVal)
+                   (define Loc (source-loc name))
+                   (define Fn
+                     (%match-params-resolver Loc %FnVal))
+                   ((lambda (fn) body ...) Fn)
+                   ))))
+           ))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
@@ -874,19 +914,19 @@
     ; FIXME Make this dump to error output.
     (define (dump-cpp name)
       (define Op
-        (module-lookup current-nbdl-module name))
+        (module-lookup module-cpp name))
       (translate-cpp Op)
       (flush-tokens)
       (newline))
 
     (define (dump-op name)
       (define Op
-        (module-lookup current-nbdl-module name))
+        (module-lookup module-cpp name))
       (dump Op)
       (newline))
 
     (define (dump-nbdl-module)
-      (dump current-nbdl-module))
+      (dump module-cpp))
 
   ) ; end of... begin
   (export

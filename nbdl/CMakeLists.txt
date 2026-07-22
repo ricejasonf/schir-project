@@ -7,6 +7,7 @@ if (DEFINED SCHIR_ROOT AND NOT DEFINED Schir_DIR)
 endif()
 find_package(Schir REQUIRED CONFIG)
 set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_C_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang)
 set(CMAKE_CXX_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang++)
 
 add_compile_options(-fplugin=${SCHIR_CLANG_PLUGIN_FILE}
@@ -155,6 +156,7 @@ add_subdirectory(example/tiles)
 add_subdirectory(example/pipes)
 add_subdirectory(include/nbdl ${CMAKE_BINARY_DIR}/include/nbdl)
 #add_subdirectory(metabench)
+add_subdirectory(cmake/modules)
 
 install(FILES include/nbdl.hpp  DESTINATION include)
 install(DIRECTORY include/nbdl  DESTINATION include)

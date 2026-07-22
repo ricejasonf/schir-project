@@ -1,0 +1,12 @@
+# This CMake config template is used for building against
+# a nbdl and schir-project build tree instead of a system installed
+# version.
+
+if (NOT DEFINED SCHIR_ROOT)
+  set(SCHIR_ROOT "@SCHIR_ROOT@")
+endif()
+
+set(NBDL_LIB_DIR @CMAKE_BINARY_DIR@/lib)
+set(NBDL_INCLUDE_DIRS
+  @CMAKE_SOURCE_DIR@/nbdl/include
+  @CMAKE_BINARY_DIR@/include)
