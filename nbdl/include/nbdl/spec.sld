@@ -789,7 +789,7 @@
     ;;    (<cpp-typename> => proc) or
     ;;    (else => proc)
     ;;   where proc is a unary lambda receiving the matched store.
-    ;; - All Types should not have qualifiers.
+    ;; - All Types should not have cvref qualifiers.
     (define-syntax match
       (syntax-rules (else => store: key:)
         ((match PathSpec

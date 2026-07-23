@@ -55,8 +55,25 @@
          (define varN
            (call-with-values (lambda () expr)
                              list)))))
+    (define-syntax assert
+      (syntax-rules ()
+        ((assert Cond ErrorNoteN ...)
+         (unless Cond
+           (error "assertion failed: {}"
+                  (quote Cond)
+                  ErrorNoteN ...)))))
+
+    (define-syntax assert-equal
+      (syntax-rules ()
+        ((assert-equal A B)
+         (let ((A_val A)
+               (B_val B))
+           (assert (equal? A_val B_val)
+             (error-note "{} does not equal {}"
+                         A_val B_val))))))
     ) ; end of begin
   (export
+    assert assert-equal
     define
     define-syntax
     define-values
@@ -101,6 +118,7 @@
     equal?
     eqv?
     error
+    error-note
     length
     list make-list list-set! list-ref
     vector make-vector vector-length vector-set!  vector-ref

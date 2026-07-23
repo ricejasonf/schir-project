@@ -27,6 +27,7 @@ using schir::ContextLocal;
 using schir_clang::DiagReport;
 using schir_clang::LexerWriter;
 using schir_clang::ParseExpression;
+using schir_clang::ParseTypeName;
 using schir_clang::RunTemplateProbe;
 using schir_clang::getSourceLocation;
 
@@ -38,6 +39,7 @@ ContextLocal write_lexer;
 ContextLocal lexer_writer;
 ContextLocal expr_eval;
 ContextLocal expr_type;
+ContextLocal parse_type;
 ContextLocal template_probe;
 ContextLocal flush_tokens;
 
@@ -50,7 +52,7 @@ void LoadModule(schir::Context& Context) {
     {"write-lexer", ::write_lexer.get(Context)},
     {"lexer-writer", ::lexer_writer.get(Context)},
     {"expr-eval", ::expr_eval.get(Context)},
-    {"expr->type", ::expr_type.get(Context)},
+    {"parse-type", ::parse_type.get(Context)},
     {"template-probe", ::template_probe.get(Context)},
     {"flush-tokens", ::flush_tokens.get(Context)}
   });
@@ -284,6 +286,35 @@ public:
       C.Cont(Result);
     };
 
+    // Parse a typename in the current context and return a namespace
+    // qualified typename (as a string-like.)
+    auto parse_type = [&](schir::Context& C, schir::ValueRefs Args) {
+      if (Args.size() != 1)
+        return C.RaiseError("invalid arity");
+
+      schir::Value Arg = Args.front();
+      llvm::StringRef TypeStr = Arg.getStringRef();
+      if (TypeStr.empty())
+        return C.RaiseError("expecting nonempty string-like", Arg);
+
+      schir::SourceLocation Loc = Arg.getSourceLocation();
+      if (!Loc.isValid())
+        Loc = C.getLoc();
+
+      clang::TypeResult TypeResult = ParseTypeName(P, HS, LexerSpellings,
+                                                   Loc, TypeStr);
+      if (TypeResult.isInvalid())
+        return C.RaiseError("clang type parsing failed");
+
+      clang::QualType QT = TypeResult.get().get();
+      if (QT.isNull())
+        return C.RaiseError("clang expression type failed");
+
+      std::string ResultStr = schir_clang::TypeToString(QT);
+      schir::Value Result = C.CreateSymbol(ResultStr);
+      C.Cont(Result);
+    };
+
     // (template-probe loc "my::foo"
     //  """
     //    nbdl::match(std::declval<SomeType>(), [](auto const& arg) {
@@ -350,6 +381,7 @@ public:
     ::hello_world.set(Context, Context.CreateLambda(hello_world));
     ::expr_eval.set(Context, Context.CreateLambda(expr_eval));
     ::expr_type.set(Context, Context.CreateLambda(expr_type));
+    ::parse_type.set(Context, Context.CreateLambda(parse_type));
     ::template_probe.set(Context, Context.CreateLambda(template_probe));
     ::write_lexer.set(Context,
         Context.CreateLambda([&](schir::Context& C,
