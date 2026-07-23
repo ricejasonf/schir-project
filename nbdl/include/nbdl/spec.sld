@@ -218,6 +218,21 @@
         (result-types:)
         ))
 
+    (define (build-store Loc Typename InitArgLocs InitArgs)
+      (define Operands
+        (map maybe-build-expr
+             InitArgLocs
+             InitArgs))
+      (result
+        (create-op
+          "nbdl.store"
+          (loc: Loc)
+          (operands: Operands)
+          ; TODO Remove the name attribute.
+          (attributes: ("name" (flat-symbolref-attr Typename)))
+          (result-types: (!nbdl.store (parse-type Typename)))
+          )))
+
     ; FIXME This inserts a mlir.operation which means it has to
     ;       be invoked in the right context to insert properly.
     ;       Consider making a StoreSpec or something to prevent
@@ -227,15 +242,11 @@
         ((store Typename)
          (store Typename (init-args:)))
         ((store Typename (init-args: InitArgs ...))
-         (result
-           (create-op "nbdl.store"
-             (loc: (syntax-source-loc Typename))
-             (operands: (map maybe-build-expr
-                             '((syntax-source-loc InitArgs) ...)
-                             (list InitArgs ...)))
-             (attributes: ("name" (flat-symbolref-attr Typename)))
-             (result-types: (!nbdl.store))
-             )))))
+         (build-store
+           (syntax-source-loc Typename)
+           Typename
+           (list (syntax-source-loc InitArgs) ...)
+           (list InitArgs ...)))))
 
     (define-syntax store-compose
       (syntax-rules ()

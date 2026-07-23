@@ -52,6 +52,7 @@ void LoadModule(schir::Context& Context) {
     {"write-lexer", ::write_lexer.get(Context)},
     {"lexer-writer", ::lexer_writer.get(Context)},
     {"expr-eval", ::expr_eval.get(Context)},
+    {"expr->type", ::expr_type.get(Context)},
     {"parse-type", ::parse_type.get(Context)},
     {"template-probe", ::template_probe.get(Context)},
     {"flush-tokens", ::flush_tokens.get(Context)}
