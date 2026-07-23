@@ -39,6 +39,7 @@ schir::ContextLocal   current_builder;
 schir::ContextLocal   is_pass_debug_mode_val;
 schir::ExternSyntax<> create_op;
 schir::ExternFunction create_op_impl;
+schir::ExternFunction create_top_module;
 schir::ExternFunction get_region;
 schir::ExternFunction entry_block;
 schir::ExternFunction add_argument;
@@ -204,6 +205,27 @@ void create_op_impl(Context& C, ValueRefs Args) {
   // Create the operation using the Builder
   mlir::Operation* Op = Builder->create(OpState);
   C.Cont(schir::Value(Op));
+}
+
+// TODO Since top level ModuleOps are not owned by MLIRContext,
+//      we need to use std::shared_ptr here once support for it
+//      is added in Schir. (I think.)
+// Return a new top level mlir module.
+// This is required to properly manage the lifetime of the created ModuleOp.
+void create_top_module(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef Name = Args.front().getStringRef();
+  if (Name.empty())
+    return C.RaiseError("module name should be non-empty string-like: {}",
+                        Args.front());
+
+  // Assume that the MLIRContext cleans up ModuleOps.
+  mlir::OpBuilder Builder(C.MLIRContext.get());
+  mlir::Location Loc = Builder.getUnknownLoc();
+  mlir::ModuleOp ModuleOp
+    = mlir::ModuleOp::create(Builder, Loc, Name);
+  C.Cont(ModuleOp.getOperation());
 }
 
 // Create operation syntax. Argument are
@@ -947,6 +969,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
 
   SCHIR_MLIR_VAR(create_op) = schir::mlir_bind::create_op;
   SCHIR_MLIR_VAR(create_op_impl) = schir::mlir_bind::create_op_impl;
+  SCHIR_MLIR_VAR(create_top_module) = schir::mlir_bind::create_top_module;
   SCHIR_MLIR_VAR(get_region) = schir::mlir_bind::get_region;
   SCHIR_MLIR_VAR(entry_block) = schir::mlir_bind::entry_block;
   SCHIR_MLIR_VAR(add_argument) = schir::mlir_bind::add_argument;
@@ -986,6 +1009,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
   schir::initModuleNames(C, SCHIR_MLIR_LIB_STR, {
     {"old-create-op", SCHIR_MLIR_VAR(create_op)},
     {"%create-op", SCHIR_MLIR_VAR(create_op_impl)},
+    {"create-top-module", SCHIR_MLIR_VAR(create_top_module)},
     {"current-builder", SCHIR_MLIR_VAR(current_builder).getBinding(C)},
     {"%is-pass-debug-mode",
                         SCHIR_MLIR_VAR(is_pass_debug_mode_val).getBinding(C)},

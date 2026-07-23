@@ -17,8 +17,8 @@
       (load-builtin "nbdl_spec_translate_cpp"))
     (define close-previous-scope
       (load-builtin "nbdl_spec_close_previous_scope"))
-    (define create-top-module
-      (load-builtin "nbdl_spec_create_top_module"))
+    (define register-nbdl-dialect
+      (load-builtin "nbdl_spec_register_nbdl_dialect"))
     (define get-store-alts
       (load-builtin "nbdl_spec_get_store_alts"))
     (define !nbdl.store
@@ -27,22 +27,12 @@
       (load-builtin "nbdl_get_member_name"))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
-    ;; "Shader" module will lower to SPIRV.
     (define module-cpp (create-top-module "nbdl_spec_module_cpp"))
-    (define module-shader (create-top-module "nbdl_spec_module_shader"))
 
-    ;; Nbdl dialect have to be loaded after it is registered
-    ;; (in call to create-top-module).
+    (register-nbdl-dialect)
     (load-dialect "func")
     (load-dialect "schir")
     (load-dialect "nbdl")
-
-    ;; Create new builder context for inserting module level operations.
-    (define (with-module-builder ModuleOp Thunk)
-      (with-builder
-        (lambda ()
-          (at-block-end (entry-block ModuleOp))
-          (Thunk))))
 
     ;; Thunk should return a new top level operation using the provided
     ;; module builder. The new operation is immediately translated to
@@ -61,18 +51,6 @@
             (error "operation failed verification: {}" TopLevelOp))
           (translate-cpp TopLevelOp lexer-writer)
           (flush-tokens)
-          TopLevelOp)))
-
-    ;; Similar to top-level-cpp-op except insert into a separate shader module
-    ;; to be lowered to SPIRV in a single lowering.
-    (define (top-level-shader-op Thunk)
-      (with-module-builder
-        module-shader
-        (lambda ()
-          (define TopLevelOp (Thunk))
-          ; The verify pass may also raise a more specific error.
-          (unless (verify TopLevelOp)
-            (error "operation failed verification: {}" TopLevelOp))
           TopLevelOp)))
 
     ; FIXME change to "!nbdl.variant" once its in the compiler.

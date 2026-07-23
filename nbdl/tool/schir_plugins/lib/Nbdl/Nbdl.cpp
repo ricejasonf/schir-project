@@ -174,28 +174,13 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
-// TODO Since top level ModuleOps are not owned by MLIRContext,
-//      we need to use std::shared_ptr here once support for it
-//      is added in Schir.
-// Return a new top level mlir module.
-void nbdl_spec_create_top_module(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 1)
+// Register the Nbdl MLIR dialect.
+void nbdl_spec_register_nbdl_dialect(schir::Context& C,
+                                     schir::ValueRefs Args) {
+  if (Args.size() != 0)
     return C.RaiseError("invalid arity");
-  llvm::StringRef Name = Args.front().getStringRef();
-  if (Name.empty())
-    return C.RaiseError("module name should be non-empty string-like: {}",
-                        Args.front());
-
-  // Register the nbdl mlir dialect.
-  // This could be its own function but why pollute the symbol table.
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
-
-  // Assume that the MLIRContext cleans up ModuleOps.
-  mlir::OpBuilder Builder(C.MLIRContext.get());
-  mlir::Location Loc = Builder.getUnknownLoc();
-  mlir::ModuleOp ModuleOp
-    = mlir::ModuleOp::create(Builder, Loc, Name);
-  C.Cont(ModuleOp.getOperation());
+  C.Cont();
 }
 
 // Take an arbitrary set of string-like arguments that represent
