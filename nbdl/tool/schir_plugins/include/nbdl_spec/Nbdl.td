@@ -38,46 +38,36 @@ def Nbdl_Unit : TypeDef<Nbdl_Dialect, "Unit", []> {
   }];
 }
 
-// We keep cpp_typename around for when
-// we want to go back to c++.
-// DEPRECATED
-class Nbdl_TypeBase<string name, string type_mnemonic,
-                    list<Trait> traits = []>
-  : TypeDef<Nbdl_Dialect, name, traits> {
-  let mnemonic = type_mnemonic;
+def Nbdl_Cpp : TypeDef<Nbdl_Dialect, "Cpp", []> {
+  let mnemonic = "cpp";
+  let description = [{
+    Represent a single C++ typename. The typename should
+    be fully namespace qualified.
+  }];
   let parameters = (ins StringRefParameter<>:$cpp_typename);
   let assemblyFormat = "`<` $cpp_typename `>`";
-}
-
-// DEPRECATED (I think)
-def Nbdl_Opaque : TypeDef<Nbdl_Dialect, "Opaque", []> {
-  let mnemonic = "opaque";
-  let description = [{
-    Represent an placeholder C++ type (typically `auto&&`).
-    Values of this type imply an immediate construction.
-    That is, it represents a run-time value in the context
-    where it appears (e.g. an argument to a function).
-  }];
 }
 
 def Nbdl_Store : TypeDef<Nbdl_Dialect, "Store", []> {
   let mnemonic = "store";
   let description = [{
     An object of store type represents a member of our state graph
-    potentially having multiple runtime alternatives listed as
-    C++ typenames. If the list of alternatives is empty, then the
-    set of alternatives is considered to be unknown.
+    potentially having multiple runtime alternatives.
+    If the list of alternatives is empty, then the set of alternatives
+    is considered to be unknown.
+
+    See Empty for explicitly zero alternatives.
   }];
 
   // Array of strings that are each a c++ typename.
-  let parameters = (ins OptionalArrayRefParameter<"mlir::StringAttr">:$alts);
+  let parameters = (ins OptionalArrayRefParameter<"mlir::TypeAttr">:$alts);
   let assemblyFormat = "(`<` $alts^ `>`)?";
 
   let skipDefaultBuilders = 1;
   let builders = [
-    TypeBuilder<(ins "llvm::ArrayRef<mlir::StringAttr>":$Strings)>,
+    TypeBuilder<(ins "llvm::ArrayRef<mlir::TypeAttr>":$TypeAttrs)>,
     TypeBuilder<(ins), [{
-      return Base::get($_ctxt, llvm::ArrayRef<mlir::StringAttr>());
+      return Base::get($_ctxt, llvm::ArrayRef<mlir::TypeAttr>());
     }]>
   ];
 }
@@ -90,30 +80,20 @@ def Nbdl_Tag : TypeDef<Nbdl_Dialect, "Tag", []> {
   }];
 }
 
-def Nbdl_Variant : TypeDef<Nbdl_Dialect, "Variant", []> {
-  let mnemonic = "variant";
-  let description = [{
-    A type satisfying the nbdl::Variant concept
-  }];
-
-/*
-  // TODO Eventually it would be nice to specify the alternatives
-  //      Also some parameterization for knowing the key => 
-  let parameters = (ins Variadic<AnyTypeOf<[Nbdl_Store, Nbdl_Tag,
-                                            Nbdl_Unit>:$alts);
-  let assemblyFormat = "`<`$alts`>`";
-*/
-}
-
 def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "MemberName"> {
   let mnemonic = "member_name";
   let description = [{
-    Represent a string that is a valid C++ identifier.
+    Represent member name as a key.
+    For C++ targets, this should be a valid C++ identifier.
     The intended primary use case is to specify a member of a Struct.
+
+    TODO
+    Since member names should exist in the Static Context, then this
+    should have the name as an attribute instead of an operand to the
+    operation (I think.)
   }];
 }
 
-// TODO Eventually add more specific constraints like variant<...>.
 def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
                            Nbdl_Unit,
                            Nbdl_Tag]>;
@@ -135,7 +115,9 @@ def Nbdl_LiteralOp : Nbdl_Op<"literal", []> {
   let description = [{
     Represent a literal such as an int or a string
     that is liftable to some compile-time object
-    in C++. Only integers and strings are supported.
+    possibly in C++. Only integers and strings are supported.
+
+    TODO Support Floats.
   }];
 
   let arguments = (ins AnyAttrOf<[I32Attr, StrAttr]>:$value);
@@ -233,6 +215,8 @@ def Nbdl_StoreComposeOp : Nbdl_Op<"store_compose", []> {
 
     (Writing logic to shadow a subset of key
      values is better implemented in C++.)
+
+     TODO Support proper shadowing.
   }];
 
   let arguments = (ins
@@ -258,12 +242,11 @@ def Nbdl_VariantOp : Nbdl_Op<"variant", []> {
 
 def Nbdl_DefineStoreOp : Nbdl_Op<"define_store", [Symbol, IsolatedFromAbove]> {
   let description = [{
-    Define a store object, and expose its interface (type) to the user.
+    Define a store object, and expose its interface to the user.
 
-    If no region exists, then the operation is considered external
-    and should refer to an existing C++ type that satisfies nbdl::Store.
-    Otherwise, a new C++ struct type is created. The symbol should be a
-    fully namespace qualified C++ type name.
+    If no region exists, then the operation is considered external.
+    In C++, a struct type or nbdl::strong_alias is created.
+    Also in C++, the symbol should be a fully namespace qualified  ++ type name.
 
     Use ContOp to terminate and finalize the object.
     If ContOp receives the body argument directly then the
@@ -329,6 +312,8 @@ def Nbdl_StoreOp : Nbdl_Op<"store", []> {
     Construct a store object. The name should be a
     symbol that refers to a DefineStoreOp which can
     be external (ie just the name of C++ type.)
+
+    TODO $name should just be a part of the result type.
   }];
 
   let arguments = (ins

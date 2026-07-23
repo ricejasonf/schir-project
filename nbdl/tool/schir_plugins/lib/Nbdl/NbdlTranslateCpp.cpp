@@ -285,11 +285,7 @@ public:
     } else {
       // Handle mlir::BlockArgument.
       // Arguments cannot be `decltype(auto)`
-      if (auto OpaqueType = dyn_cast<nbdl_spec::OpaqueType>(Val.getType())) {
-        OS << "auto&&";
-      } else {
-        return SetErrorV("unsupported type for argument", Val);
-      }
+      return SetErrorV("unsupported type for argument", Val);
     }
   }
 
@@ -522,8 +518,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     mlir::BlockArgument& Arg = Body.getArguments().front();
     auto ST = dyn_cast<nbdl_spec::StoreType>(Arg.getType());
     llvm::StringRef TypeStr;
-    if (ST.getAlts().size() == 1)
-      TypeStr = llvm::StringRef(ST.getAlts().front());
+    if (ST.getAlts().size() == 1) {
+      mlir::Type T = ST.getAlts().front().getValue();
+      if (auto CppType = dyn_cast<nbdl_spec::CppType>(T))
+        TypeStr = llvm::StringRef(CppType.getCppTypename());
+    }
 
     ValueMapScope Scope(ValueMap);
     OS << "[&]";

@@ -187,16 +187,23 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
 // C++ typenames to create a !nbdl.store<typenames...>.
 void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   mlir::MLIRContext* Ctx = C.MLIRContext.get();
-  llvm::SmallVector<mlir::StringAttr, 8> TypeNames;
+  llvm::SmallVector<mlir::TypeAttr, 8> TypeAttrs;
   for (schir::Value Arg : Args) {
     llvm::StringRef Str = Arg.getStringRef();
-    if (Str.empty())
-      return C.RaiseError("expecting a nonempty string-like");
-    auto StringAttr = mlir::StringAttr::get(Ctx, Str);
-    TypeNames.push_back(StringAttr);
+    mlir::Type Type;
+    if (!Str.empty()) {
+     // return C.RaiseError("expecting a nonempty string-like");
+      auto StringAttr = mlir::StringAttr::get(Ctx, Str);
+      Type = nbdl_spec::CppType::get(Ctx, Str);
+    } else if (auto T = schir::any_cast<mlir::Type>(Arg)) {
+      Type = T;
+    } else {
+      C.RaiseError("expecting a mlir.type or string-like: {}", Arg);
+    }
+    TypeAttrs.push_back(mlir::TypeAttr::get(Type));
   }
 
-  mlir::Type StoreT = nbdl_spec::StoreType::get(Ctx, TypeNames);
+  mlir::Type StoreT = nbdl_spec::StoreType::get(Ctx, TypeAttrs);
   schir::Value Result = C.CreateAny<mlir::Type>(StoreT);
   C.Cont(Result);
 }
@@ -222,8 +229,17 @@ void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
     return C.Cont(schir::Bool(false));
 
   llvm::SmallVector<schir::Value, 8> Results;
-  for (mlir::StringAttr SA : ST.getAlts())
-    Results.push_back(C.CreateSymbol(llvm::StringRef(SA)));
+  for (mlir::TypeAttr SA : ST.getAlts()) {
+    mlir::Type Type = SA.getValue();
+    if (auto CppType = dyn_cast<nbdl_spec::CppType>(Type)) {
+      // Map CppType back to Symbol.
+      // TODO Maybe we do not do this.
+      llvm::StringRef Name = CppType.getCppTypename();
+      Results.push_back(C.CreateSymbol(Name));
+    } else {
+      Results.push_back(C.CreateAny<mlir::Type>(Type));
+    }
+  }
 
   if (Results.empty())
     return C.Cont(schir::Bool(false));

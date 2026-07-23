@@ -40,14 +40,16 @@ void nbdl_spec::NbdlDialect::initialize() {
 
 nbdl_spec::StoreType
 nbdl_spec::StoreType::get(mlir::MLIRContext* Ctx,
-                          llvm::ArrayRef<mlir::StringAttr> StrAttrsRef) {
-  llvm::SmallVector<mlir::StringAttr, 8> StrAttrs(StrAttrsRef);
+                          llvm::ArrayRef<mlir::TypeAttr> TypeAttrsRef) {
+#if 0 // How to sort these now?
+  llvm::SmallVector<mlir::TypeAttr, 8> TypeAttrs(TypeAttrsRef);
   // Sort and unique the inputs lexicographically.
-  llvm::sort(StrAttrs, [](auto const& A, auto const& B) {
+  llvm::sort(TypeAttrs, [](auto const& A, auto const& B) {
       return llvm::StringRef(A) < llvm::StringRef(B);
     });
-  StrAttrsRef = llvm::ArrayRef(StrAttrs.begin(), llvm::unique(StrAttrs));
-  return Base::get(Ctx, StrAttrsRef);
+  TypeAttrsRef = llvm::ArrayRef(TypeAttrs.begin(), llvm::unique(TypeAttrs));
+#endif
+  return Base::get(Ctx, TypeAttrsRef);
 }
 
 void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
