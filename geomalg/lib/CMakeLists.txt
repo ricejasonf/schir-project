@@ -5,10 +5,10 @@ set(GEOMALG_SOURCE_GEN_DEPS
   GeomalgPassesIncGen)
 
 set(GEOMALG_SOURCE_FILES
-  Type.cpp;
-  Dialect.cpp;
-  Passes.cpp;
-  Lower.cpp)
+  Geomalg/Type.cpp;
+  Geomalg/Dialect.cpp;
+  Geomalg/Passes.cpp;
+  Geomalg/Lower.cpp)
 
 add_library(GeomalgDialect ${GEOMALG_SOURCE_FILES})
 target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)

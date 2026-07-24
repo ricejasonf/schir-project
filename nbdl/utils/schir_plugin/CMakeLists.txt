@@ -5,4 +5,4 @@ include_directories(include)
 
 # Nbdl Dialect and heavy-scheme Plugin
 add_subdirectory(include/nbdl_spec ${CMAKE_BINARY_DIR}/include/nbdl_spec)
-add_subdirectory(lib/Nbdl)
+add_subdirectory(lib)

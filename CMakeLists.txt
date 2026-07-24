@@ -38,7 +38,7 @@ endif()
 
 add_subdirectory(schir)
 add_subdirectory(geomalg)
-add_subdirectory(nbdl/tool/schir_plugins)
+add_subdirectory(nbdl/utils/schir_plugin)
 
 add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 # TODO Make a dynamic list of check targets.

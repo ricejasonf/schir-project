@@ -27,7 +27,7 @@ enable_testing()
 # using the system compiler.
 # (Just manually build this target when doing local development.)
 ExternalProject_Add(external.schir_plugin
-  SOURCE_DIR ${CMAKE_SOURCE_DIR}/tool/schir_plugins
+  SOURCE_DIR ${CMAKE_SOURCE_DIR}/utils/schir_plugin
   CMAKE_ARGS "-DSchir_DIR=${Schir_DIR}"
              "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
              "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
@@ -41,8 +41,8 @@ add_custom_target(check
 )
 
 #TODO require
-set(dom_test_dir ${CMAKE_BINARY_DIR}/tool/dom_test)
-add_subdirectory(tool/dom_test)
+set(dom_test_dir ${CMAKE_BINARY_DIR}/utils/dom_test)
+add_subdirectory(utils/dom_test)
 if (EMSCRIPTEN)
   set(NBDL_TEST_COMMAND "node")
 endif(EMSCRIPTEN)
@@ -92,7 +92,7 @@ function(nbdl_add_dom_test name_)
   endif(NOT EMSCRIPTEN)
   add_executable("${name}" EXCLUDE_FROM_ALL ${ARGN})
   add_dependencies(check "${name}")
-  add_dependencies(${name} tool.dom_test)
+  add_dependencies(${name} utils.dom_test)
   get_target_property(link_flags_ ${name} LINK_FLAGS)
   set_target_properties(${name} PROPERTIES LINK_FLAGS
     "${link_flags} -lembind -s ASSERTIONS=1 -s ENVIRONMENT=web,node "
@@ -104,7 +104,7 @@ function(nbdl_add_dom_test name_)
   )
   add_custom_target(run.${name}
     COMMAND ${NBDL_TEST_COMMAND} ${dom_test_dir}/index.js ./${name}.js
-    DEPENDS ${name} tool.dom_test
+    DEPENDS ${name} utils.dom_test
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     COMMENT "Build and run test: ${name}"
   )
