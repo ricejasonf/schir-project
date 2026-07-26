@@ -52,6 +52,7 @@ schir::ExternFunction block_op;
 schir::ExternFunction set_insertion_point;
 schir::ExternFunction set_insertion_after;
 schir::ExternFunction type;
+schir::ExternFunction get_type;
 schir::ExternFunction function_type_impl;
 schir::ExternFunction function_type_results;
 schir::ExternFunction function_type_inputs;
@@ -586,11 +587,25 @@ void set_insertion_after(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
-// Get a type by parsing a string.
+// Get the type of a mlir.value.
+void get_type(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+
+  auto V = schir::any_cast<mlir::Value>(Args.front());
+
+  if (!V)
+    return C.RaiseError("expecting mlir.value");
+
+  C.Cont(C.CreateAny<mlir::Type>(V.getType()));
+}
+
+// Get a type by parsing a string or get the type of a mlir.value.
 // (type _string_)
 void type(Context& C, ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
+
   mlir::MLIRContext* MLIRContext = getCurrentContext(C);
   llvm::StringRef TypeStr = Args[0].getStringRef();
   if (TypeStr.empty())
@@ -983,6 +998,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   SCHIR_MLIR_VAR(set_insertion_point) = schir::mlir_bind::set_insertion_point;
   SCHIR_MLIR_VAR(set_insertion_after) = schir::mlir_bind::set_insertion_after;
   SCHIR_MLIR_VAR(type) = schir::mlir_bind::type;
+  SCHIR_MLIR_VAR(get_type) = schir::mlir_bind::get_type;
   SCHIR_MLIR_VAR(function_type_impl) = schir::mlir_bind::function_type_impl;
   SCHIR_MLIR_VAR(function_type_results)
                                 = schir::mlir_bind::function_type_results;
@@ -1026,6 +1042,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"set-insertion-point", SCHIR_MLIR_VAR(set_insertion_point)},
     {"set-insertion-after", SCHIR_MLIR_VAR(set_insertion_after)},
     {"type", SCHIR_MLIR_VAR(type)},
+    {"get-type", SCHIR_MLIR_VAR(get_type)},
     {"%function-type", SCHIR_MLIR_VAR(function_type_impl)},
     {"function-type-results", SCHIR_MLIR_VAR(function_type_results)},
     {"function-type-inputs", SCHIR_MLIR_VAR(function_type_inputs)},

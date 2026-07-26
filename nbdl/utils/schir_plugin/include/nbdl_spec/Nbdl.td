@@ -242,13 +242,14 @@ def Nbdl_VariantOp : Nbdl_Op<"variant", []> {
 
 def Nbdl_DefineStoreOp : Nbdl_Op<"define_store", [Symbol, IsolatedFromAbove]> {
   let description = [{
-    Define a store object, and expose its interface to the user.
+    Define a parameterized store object, and expose its interface to the user
+    (as a type.)
 
     If no region exists, then the operation is considered external.
     In C++, a struct type or nbdl::strong_alias is created.
-    Also in C++, the symbol should be a fully namespace qualified  ++ type name.
+    Also in C++, the symbol should be a fully namespace qualified C++ type name.
 
-    Use ContOp to terminate and finalize the object.
+    Use ContOp to terminate and finalized the object.
     If ContOp receives the body argument directly then the
     created type is a Tag.
   }];

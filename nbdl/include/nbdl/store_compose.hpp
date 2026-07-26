@@ -26,6 +26,7 @@ namespace nbdl
     struct store_composite_tag { };
 
     template <typename Key, typename Left, typename Right>
+      requires std::is_empty_v<Key>
     struct store_composite_t
     {
       using hana_tag = store_composite_tag<Key>;

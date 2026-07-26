@@ -22,6 +22,7 @@
     set-insertion-point
     set-insertion-after
     type
+    get-type
     %function-type
     function-type-results
     function-type-inputs

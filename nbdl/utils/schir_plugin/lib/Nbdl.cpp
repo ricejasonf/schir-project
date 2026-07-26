@@ -192,7 +192,6 @@ void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
     llvm::StringRef Str = Arg.getStringRef();
     mlir::Type Type;
     if (!Str.empty()) {
-     // return C.RaiseError("expecting a nonempty string-like");
       auto StringAttr = mlir::StringAttr::get(Ctx, Str);
       Type = nbdl_spec::CppType::get(Ctx, Str);
     } else if (auto T = schir::any_cast<mlir::Type>(Arg)) {

@@ -264,7 +264,9 @@ private:
     }
 
     if (!IsValidArity)
-      return SetError(schir::SourceLocation(), "invalid arity");
+      return SetError(schir::SourceLocation(), "invalid arity",
+          Context.CreateError(getSourceLocation(F.getLoc()),
+                              "function declared here", schir::Undefined()));
 
     BlockItrTy Itr = Body.begin();
     while (Itr != BlockItrTy())

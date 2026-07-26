@@ -819,6 +819,7 @@ public:
 }  // end namespace
 
 namespace nbdl_spec {
+// Return [ErrorMessage, SourceLoc, IrritantOp]
 std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
 translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
   if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op)) {

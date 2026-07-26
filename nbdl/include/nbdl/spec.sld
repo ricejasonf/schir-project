@@ -53,8 +53,6 @@
           (flush-tokens)
           TopLevelOp)))
 
-    ; FIXME change to "!nbdl.variant" once its in the compiler.
-    (define !nbdl.variant (type "!nbdl.store")) ;"!nbdl.variant"))
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define i32 (type "i32"))
@@ -109,11 +107,44 @@
     ;; (e.g. arguments to visit)
     (define-syntax %expr
       (syntax-rules ()
+        ;; Thunk: (Loc Fn) -> Store
         ((%expr Loc Thunk)
          (list '%nbdl-expr Loc Thunk))))
 
+    ;; Handle the typical %expr use case of handling a single expr.
+    (define-syntax %single-expr
+      (syntax-rules ()
+        ((%single-expr Input)
+         (%single-expr (syntax-source-loc Input) Input))
+        ((%single-expr Loc Input)
+         (%expr Loc
+                (lambda (Loc_ Fn)
+                  (%match-expr Loc_ Input Fn))))))
+
+    ;; Handle single expr that can include member names.
+    (define-syntax %single-expr+
+      (syntax-rules ()
+        ((%single-expr+ Input)
+         (%single-expr+ (syntax-source-loc Input) Input))
+        ((%single-expr+ Loc Input)
+         (%expr Loc
+                (lambda (Loc_ Fn)
+                  (%match-expr+ Loc_ Input Fn))))))
+
+
     (define (expr? Arg)
       (and (pair? Arg) (eqv? '%nbdl-expr (car Arg))))
+
+    ;; Invoke the Thunk created with %expr
+    (define (%invoke-expr Expr Fn)
+      (define-values (Loc Thunk)
+        (if (and (pair? Expr)
+                 (eq? '%nbdl-expr (car Expr)))
+          (values
+            (cadr Expr)
+            (car (cddr Expr)))
+          (error "expecting %expr: {}" Expr)))
+      (Thunk Loc Fn))
 
     ; Maybe lift to a LiteralOp or ConstexprOp.
     (define (maybe-build-expr Loc Arg)
@@ -136,16 +167,14 @@
         (build-member-name Loc Arg)
         (maybe-build-expr Loc Arg)))
 
-    (define (%match-expr-impl Expr Fn)
+    (define (%match-expr-aux Expr Fn)
       (cond
         ((value? Expr)
          (Fn Expr))
         ((procedure? Expr)
          (Expr Fn))
-        ((expr? Expr) ;; FIXME this go here?
-         (let ((Loc (cadr Expr))
-               (Thunk (car (cddr Expr))))
-           (Thunk Loc Fn)))
+        ((expr? Expr)
+          (%invoke-expr Expr Fn))
         ((path? Expr)
          (%match-path-spec Expr Fn))
         (else (error "unable to resolve value: {}" Expr)))
@@ -154,11 +183,11 @@
 
     (define (%match-expr Loc ExprArg Fn)
       (define Expr (maybe-build-expr Loc ExprArg))
-      (%match-expr-impl Expr Fn))
+      (%match-expr-aux Expr Fn))
 
     (define (%match-expr+ Loc ExprArg Fn)
       (define Expr (maybe-build-expr+ Loc ExprArg))
-      (%match-expr-impl Expr Fn))
+      (%match-expr-aux Expr Fn))
 
     (define (build-unit)
       (result
@@ -218,80 +247,120 @@
         (result-types:)
         ))
 
-    (define (build-store Loc Typename InitArgLocs InitArgs)
-      (define Operands
-        (map maybe-build-expr
-             InitArgLocs
-             InitArgs))
+    (define (build-store Loc Typename InitArgs)
       (result
         (create-op
           "nbdl.store"
           (loc: Loc)
-          (operands: Operands)
-          ; TODO Remove the name attribute.
+          (operands: InitArgs)
+          ; TODO Mangle Typename
           (attributes: ("name" (flat-symbolref-attr Typename)))
           (result-types: (!nbdl.store (parse-type Typename)))
           )))
 
-    ; FIXME This inserts a mlir.operation which means it has to
-    ;       be invoked in the right context to insert properly.
-    ;       Consider making a StoreSpec or something to prevent
-    ;       this potentially surprising requirement.
+    (define (store-aux Loc Typename InitArgExprs)
+      (%expr
+        Loc
+        (lambda (Loc Fn)
+          (%match-results
+            InitArgExprs
+            (lambda (InitArgs)
+              (Fn (build-store Loc Typename InitArgs)))))))
+
     (define-syntax store
       (syntax-rules (init-args:)
         ((store Typename)
          (store Typename (init-args:)))
-        ((store Typename (init-args: InitArgs ...))
-         (build-store
+        ((store Typename (init-args: InitArgN ...))
+         (store-aux
            (syntax-source-loc Typename)
            Typename
-           (list (syntax-source-loc InitArgs) ...)
-           (list InitArgs ...)))))
+           (list (%single-expr InitArgN) ...)))))
+
+    (define (build-store-compose Loc Key Store ParentStore)
+      (define KeyVal
+        (build-store-key Loc Key))
+      (result
+        (create-op
+          "nbdl.store_compose"
+          (loc: Loc)
+          (operands: KeyVal Store ParentStore)
+          (attributes:)
+          (result-types: (!nbdl.store)))))
+
+    (define (store-compose-aux Loc KeyExpr StoreExpr ParentStoreExpr)
+      (%expr
+        Loc
+        (lambda (Loc Fn)
+          (%match-results
+            (list KeyExpr StoreExpr ParentStoreExpr)
+            (lambda (Results)
+              (define-values (Key Store ParentStore)
+                (apply values Results))
+              (Fn (build-store-compose Loc Key Store ParentStore)))))))
 
     (define-syntax store-compose
       (syntax-rules ()
         ((store-compose Key Store)
          (lambda (ParentStore)
-           (let ((KeyLoc (syntax-source-loc Key)))
-             (result
-               (create-op "nbdl.store_compose"
-                 (loc: KeyLoc)
-                 (operands: (build-store-key KeyLoc Key) Store ParentStore)
-                 (attributes:)
-                 (result-types: (!nbdl.store))
-                 )))))))
+           (store-compose-aux
+             (syntax-source-loc Key)
+             (%single-expr+ Key)
+             (%single-expr Store)
+             ParentStore)))))
 
-    ; FIXME Use a StoreSpec instead if inserting directly. (See `store`.)
+    (define (build-variant Loc Stores)
+      (define ResultT
+        (apply !nbdl.store (map get-type Stores)))
+      (result
+        (create-op
+          "nbdl.variant"
+          (loc: Loc)
+          (operands: Stores)
+          (attributes:)
+          (result-types: ResultT))))
+
+    (define (variant-aux Loc StoreExprs)
+      (%expr
+        Loc
+        (lambda (Loc Fn)
+          (%match-results
+            StoreExprs
+            (lambda (Stores)
+              (Fn (build-variant Loc Stores)))))))
+
     (define-syntax variant
       (syntax-rules ()
         ((variant Store1 StoreN ...)
-          (result
-            (create-op "nbdl.variant"
-              (loc: (syntax-source-loc Store1))
-              (operands: Store1 StoreN ...)
-              (attributes:)
-              (result-types: !nbdl.variant)
-              )))))
+         (variant-aux
+           (syntax-source-loc Store1)
+           (list
+             (%single-expr Store1)
+             (%single-expr StoreN) ...)))))
 
     (define (define-store-aux Loc BodyThunk)
       (define Parent (build-unit))
       (define (ProcessBody BodyEl)
-        (set! Parent
-          (cond
-            ; StoreFunctional
-            ((procedure? BodyEl)
-             (BodyEl Parent))
-            ; Store
-            ((value? !nbdl.unit Parent)
-             BodyEl)
-            (else
-              (error "expecting store: {}" BodyEl)))))
-      (BodyThunk ProcessBody)
-      (create-op "nbdl.cont"
-                 (loc: Loc)
-                 (operands: Parent)
-                 (attributes:)
-                 (result-types:)))
+        (define (SetParent Store)
+          (set! Parent Store))
+        (cond
+          ; StoreFunctional
+          ((procedure? BodyEl)
+           (%invoke-expr (BodyEl Parent) SetParent))
+          ; StoreExpr
+          ((expr? BodyEl)
+           (%invoke-expr BodyEl SetParent))
+          ; Store (mlir.value)
+          ((value? !nbdl.unit Parent)
+           (SetParent BodyEl))
+          (else
+            (error "expecting store: {}" BodyEl))))
+        (BodyThunk ProcessBody)
+        (create-op "nbdl.cont"
+                   (loc: Loc)
+                   (operands: Parent)
+                   (attributes:)
+                   (result-types:)))
 
     ; A StoreFunctional either a Store (operation) or a
     ;   map: ParentStore -> NewStore.
@@ -337,9 +406,7 @@
     (define (%match-params-resolver Loc %FnVal)
       (lambda ParamsSpec_
         (define (ToExpr Param)
-          (%expr Loc
-                 (lambda (Loc Fn)
-                   (%match-expr Loc Param Fn))))
+          (%single-expr Loc Param))
         (define ParamsSpec
           (map ToExpr ParamsSpec_))
         (define (VisitFn ParamVals)
@@ -392,16 +459,16 @@
     ; ParamsSpec is a list of PathSpecs
     ; ParamsFn is the callback taking the list of results.
     (define (%match-params-spec ParamsSpec ParamsFn)
-      (%map-params %match-path-spec ParamsSpec ParamsFn))
+      (if (null? ParamsSpec)
+        (ParamsFn '())
+        (%map-params %match-path-spec ParamsSpec ParamsFn)))
 
     (define (%match-path-spec PathSpec Fn)
       (cond
         ((value? PathSpec)
          (Fn PathSpec))
         ((expr? PathSpec)
-         (let ((Loc (cadr PathSpec))
-               (Thunk (car (cddr PathSpec))))
-           (Thunk Loc Fn)))
+         (%invoke-expr PathSpec Fn))
         ((and (pair? PathSpec)
               (eqv? '%nbdl-path (car PathSpec)))
          (let ((RootStore (cadr PathSpec))
@@ -717,13 +784,8 @@
            (define CalleeLoc (syntax-source-loc Callee))
            (define ParamsSpec
              (list
-               (%expr CalleeLoc
-                 (lambda (Loc Fn)
-                   (%match-expr+ Loc Callee Fn)))
-               (%expr (syntax-source-loc StoreN)
-                 (lambda (Loc Fn)
-                   (%match-expr Loc StoreN Fn)))
-               ...))
+               (%single-expr+ Callee)
+               (%single-expr StoreN) ...))
            (visit-aux matching-results? CalleeLoc ParamsSpec)
            ))))
 
@@ -764,13 +826,9 @@
                      (visit '.end Range)
                      Fn))
         ((match-each Begin End Fn)
-          (match-each-aux (%expr (syntax-source-loc Begin)
-                                 (lambda (Loc K)
-                                   (%match-expr Loc Begin K)))
-                          (%expr (syntax-source-loc End)
-                                 (lambda (Loc K)
-                                   (%match-expr Loc End K)))
-                          Fn))))
+         (match-each-aux (%single-expr Begin)
+                         (%single-expr End)
+                         Fn))))
 
     (define-syntax match-aux
       (syntax-rules (=>)
