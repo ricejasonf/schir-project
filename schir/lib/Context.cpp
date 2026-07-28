@@ -686,7 +686,7 @@ void eval(Context& C, Value V, Value Env) {
 // this handles non-immediate values
 // and assumes the values have the same kind
 bool equal_slow(Value V1, Value V2) {
-  assert(V1.getKind() == V2.getKind() &&
+  assert(isCommonKind(V1, V2) &&
       "inputs are expected to have same kind");
 
   switch (V1.getKind()) {

@@ -4,6 +4,7 @@
   (export
     caar cadr cdar cddr
     member memq memv
+    assoc assq assv
     reverse map
     case
     every any
@@ -17,22 +18,40 @@
     (define (cdar x) (cdr (car x)))
     (define (cddr x) (cdr (cdr x)))
 
-    (define (member-fast obj list compare)
-      (if (pair? list)
-        (if (compare obj (car list))
-          list
-          (member-fast obj (cdr list) compare))
+    (define (member-fast Obj List Compare)
+      (if (pair? List)
+        (if (Compare Obj (car List))
+          List
+          (member-fast Obj (cdr List) Compare))
         #f))
     (define member
       (case-lambda
-        ((member obj list compare)
-            (member-fast obj list compare))
-        ((member obj list)
-            member obj list equal?)))
-    (define (memq obj list)
-      (member-fast obj list eq?))
-    (define (memv obj list)
-      (member-fast obj list eqv?))
+        ((Obj List Compare)
+            (member-fast Obj List Compare))
+        ((Obj List)
+            (member Obj List equal?))))
+    (define (memq Obj List)
+      (member-fast Obj List eq?))
+    (define (memv Obj List)
+      (member-fast Obj List eqv?))
+
+    (define (assoc-fast Obj List Compare)
+      (define Result
+        (member-fast
+          Obj List
+          (lambda (Obj Pair)
+            (Compare (car Pair) Obj))))
+      (and Result (car Result)))
+    (define assoc
+      (case-lambda
+        ((Obj List Compare)
+            (assoc-fast Obj List Compare))
+        ((Obj List)
+            (assoc-fast Obj List equal?))))
+    (define (assq Obj List)
+      (assoc-fast Obj List eq?))
+    (define (assv Obj List)
+      (assoc-fast Obj List eqv?))
 
     ; Taken from r7rs
     (define-syntax case

@@ -238,3 +238,36 @@
     (any number? '(1 foo))
     (any number? '(1 2 3 #t 4))))
 (newline)
+
+; CHECK-NEXT: ((a b c) (b c) #f #f ((a) c) ("b" "c")
+; CHECK-SAME:  (101 102) (101 102))
+(write
+  (list
+    (memq 'a '(a b c))
+    (memq 'b '(a b c))
+    (memq 'a '(b c d))
+    (memq (list 'a) '(b (a) c))
+    (member (list 'a)
+            '(b (a) c))
+    (member "b"
+            '(5 "b" "c"))
+    (memq 101 '(100 101 102))
+    (memv 101 '(100 101 102))
+  ))
+(newline)
+
+; CHECK: ((b 2) (a 1) (c 3) #f #f ((a)) (2 4) (5 7))
+(write
+  (let ()
+    (define e '((a 1) (b 2) (c 3)))
+    (list
+      (assq 'b e)
+      (assq 'a e)
+      (assq 'c e)
+      (assq 'd e)
+      (assq (list 'a) '(((a)) ((b)) ((c))))
+      (assoc (list 'a) '(((a)) ((b)) ((c))))
+      (assoc 2.0 '((1 1) (2 4) (3 9)) >=)
+      (assv 5 '((2 3) (5 7) (11 13)))
+      )))
+(newline)

@@ -2002,9 +2002,16 @@ inline bool eqv(Value V1, Value V2) {
   return eqv_slow(V1, V2);
 }
 
+inline bool isCommonKind(Value V1, Value V2) {
+  return V1.getKind() == V2.getKind() ||
+         (isa<Pair>(V1) && // Handle Pair versus PairWithSource.
+          isa<Pair>(V2));
+}
+
 inline bool equal(Value V1, Value V2) {
   if (V1 == V2) return true;
-  if (V1.getKind() != V2.getKind()) return false;
+  if (!isCommonKind(V1, V2))
+    return false;
   return equal_slow(V1, V2);
 }
 

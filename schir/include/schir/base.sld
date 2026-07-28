@@ -145,6 +145,7 @@
     ; (schir base list)
     caar cadr cdar cddr
     member memq memv
+    assoc assq assv
     reverse map
     every any
 
