@@ -63,17 +63,28 @@ TEST_CASE("Compose stores and perform operations on their nested values.", "[cor
   std::string result_4{};
   std::string result_5{};
 
+  // Mutate the value in the store via match.
+  constexpr auto append = [](auto& store, auto& key, std::string_view str) {
+    nbdl::match(store, key, [&](auto& value) { value.append(str); });
+  };
+
+  append(store, base_key, "_base");
   nbdl::match(store, base_key, [&](auto& value) { result_base = value; });
+  append(store, key_1, "_1");
   nbdl::match(store, key_1, [&](auto& value) { result_1 = value; });
+  append(store, key_2, "_2");
   nbdl::match(store, key_2, [&](auto& value) { result_2 = value; });
+  append(store, key_3, "_3");
   nbdl::match(store, key_3, [&](auto& value) { result_3 = value; });
+  append(store, key_4, "_4");
   nbdl::match(store, key_4, [&](auto& value) { result_4 = value; });
+  append(store, key_5, "_5");
   nbdl::match(store, key_5, [&](auto& value) { result_5 = value; });
 
-  CHECK(result_base == "base_valuey");
-  CHECK(result_1 == std::string("value_1z"));
-  CHECK(result_2 == std::string("value_2z"));
-  CHECK(result_3 == std::string("value_3z"));
-  CHECK(result_4 == std::string("value_4z"));
-  CHECK(result_5 == std::string("value_5z"));
+  CHECK(result_base == "base_valuey_base");
+  CHECK(result_1 == std::string("value_1z_1"));
+  CHECK(result_2 == std::string("value_2z_2"));
+  CHECK(result_3 == std::string("value_3z_3"));
+  CHECK(result_4 == std::string("value_4z_4"));
+  CHECK(result_5 == std::string("value_5z_5"));
 }

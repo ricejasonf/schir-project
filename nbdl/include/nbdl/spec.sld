@@ -102,6 +102,7 @@
         (car Alts)
         #f))
 
+    (define %nbdl-expr '%nbdl-expr)
     ;; Create a thunk that should receive a location and callback
     ;; to resolve a value once its dependencies are resolved.
     ;; (e.g. arguments to visit)
@@ -109,7 +110,7 @@
       (syntax-rules ()
         ;; Thunk: (Loc Fn) -> Store
         ((%expr Loc Thunk)
-         (list '%nbdl-expr Loc Thunk))))
+         (list %nbdl-expr Loc Thunk))))
 
     ;; Handle the typical %expr use case of handling a single expr.
     (define-syntax %single-expr
@@ -133,13 +134,13 @@
 
 
     (define (expr? Arg)
-      (and (pair? Arg) (eqv? '%nbdl-expr (car Arg))))
+      (and (pair? Arg) (eqv? %nbdl-expr (car Arg))))
 
     ;; Invoke the Thunk created with %expr
     (define (%invoke-expr Expr Fn)
       (define-values (Loc Thunk)
         (if (and (pair? Expr)
-                 (eq? '%nbdl-expr (car Expr)))
+                 (eq? %nbdl-expr (car Expr)))
           (values
             (cadr Expr)
             (car (cddr Expr)))
@@ -167,27 +168,39 @@
         (build-member-name Loc Arg)
         (maybe-build-expr Loc Arg)))
 
-    (define (%match-expr-aux Expr Fn)
+    (define (%match-expr-aux Loc Expr Fn)
       (cond
         ((value? Expr)
          (Fn Expr))
+        ((resolver-val Expr) => Fn)
         ((procedure? Expr)
          (Expr Fn))
         ((expr? Expr)
           (%invoke-expr Expr Fn))
         ((path? Expr)
          (%match-path-spec Expr Fn))
-        (else (error "unable to resolve value: {}" Expr)))
-      ; Return something... unspecified.
-      (if #f #f))
+        ((discarded-loc Expr)
+         => (lambda (DiscardLoc)
+              (error "value is discarded and cannot be used"
+                     (error-note "value discarded here" (dump DiscardLoc)))))
+         (else (error "unable to resolve value: {}" Expr)))
+      ; Return a "discarded" value to provide a better error message.
+      ; This prevents the user from passing around out of scope SSA values.
+      ; FIXME nbdl.scope was created to prevent this,
+      ;       but it seems needlessly restrictive for expressions
+      ;       that have results like `visit`.
+      ;       Or we stick with `visit` result being discard when not
+      ;       operands to another `visit`. Maybe this was to prevent
+      ;       combinational explosions.
+      (list %nbdl-discard Loc))
 
     (define (%match-expr Loc ExprArg Fn)
       (define Expr (maybe-build-expr Loc ExprArg))
-      (%match-expr-aux Expr Fn))
+      (%match-expr-aux Loc Expr Fn))
 
     (define (%match-expr+ Loc ExprArg Fn)
       (define Expr (maybe-build-expr+ Loc ExprArg))
-      (%match-expr-aux Expr Fn))
+      (%match-expr-aux Loc Expr Fn))
 
     (define (build-unit)
       (result
@@ -301,6 +314,8 @@
 
     (define-syntax store-compose
       (syntax-rules ()
+        ((store-compose Key Store ParentStore)
+         ((store-compose Key Store) ParentStore))
         ((store-compose Key Store)
          (lambda (ParentStore)
            (store-compose-aux
@@ -414,6 +429,36 @@
         (close-previous-scope)
         (%match-params-spec ParamsSpec VisitFn)))
 
+    ;; Maintain a lookup for resolver procedures and
+    ;; their corresponding mlir.value so we can use
+    ;; the callable Fn object as a store.
+    (define resolver-stack '())
+    ;; Thunk: Fn => ()
+    (define (with-resolver Loc %FnVal Thunk)
+      (define Fn
+        (%match-params-resolver Loc %FnVal))
+      (define Prev resolver-stack)
+      (define Entry (cons Fn %FnVal))
+      (define Cur (cons Entry Prev))
+      (dynamic-wind
+        (lambda ()
+          (set! resolver-stack Cur))
+        (lambda ()
+          (unless (resolver-val Fn)
+            (error "sanity check failed"))
+          (Thunk Fn))
+        (lambda ()
+          (set! resolver-stack Prev))))
+
+    ;; Get the resolver mlir.value or #f.
+    (define (resolver-val Proc)
+      (define Val
+        (and (procedure? Proc)
+             (assq Proc resolver-stack)))
+      (if Val
+        (cdr Val)
+        #f))
+
     ;; Define a function to receive a matched set of parameters.
     ;; Each path node should be of the format:
     ;;  (%Kind Loc Args...)
@@ -430,12 +475,11 @@
                  'name
                  (length '(stores ...))
                  (lambda (stores ... %FnVal)
-                   (define Loc (source-loc name))
-                   (define Fn
-                     (%match-params-resolver Loc %FnVal))
-                   ((lambda (fn) body ...) Fn)
-                   ))))
-           ))))
+                   (with-resolver
+                     Loc
+                     %FnVal
+                     (lambda (fn) body ...)))
+                 )))))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
@@ -528,15 +572,22 @@
     ;; We have mlir.values for both Store and Key
     (define (%match-key Loc Store Key Fn)
       ; "Alt" here means a c++ type written as symbol.
-      (define (ReflectAlts StoreAlt)
-        (lambda (KeyAlt)
-          (reflect-match Loc StoreAlt KeyAlt)))
       (define StoreAlts (get-store-alts Store))
       (define KeyAlts (get-store-alts Key))
       (define MatchedAlts
-        (if (and StoreAlts KeyAlts)
-          (apply append (map apply (map ReflectAlts StoreAlts) KeyAlts))
-          '()))
+        (cond
+          ((and StoreAlts KeyAlts)
+           (let ()
+             (define (ReflectAlts StoreAlt)
+               (lambda (KeyAlt)
+                 (reflect-match Loc StoreAlt KeyAlt)))
+             (apply append (map apply (map ReflectAlts StoreAlts) KeyAlts))))
+          ((and StoreAlts (null? Key))
+           (let ()
+             (define (ReflectAlts StoreAlt)
+                 (reflect-match Loc StoreAlt '()))
+             (apply append (map ReflectAlts StoreAlts))))
+           (else '())))
       (define StoreT
         (apply !nbdl.store MatchedAlts))
       (create-op "nbdl.match"
@@ -626,13 +677,7 @@
                        (operands: FnVal ParamVals)
                        (attributes:)
                        (result-types: !nbdl.unit))))
-        (create-op "nbdl.discard"
-                   (loc: Loc)
-                   (operands: Result)
-                   (attributes:)
-                   (result-types:))))
-
-
+        (build-discard Loc Result)))
 
     (define (path? obj)
       (and (pair? obj)
@@ -649,7 +694,7 @@
           ((path? path)
             (append path
                     (source-cons key '() (syntax-source-loc key)) ...))
-          ((else (error "invalid path object: {}" path)))
+          (else (error "invalid path object: {}" path))
           ))
         ))
 
@@ -733,6 +778,22 @@
         (!nbdl.store (expr->type Expr))
         (!nbdl.store)))
 
+    (define %nbdl-discard '%nbdl-discard)
+
+    (define (build-discard Loc Value)
+      (create-op "nbdl.discard"
+                   (loc: Loc)
+                   (operands: Value)
+                   (attributes:)
+                   (result-types:))
+      (list %nbdl-discard Loc))
+
+    (define (discarded? Obj)
+      (and (pair? Obj) (eq? (car Obj) %nbdl-discard)))
+
+    (define (discarded-loc Obj)
+      (and (discarded? Obj) (cadr Obj)))
+
     (define (build-visit MatchingResults? Loc Results)
       (define ResultType
         (if MatchingResults?
@@ -747,11 +808,7 @@
                      (result-types: ResultType))))
       (if MatchingResults?
         VisitResult
-        (create-op "nbdl.discard"
-                   (loc: Loc)
-                   (operands: VisitResult)
-                   (attributes:)
-                   (result-types:))))
+        (build-discard Loc VisitResult)))
 
     (define (visit-aux MatchingResults? Loc ParamsSpec)
       (close-previous-scope)
@@ -796,7 +853,7 @@
       (define Args
         (get-infer-args ParamVals))
       (define Begin
-        (car Args))
+        (and Args (car Args)))
       (if Begin
         (!nbdl.store
           (expr->type (string-append "*(" Begin ")")))

@@ -378,16 +378,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     mlir::FunctionType FT = Op.getFunctionType();
     llvm::StringRef Name = Op.getSymName();
 
-    // Write the return type.
-    if (FT.getNumResults() > 1)
-      return SetError("Function should have less than 2 results.", Op);
-    if (FT.getNumResults() == 0)
-      OS << "void";
-    else
-      OS << "decltype(auto)";
-
-    // Write the function name.
-    OS << ' ' << Name;
+    // Write the lambda variable declaration.
+    OS << "[[maybe_unused]] inline constexpr auto " << Name << " = []";
 
     mlir::Region& Body = Op.getBody();
     if (Body.empty())
@@ -402,9 +394,17 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
         });
     OS << ')';
 
+    // Write the return type.
+    if (FT.getNumResults() > 1)
+      return SetError("Function should have less than 2 results.", Op);
+    if (FT.getNumResults() == 0)
+      OS << " -> void ";
+    else
+      OS << " -> decltype(auto) ";
+
     OS << "{\n";
     VisitRegion(Body);
-    OS << '}';
+    OS << "};";
   }
 
   void Visit(GetOp Op) {
@@ -475,9 +475,9 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       WriteExpr(Op.getKey());
       OS << ",";
     }
-    WriteExpr(Op.getRhs());
-    OS << ",";
     WriteExpr(Op.getLhs());
+    OS << ",";
+    WriteExpr(Op.getRhs());
     OS << ");\n";
   }
 

@@ -7,10 +7,13 @@
 #ifndef NBDL_ASSIGN_HPP
 #define NBDL_ASSIGN_HPP
 
+#include <utility>
+
 namespace nbdl {
   inline constexpr struct assign_t {
-    auto&& operator()(auto&& LHS, auto&& RHS) const {
-      return LHS = static_cast<decltype(RHS)>(RHS);
+    template <typename LHS, typename RHS>
+    auto&& operator()(LHS&& lhs, RHS&& rhs) const {
+      return lhs = std::forward<RHS>(rhs);
     }
   } assign;
 }

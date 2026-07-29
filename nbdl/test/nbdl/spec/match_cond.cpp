@@ -46,9 +46,9 @@ namespace foo {
     (define (my-concat member)
       ;; // This looks like destructuring here.
       (define weight
-        (get member 'nbdl::index<0>))
+        (get member 'boost::hana::first))
       (define str
-        (get member 'nbdl::index<1>))
+        (get member 'boost::hana::second))
       (match-cond
         ((>= weight 42)
          (visit '.append result-val str))
@@ -66,7 +66,11 @@ namespace foo {
 }  // namespace foo
 }  // namespace
 
+static_assert(nbdl::State<foo::weighted_string>);
+static_assert(nbdl::StdTupleLike<std::pair<int, std::string> &>);
+
 TEST_CASE("Branch on conditionals over stores", "[spec][match-cond]") {
+
   foo::context ctx1(foo::weighted_string{0, "foo"},
                     foo::weighted_string{0, "bar"},
                     foo::weighted_string{0, "baz"});
@@ -79,10 +83,10 @@ TEST_CASE("Branch on conditionals over stores", "[spec][match-cond]") {
   foo::context ctx4(foo::weighted_string{43, "foo"},
                     foo::weighted_string{9000, "bar"},
                     foo::weighted_string{100, "baz"});
-  combo_concat(ctx1, nbdl::noop);
-  combo_concat(ctx2, nbdl::noop);
-  combo_concat(ctx3, nbdl::noop);
-  combo_concat(ctx4, nbdl::noop);
+  foo::combo_concat(ctx1, nbdl::noop);
+  foo::combo_concat(ctx2, nbdl::noop);
+  foo::combo_concat(ctx3, nbdl::noop);
+  foo::combo_concat(ctx4, nbdl::noop);
   CHECK(ctx1.result_val == std::string());
   CHECK(ctx2.result_val == std::string("foobaz"));
   CHECK(ctx3.result_val == std::string("baz"));

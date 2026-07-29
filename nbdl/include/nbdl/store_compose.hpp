@@ -16,52 +16,47 @@
 #include <type_traits>
 #include <utility>
 
-namespace nbdl
-{
+namespace nbdl {
   namespace hana = boost::hana;
 
-  namespace detail
-  {
+  namespace detail {
     template <typename Key>
     struct store_composite_tag { };
 
-    template <typename Key, typename Left, typename Right>
+    template <typename Key, typename Value, typename Parent>
       requires std::is_empty_v<Key>
-    struct store_composite_t
-    {
+    struct store_composite_t {
       using hana_tag = store_composite_tag<Key>;
 
-      Left left;
-      Right right;
+      Parent hidden_parent_;
+      Value hidden_value_;
     };
 
     template <typename Key>
     struct store_composite_action_tag { };
 
     template <typename Key, typename Action>
-    struct store_composite_action_t
-    {
+    struct store_composite_action_t {
       using hana_tag = store_composite_action_tag<Key>;
 
       Action action;
     };
   }
 
-  template <typename Key, typename Value, typename Store>
-  constexpr auto store_compose_fn::operator()(Key, Value&& v, Store&& s) const
-  {
-    using Left = std::decay_t<Store>;
-    using Right = std::decay_t<Value>;
+  template <typename Key, typename Value, typename Parent>
+  constexpr auto store_compose_fn::operator()(Key, Value&& v,
+                                              Parent&& p) const {
+    using P = std::decay_t<Parent>;
+    using V = std::decay_t<Value>;
 
-    return detail::store_composite_t<Key, Left, Right>{
-      std::forward<Store>(s)
-    , std::forward<Value>(v)
+    return detail::store_composite_t<Key, V, P>{
+      std::forward<Parent>(p),
+      std::forward<Value>(v)
     };
   }
 
   template <typename Key, typename Action>
-  constexpr auto store_composite_action_fn::operator()(Key, Action&& a) const
-  {
+  constexpr auto store_composite_action_fn::operator()(Key, Action&& a) const {
     return detail::store_composite_action_t<Key, std::decay_t<Action>>{
       std::forward<Action>(a)
     };
@@ -69,43 +64,32 @@ namespace nbdl
 
   // apply_action_impl
   template <typename Key>
-  struct apply_action_impl<detail::store_composite_tag<Key>>
-  {
+  struct apply_action_impl<detail::store_composite_tag<Key>> {
     template <typename Store, typename Action>
-    static constexpr auto apply(Store& s, Action&& a)
-    {
-      if constexpr(hana::is_a<detail::store_composite_action_tag<Key>, Action>)
-      {
-        return nbdl::apply_action(s.right, std::forward<Action>(a).action);
-      }
-      else
-      {
-        return nbdl::apply_action(s.left, std::forward<Action>(a));
+    static constexpr auto apply(Store& s, Action&& a) {
+      if constexpr(
+          hana::is_a<detail::store_composite_action_tag<Key>, Action>) {
+        return nbdl::apply_action(s.hidden_value_, std::forward<Action>(a).action);
+      } else {
+        return nbdl::apply_action(s.hidden_parent_, std::forward<Action>(a));
       }
     }
   };
 
   // match_impl
   template <typename Key>
-  struct match_impl<detail::store_composite_tag<Key>>
-  {
+  struct match_impl<detail::store_composite_tag<Key>> {
     template <typename Store, typename KeyArg, typename Fn>
-    static constexpr void apply(Store& s, KeyArg&& k, Fn&& fn)
-    {
-      if constexpr(std::is_same<Key, std::decay_t<KeyArg>>::value)
-      {
-        if constexpr(nbdl::Store<decltype(s.right)>)
-        {
-          nbdl::match(s.right, std::forward<Fn>(fn));
+    static constexpr void apply(Store& s, KeyArg&& k, Fn&& fn) {
+      if constexpr(std::is_same<Key, std::decay_t<KeyArg>>::value) {
+        if constexpr(nbdl::Store<decltype(s.hidden_value_)>) {
+          nbdl::match(s.hidden_value_, std::forward<Fn>(fn));
+        } else {
+          std::forward<Fn>(fn)(s.hidden_value_);
         }
-        else
-        {
-          std::forward<Fn>(fn)(s.right);
-        }
-      }
-      else
-      {
-        nbdl::match(s.left, std::forward<KeyArg>(k), std::forward<Fn>(fn));
+      } else {
+        nbdl::match(s.hidden_parent_, std::forward<KeyArg>(k),
+                    std::forward<Fn>(fn));
       }
     }
   };

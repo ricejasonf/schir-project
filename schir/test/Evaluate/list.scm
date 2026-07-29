@@ -206,6 +206,12 @@
     '(c f i 'oof)))
 (newline)
 
+; CHECK-NEXT: (#((quote ())))
+(write
+  (map vector
+    '('())))
+(newline)
+
 ; CHECK-NEXT: #t
 (write
   (and

@@ -10,7 +10,10 @@
 // FIXME nbdl::assign probably does not need its own file.
 #include <nbdl/assign.hpp>
 #include <nbdl/concept/extras.hpp>
+#include <nbdl/ext/std/tuple_like.hpp>
+#include <nbdl/get.hpp>
 #include <nbdl/match.hpp>
+#include <nbdl/store_compose.hpp>
 #include <nbdl/strong_alias.hpp>
 #include <nbdl/tags.hpp>
 #include <nbdl/variant.hpp>
