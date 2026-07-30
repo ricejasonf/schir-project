@@ -31,6 +31,7 @@ class TemplateGen : TemplateBase<TemplateGen> {
   friend ValueVisitor<TemplateGen, TemplateResult>;
 
   Value Keyword;
+  mlir::Value KeywordArg;
   Value Ellipsis;
   NameSet& PatternVarNames;
 
@@ -46,10 +47,12 @@ class TemplateGen : TemplateBase<TemplateGen> {
 public:
   using ErrorTy = TemplateError;
 
-  TemplateGen(schir::OpGen& O, mlir::Value EnvArg, Value Keyword,
+  TemplateGen(schir::OpGen& O, mlir::Value EnvArg,
+              Value Keyword, mlir::Value KeywordArg,
               NameSet& PVNames, Value Ellipsis)
     : TemplateBase(O, EnvArg),
       Keyword(Keyword),
+      KeywordArg(KeywordArg),
       Ellipsis(Ellipsis),
       PatternVarNames(PVNames)
   { }
@@ -114,16 +117,25 @@ private:
 
   TemplateResult VisitPair(Pair* P) {
     schir::SourceLocation Loc = P->getSourceLocation();
-    auto* P2 = dyn_cast<Pair>(P->Cdr);
+    Pair* P2 = dyn_cast<Pair>(P->Cdr);
     if (P2 && isEllipsis(P2->Car)) {
       return ExpandPack(Loc, P->Car, P2->Cdr);
     } else if (isSymbol(P->Car, "syntax-source-loc")) {
       // Check for syntax-source-loc auxiliary
       // syntax as an unbound literal.
       schir::Context& Context = OpGen.getContext();
-      auto* S = cast<Symbol>(P->Car);
+      Symbol* S = cast<Symbol>(P->Car);
       if (!Context.Lookup(S)) {
-        auto* VarName = dyn_cast_or_null<Symbol>(P2->Car);
+        // If no argument is provided then return
+        // the location of the KeywordArg.
+        // (syntax-source-loc)
+        if (isa<Empty>(P->Cdr))
+          return OpGen.create<SourceLocOp>(Loc, KeywordArg);
+
+        // Get the location of a pattern variable.
+        Symbol* VarName = nullptr;
+        if (P2)
+          VarName = dyn_cast_or_null<Symbol>(P2->Car);
         if (VarName && PatternVarNames.contains(VarName->getString())) {
           mlir::Value SC = GetPatternVar(VarName);
           return OpGen.create<SourceLocOp>(Loc, SC);

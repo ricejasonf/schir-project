@@ -89,6 +89,7 @@ schir::ExternFunction call_with_values;
 schir::ExternFunction with_exception_handler;
 schir::ExternFunction raise;
 schir::ExternFunction error;
+schir::ExternFunction error_with_loc;
 schir::ExternFunction error_note;
 schir::ExternFunction format_string;
 schir::ExternFunction dynamic_wind;
@@ -1074,6 +1075,33 @@ void error(Context& C, ValueRefs Args) {
   C.RaiseError(cast<String>(Args[0]), Args.drop_front());
 }
 
+// (error-with-loc Loc Msg Irrs...)
+// Raise error with specified source location.
+// If the current source location is valid it will be added as a note.
+void error_with_loc(Context& C, ValueRefs Args) {
+  if (Args.size() < 2)
+    return C.RaiseError("invalid arity");
+
+  schir::SourceLocation OrigLoc = C.getLoc();
+  C.setLoc(Args.front());
+  Args = Args.drop_front();
+
+  if (C.CheckKind<String>(Args.front()))
+    return;
+
+  String* Msg = cast<String>(Args.front());
+  Args = Args.drop_front();
+
+  // Maybe add the note to the Irritants.
+  llvm::SmallVector<Value, 8> Irrs(Args);
+  if (OrigLoc.isValid()) {
+    Value Note = C.CreateError(OrigLoc, "error raised here:", Empty());
+    Irrs.push_back(Note);
+  }
+
+  C.RaiseError(Msg, Irrs);
+}
+
 // Create an error object without raising.
 // (can be used as irritant to add additional notes to errors)
 void error_note(Context& C, ValueRefs Args) {
@@ -1412,6 +1440,7 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
     = schir::builtins::with_exception_handler;
   SCHIR_BASE_VAR(raise)   = schir::builtins::raise;
   SCHIR_BASE_VAR(error)   = schir::builtins::error;
+  SCHIR_BASE_VAR(error_with_loc) = schir::builtins::error_with_loc;
   SCHIR_BASE_VAR(error_note) = schir::builtins::error_note;
   SCHIR_BASE_VAR(format_string) = schir::builtins::format_string;
   SCHIR_BASE_VAR(dynamic_wind) = schir::builtins::dynamic_wind;
@@ -1515,6 +1544,7 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"with-exception-handler", SCHIR_BASE_VAR(with_exception_handler)},
     {"raise", SCHIR_BASE_VAR(raise)},
     {"error", SCHIR_BASE_VAR(error)},
+    {"error-with-loc", SCHIR_BASE_VAR(error_with_loc)},
     {"error-note", SCHIR_BASE_VAR(error_note)},
     {"format-string", SCHIR_BASE_VAR(format_string)},
     {"dynamic-wind", SCHIR_BASE_VAR(dynamic_wind)},

@@ -118,6 +118,7 @@
     equal?
     eqv?
     error
+    error-with-loc
     error-note
     length
     list make-list list-set! list-ref

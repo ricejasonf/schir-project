@@ -76,17 +76,21 @@ public:
     schir::Context& Context = OpGen.getContext();
     EnvFrame* EF = Context.PushEnvFrame();
     schir::SourceLocation Loc = Pattern.getSourceLocation();
+    mlir::Value KeywordArg;
     if (isa_and_nonnull<Symbol>(Pattern.car())) {
-      // Ignore the initial keyword.
+      // Ignore the initial keyword for matching,
+      // but use its value make its source location available.
       Pair* P = cast<Pair>(Pattern);
       auto MatchPairOp = OpGen.create<schir::MatchPairOp>(Loc, E);
+      KeywordArg = MatchPairOp.getCar();
       Visit(P->Cdr, MatchPairOp.getCdr());
     } else {
+      KeywordArg = E; // ?? What is this case?
       Visit(Pattern, E);
     }
 
     if (!OpGen.CheckError()) {
-      TemplateGen TG(OpGen, EnvArg, Keyword, PatternVars, Ellipsis);
+      TemplateGen TG(OpGen, EnvArg, Keyword, KeywordArg, PatternVars, Ellipsis);
       TG.BuildTemplate(Template);
     }
 
