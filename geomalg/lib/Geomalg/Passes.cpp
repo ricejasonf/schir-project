@@ -1990,7 +1990,7 @@ public:
     bool IRChanged = true;
     while (IRChanged) {
       // Run ExpandFuncPass with the metric on the nested FuncOps.
-      mlir::OpPassManager PM(mlir::func::FuncOp::getOperationName());
+      mlir::OpPassManager PM(mlir::ModuleOp::getOperationName());
       PM.addNestedPass<mlir::func::FuncOp>(
           geomalg::createExpandFuncPass(ExpandPassOpts));
 
