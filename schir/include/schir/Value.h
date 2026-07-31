@@ -110,6 +110,7 @@ using LexerWriterFnRef = llvm::function_ref<LexerWriterFn>;
 
 enum class ValueKind {
   Undefined = 0,
+  Any,
   BigInt,
   Binding,
   Bool,
@@ -126,20 +127,20 @@ enum class ValueKind {
   ExternName,
   Float,
   ForwardRef,
-  Int,
   ImportSet,
+  Int,
   Lambda,
   Module,
   Operation,
   Pair,
   PairWithSource,
   Quote,
+  SharedAny,
   SourceValue,
   String,
   Symbol,
   Syntax,
   SyntaxClosure,
-  Any,
   Vector,
 };
 
@@ -1424,7 +1425,6 @@ public:
     return TypeId == &AnyTypeId<T>::Id;
   }
 
-  // DEPRECATED use schir::any_cast
   template <typename T>
   T* cast() {
     assert(isa<T>() && "should be a T");
@@ -1444,20 +1444,80 @@ public:
   static ValueKind getKind() { return ValueKind::Any; }
 };
 
+class SharedAny final : public ValueBase {
+  template <typename Derived>
+  friend class SharedAnyStorage;
+
+  void const* TypeId;
+  void* Ptr;
+
+public:
+  SharedAny(void const* TypeId, void* Ptr)
+    : ValueBase(ValueKind::SharedAny),
+      TypeId(TypeId),
+      Ptr(Ptr)
+  { }
+
+  void* getOpaquePtr() {
+    return Ptr;
+  }
+
+  template <typename T>
+  bool isa() {
+    return TypeId == &AnyTypeId<T>::Id;
+  }
+
+  template <typename T>
+  T* cast() {
+    assert(isa<T>() && "should be a T");
+    return static_cast<T*>(getOpaquePtr());
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::SharedAny;
+  }
+  static ValueKind getKind() { return ValueKind::SharedAny; }
+};
+
 template <typename T>
+concept PointerLike = std::default_initializable<T> &&
+                      std::constructible_from<bool, T>;
+
+template <PointerLike T>
 T any_cast(schir::Value V) {
-  if (auto* Any = dyn_cast<schir::Any>(V))
+  if (auto* Any = dyn_cast<schir::Any>(V)) {
     if (Any->isa<T>())
       return *Any->cast<T>();
+  } else if (auto *SA = dyn_cast<schir::SharedAny>(V)) {
+    if (SA->isa<T>())
+      return *SA->cast<T>();
+  }
   return T{};
 }
 
 template <typename T>
-T* any_cast(schir::Value const* VP) {
-  schir::Value V = *VP;
-  if (auto* Any = dyn_cast<schir::Any>(V))
+T* any_cast(schir::Value V) {
+  if (auto* Any = dyn_cast<schir::Any>(V)) {
     if (Any->isa<T>())
       return Any->cast<T>();
+  } else if (auto *SA = dyn_cast<schir::SharedAny>(V)) {
+    if (SA->isa<T>())
+      return SA->cast<T>();
+  }
+  return nullptr;
+}
+
+// TODO Is this overload used?
+template <typename T>
+T* any_cast(schir::Value const* VP) {
+  schir::Value V = *VP;
+  if (auto* Any = dyn_cast<schir::Any>(V)) {
+    if (Any->isa<T>())
+      return Any->cast<T>();
+  } else if (auto *SA = dyn_cast<schir::SharedAny>(V)) {
+    if (SA->isa<T>())
+      return SA->cast<T>();
+  }
   return nullptr;
 }
 
@@ -1956,6 +2016,7 @@ inline llvm::StringRef Error::getErrorMessage() {
 inline llvm::StringRef getKindName(schir::ValueKind Kind) {
   switch (Kind) {
   GET_KIND_NAME_CASE(Undefined)
+  GET_KIND_NAME_CASE(Any)
   GET_KIND_NAME_CASE(BigInt)
   GET_KIND_NAME_CASE(Binding)
   GET_KIND_NAME_CASE(Bool)
@@ -1971,20 +2032,20 @@ inline llvm::StringRef getKindName(schir::ValueKind Kind) {
   GET_KIND_NAME_CASE(ExternName)
   GET_KIND_NAME_CASE(Float)
   GET_KIND_NAME_CASE(ForwardRef)
-  GET_KIND_NAME_CASE(Int)
   GET_KIND_NAME_CASE(ImportSet)
+  GET_KIND_NAME_CASE(Int)
   GET_KIND_NAME_CASE(Lambda)
   GET_KIND_NAME_CASE(Module)
   GET_KIND_NAME_CASE(Operation)
   GET_KIND_NAME_CASE(Pair)
   GET_KIND_NAME_CASE(PairWithSource)
   GET_KIND_NAME_CASE(Quote)
+  GET_KIND_NAME_CASE(SharedAny)
   GET_KIND_NAME_CASE(SourceValue)
   GET_KIND_NAME_CASE(String)
   GET_KIND_NAME_CASE(Symbol)
   GET_KIND_NAME_CASE(Syntax)
   GET_KIND_NAME_CASE(SyntaxClosure)
-  GET_KIND_NAME_CASE(Any)
   GET_KIND_NAME_CASE(Vector)
   default:
     return llvm::StringRef("?????");

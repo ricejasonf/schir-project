@@ -68,6 +68,39 @@ public:
   llvm::DenseMap<uintptr_t, Value> LookupTable;
 };
 
+template <typename Derived>
+class SharedAnyStorage {
+  friend Derived;
+
+
+  Derived& getDerived() {
+    return *static_cast<Derived*>(this);
+  }
+
+protected:
+  std::vector<std::shared_ptr<void>> SharedPtrs;
+
+public:
+  template <typename T>
+  SharedAny* CreateSharedAny(std::shared_ptr<T> Obj) {
+    void const* TypeId = &AnyTypeId<T>::Id;
+    T* Ptr = Obj.get();
+    SharedPtrs.push_back(std::move(Obj));
+    return new (getDerived()) SharedAny(TypeId, Ptr);
+  }
+
+  // Return true if the SharedAny Ptr is equal
+  // to a managed resource in SharedPtrs.
+  // This is just a sanity check.
+  bool SharedAnyIsValid(SharedAny* SA) const {
+    auto Itr = llvm::find_if(SharedPtrs,
+      [SA](std::shared_ptr<void> const& SP) {
+        return SP.get() == SA->Ptr;
+      });
+    return Itr != SharedPtrs.end();
+  }
+};
+
 void registerModuleVar(schir::Context& C,
                        schir::Module* M,
                        llvm::StringRef VarSymbol,
@@ -76,12 +109,14 @@ void registerModuleVar(schir::Context& C,
 class Context : public ContinuationStack<Context>,
                 public ContextLocalLookup,
                 public IdTable,
+                public SharedAnyStorage<Context>,
                 protected Heap<Context>
 {
   friend class OpGen;
   friend class OpEvalImpl;
   friend class SchirScheme;
   friend class Heap<Context>;
+  friend class SharedAnyStorage<Context>;
   friend void* allocate(Context& C, size_t Size, size_t Alignment);
   friend void initModuleNames(schir::Context&, llvm::StringRef MangledName,
                               ModuleInitListTy InitList);

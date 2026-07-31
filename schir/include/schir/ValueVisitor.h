@@ -46,6 +46,7 @@ protected:
   // nodes is to call Derived::VisitValue
 
   VISIT_FN(Undefined)
+  VISIT_FN(Any)
   VISIT_FN(BigInt)
   VISIT_FN(Binding)
   VISIT_FN(Bool)
@@ -70,12 +71,12 @@ protected:
   VISIT_FN(Pair)
   // VISIT_FN(PairWithSource) **PairWithSource Implemented below**
   VISIT_FN(Quote)
+  VISIT_FN(SharedAny)
   VISIT_FN(SourceValue)
   VISIT_FN(String)
   VISIT_FN(Symbol)
   VISIT_FN(Syntax)
   VISIT_FN(SyntaxClosure)
-  VISIT_FN(Any)
   VISIT_FN(Vector)
 
   template <typename ...Args>
@@ -88,6 +89,7 @@ public:
   RetTy Visit(Value V, Args&& ...args) {
     switch (V.getKind()) {
     case ValueKind::Undefined:      DISPATCH(Undefined);
+    case ValueKind::Any:            DISPATCH(Any);
     case ValueKind::BigInt:         DISPATCH(BigInt);
     case ValueKind::Binding:        DISPATCH(Binding);
     case ValueKind::Bool:           DISPATCH(Bool);
@@ -112,12 +114,12 @@ public:
     case ValueKind::Pair:           DISPATCH(Pair);
     case ValueKind::PairWithSource: DISPATCH(PairWithSource);
     case ValueKind::Quote:          DISPATCH(Quote);
+    case ValueKind::SharedAny:      DISPATCH(SharedAny);
     case ValueKind::SourceValue:    DISPATCH(SourceValue);
     case ValueKind::String:         DISPATCH(String);
     case ValueKind::Symbol:         DISPATCH(Symbol);
     case ValueKind::Syntax:         DISPATCH(Syntax);
     case ValueKind::SyntaxClosure:  DISPATCH(SyntaxClosure);
-    case ValueKind::Any:            DISPATCH(Any);
     case ValueKind::Vector:         DISPATCH(Vector);
     }
     llvm_unreachable("unhandled case");

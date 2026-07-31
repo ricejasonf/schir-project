@@ -17,6 +17,9 @@
 #include "schir/ValueVisitor.h"
 #include "llvm/Support/Allocator.h"
 #include <algorithm>
+#include <memory>
+
+using SharedPtrStorage = std::vector<std::shared_ptr<void>>;
 
 namespace schir {
 // CopyCollector
@@ -27,6 +30,8 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
   using Base = ValueVisitor<CopyCollector, schir::Value>;
   friend class ValueVisitor<CopyCollector, schir::Value>;
 
+  SharedPtrStorage& NewSharedPtrs;
+  SharedPtrStorage& OldSharedPtrs;
   AllocatorTy& NewHeap;
   AllocatorTy& OldHeap;
   llvm::AllocatorBase<AllocatorTy>& getAllocator() { return NewHeap; }
@@ -243,6 +248,21 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
     return new (Mem) schir::Any(TypeId, ObjData);
   }
 
+  schir::Value VisitSharedAny(schir::SharedAny* SA) {
+    // Get the old shared_ptr to copy it to the new storage.
+    auto Itr = llvm::find_if(OldSharedPtrs,
+      [SA](std::shared_ptr<void> const& SP) {
+        return SP.get() == SA->getOpaquePtr();
+      });
+
+    // This should be impossible.
+    assert(Itr != OldSharedPtrs.end() &&
+        "SharedAny resource referenced but not stored");
+
+    NewSharedPtrs.push_back(*Itr);
+    return new (NewHeap) schir::SharedAny(*SA);
+  }
+
   template <typename ...Args>
   schir::Value Visit(schir::Value OldVal) {
     // Handle the ValueSumTypes that alias ValueBase
@@ -270,8 +290,11 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
   }
 
 public:
-  CopyCollector(AllocatorTy& New, AllocatorTy& Old)
-    : NewHeap(New),
+  CopyCollector(SharedPtrStorage& NewSPS, SharedPtrStorage& OldSPS,
+                AllocatorTy& New, AllocatorTy& Old)
+    : NewSharedPtrs(NewSPS),
+      OldSharedPtrs(OldSPS),
+      NewHeap(New),
       OldHeap(Old)
   { }
 
@@ -334,7 +357,11 @@ void Context::CollectGarbage() {
 
   // Create NewHeap
   Heap::AllocatorTy NewHeap;
-  CopyCollector GC(NewHeap, this->TrashHeap);
+
+  // Preserve OldSharedPtrs until the GC is finished.
+  SharedPtrStorage OldSharedPtrs(std::move(SharedPtrs));
+
+  CopyCollector GC(SharedPtrs, OldSharedPtrs, NewHeap, this->TrashHeap);
 
   // Note that Environments are captured in Lambdas.
 

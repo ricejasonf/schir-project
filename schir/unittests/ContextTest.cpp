@@ -13,10 +13,11 @@
 
 namespace {
 
-struct LifetimeTracker {
+class LifetimeTracker {
   bool& IsAlive;
 
-  LifetimeTracker(bool& IsAlive_)
+public:
+  explicit LifetimeTracker(bool& IsAlive_)
     : IsAlive(IsAlive_)
   {
     IsAlive = true;
@@ -98,4 +99,37 @@ TEST(ContextTest, DynamicWindExceptionExit) {
   EXPECT_FALSE(IsAlive);
 }
 
+TEST(ContextTest, SharedAnyLifetime) {
+  auto Context = schir::Context();
+  bool IsAlive = false;
+  bool Check_1 = false;
+  bool Check_2 = false;
+
+  schir::Value LTTV = Context.CreateSharedAny(
+      std::make_shared<LifetimeTracker>(IsAlive));
+
+  schir::Lambda* Thunk = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      LifetimeTracker* LTT = schir::any_cast<LifetimeTracker>(C.getCapture(0));
+      Check_1 = IsAlive;
+      Check_2 = LTT;
+      C.Cont();
+    }, schir::CaptureList{LTTV});
+
+  schir::ContextLocal GlobalVar;
+  GlobalVar.set(Context, Thunk);
+
+  // TODO Run GC.
+
+  Context.ApplyThunk(Thunk);
+  EXPECT_TRUE(IsAlive);
+  Context.Resume();
+  EXPECT_TRUE(Check_1);
+  EXPECT_TRUE(Check_2);
+  EXPECT_TRUE(IsAlive);
+
+  GlobalVar.set(Context, schir::Bool(false));
+  // TODO Run GC.
+  //EXPECT_FALSE(IsAlive);
+}
 }
