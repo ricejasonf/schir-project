@@ -56,6 +56,7 @@
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define i32 (type "i32"))
+    (define f32 (type "f32"))
 
     ;; Not used types
     ; (define !nbdl.tag (type "!nbdl.tag")) ; Not used.
@@ -106,11 +107,18 @@
     ;; Create a thunk that should receive a location and callback
     ;; to resolve a value once its dependencies are resolved.
     ;; (e.g. arguments to visit)
+    ;; Additionally, an optional MatchImpl may be provided
+    ;; to specify how the result is matched given a procedure
+    ;; taking the following arguments:
+    ;;   MatchImpl: (Loc Store Key Fn) => ()
+    ;; where Store is the Expr sans the MatchImpl.
     (define-syntax %expr
       (syntax-rules ()
         ;; Thunk: (Loc Fn) -> Store
         ((%expr Loc Thunk)
-         (list %nbdl-expr Loc Thunk))))
+         (list %nbdl-expr Loc Thunk #f))
+        ((%expr Loc Thunk MatchImpl)
+         (list %nbdl-expr Loc Thunk MatchImpl))))
 
     ;; Handle the typical %expr use case of handling a single expr.
     (define-syntax %single-expr
@@ -132,19 +140,21 @@
                 (lambda (Loc_ Fn)
                   (%match-expr+ Loc_ Input Fn))))))
 
-
     (define (expr? Arg)
       (and (pair? Arg) (eqv? %nbdl-expr (car Arg))))
 
     ;; Invoke the Thunk created with %expr
     (define (%invoke-expr Expr Fn)
-      (define-values (Loc Thunk)
+      (define-values (Tag Loc Thunk MatchImpl)
         (if (and (pair? Expr)
                  (eq? %nbdl-expr (car Expr)))
-          (values
-            (cadr Expr)
-            (car (cddr Expr)))
+          (apply values Expr)
+            ;(cadr Expr)
+            ;(car (cddr Expr)))
           (error "expecting %expr: {}" Expr)))
+      ; TODO If MatchImpl is set, maybe create a new type?
+      (when MatchImpl
+        (error "MatchImpl is not unwrapped: {}" Expr))
       (Thunk Loc Fn))
 
     ; Maybe lift to a LiteralOp or ConstexprOp.
@@ -1061,6 +1071,7 @@
     quote
     quasiquote
     source-loc
+    type
     dump
     reflect-match
     )

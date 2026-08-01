@@ -20,6 +20,7 @@ set(TEST_NBDL_SPEC_SOURCE_LIST
   match.cpp
   match_cond.cpp
   match_each.cpp
+  memref.cpp
   receive_event.cpp
   visit.cpp
 )

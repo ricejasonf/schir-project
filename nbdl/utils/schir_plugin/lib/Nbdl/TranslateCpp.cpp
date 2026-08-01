@@ -334,6 +334,21 @@ public:
   void VisitType(mlir::Location, mlir::Type) {
     OS << "auto&&";
   }
+
+  // Print SameAs constraint given an argument name.
+  void PrintCppTypeConstraint(mlir::Value Arg, mlir::Type T) {
+    auto CppType = dyn_cast<nbdl_spec::CppType>(T);
+    if (!CppType) {
+      mlir::Operation* Op = Arg.getDefiningOp();
+      if (!Op)
+        Op = cast<mlir::BlockArgument>(Arg).getOwner()->getParentOp();
+      return SetError("expecting a C++ type: {}", Op);
+    }
+    llvm::StringRef TypeStr = llvm::StringRef(CppType.getCppTypename());
+    assert(!TypeStr.empty() && "!nbdl.cpptype should not contain empty string");
+    llvm::StringRef ArgStr = GetLocalVal(Arg);
+    OS << "::nbdl::SameAs<decltype(" << ArgStr << "), " << TypeStr << "> ";
+  }
 };
 
 class FuncWriter : public NbdlSpecWriter<FuncWriter> {
@@ -517,25 +532,46 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
     mlir::BlockArgument& Arg = Body.getArguments().front();
     auto ST = dyn_cast<nbdl_spec::StoreType>(Arg.getType());
-    llvm::StringRef TypeStr;
-    if (ST.getAlts().size() == 1) {
-      mlir::Type T = ST.getAlts().front().getValue();
-      if (auto CppType = dyn_cast<nbdl_spec::CppType>(T))
-        TypeStr = llvm::StringRef(CppType.getCppTypename());
+    llvm::ArrayRef<mlir::TypeAttr> Alts = ST.getAlts();
+    // TODO Generate constraints here via disjunction.
+    //      if we get a noncpp type that is supported,
+    //      we check the specified concept and perform
+    //      a conversion. (memref)
+    if (Alts.size() == 1) {
+      // Allow MemRefType if it is the only alternative.
+      mlir::MemRefType MRT
+        = dyn_cast<mlir::MemRefType>(ST.getAlts().front().getValue());
+      if (MRT)
+        return VisitMemRefOverload(Body, MRT);
     }
 
+    // Print unary lambda that handles C++ type alternatives.
     ValueMapScope Scope(ValueMap);
     OS << "[&]";
     // Write parameters.
     OS << "([[maybe_unused]] ";
-    if (!TypeStr.empty())
-      OS << "::nbdl::SameAs<" << TypeStr << "> ";
-    OS << "auto&& "
-       << SetLocalVarName(Arg, "arg_");
-    OS << ')';
+    OS << "auto&& " << SetLocalVarName(Arg, "arg_") << ") ";
+
+    // Print the first constraint.
+    if (Alts.size() > 0) {
+      OS << "requires ";
+      PrintCppTypeConstraint(Arg, Alts.front().getValue());
+      Alts = Alts.drop_front();
+    }
+
+    // Print possible subsequent alternative constraints.
+    for (mlir::TypeAttr TA : Alts) {
+      OS << "|| ";
+      PrintCppTypeConstraint(Arg, TA.getValue());
+    }
+
     OS << "{\n";
     VisitRegion(Body);
     OS << '}';
+  }
+
+  void VisitMemRefOverload(mlir::Region& Body, mlir::MemRefType MRT) {
+    llvm_unreachable("TODO");
   }
 
   void Visit(MatchIfOp Op) {
