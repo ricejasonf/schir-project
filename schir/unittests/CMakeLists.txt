@@ -1,8 +1,8 @@
-if (NOT CMAKE_TESTING_ENABLED)
+add_custom_target(SchirUnitTests)
+
+if (NOT CMAKE_TESTING_ENABLED OR NOT GTEST_FOUND)
  return()
 endif()
-
-add_custom_target(SchirUnitTests)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/unittests)
 

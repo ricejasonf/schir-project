@@ -10,7 +10,7 @@
           {
             "name": "ricejasonf/schir-project",
             "type": "docker",
-            "revision": "sha256:d9526cb999c6989caa65dd68e105bccb5a327ee394c224426a54649f1ec27848"
+            "revision": "sha256:d9cfde3e70026c27f469e3f65aab4237d1a098af24f6cf97463e0427aa8c2112"
           }
         ],
         [
