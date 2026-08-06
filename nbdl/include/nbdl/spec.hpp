@@ -32,7 +32,7 @@ namespace nbdl::detail {
 template <int>
 struct probe {
   template <typename ...>
-  using apply = int;
+  struct apply { };
 };
 
 // Implement our own declval to use in an evaluated context.

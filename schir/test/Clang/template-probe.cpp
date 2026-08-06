@@ -40,7 +40,7 @@ namespace my {
 template <int>
 struct probe {
   template <typename ...>
-  using apply = int;
+  struct apply { };
 };
 
 template <template<typename...> typename probe, typename ...Ts>
