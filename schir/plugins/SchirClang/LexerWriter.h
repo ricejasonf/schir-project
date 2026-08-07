@@ -61,16 +61,18 @@ public:
   bool empty() const { return Size == 0; }
 
   // Lex tokens from string and push to TokenBuffer.
-  // Copy to a std::string to guarantee a null terminator.
   void Tokenize(clang::SourceLocation Loc, llvm::StringRef Chars) {
     if (Chars.empty()) return;
-    // Copy to LexerSpellings to ensure null terminator.
-    Chars = Chars.copy(LexerSpellings);
-    char* NullTerm = LexerSpellings.template Allocate<char>(1);
-    *NullTerm = 0;
+
+    // Own the Chars and add a null terminator.
+    size_t NewSize = Chars.size() + 1;
+    char *S = LexerSpellings.template Allocate<char>(Chars.size() + 1);
+    S[Chars.size()] = '\0';
+    std::copy(Chars.begin(), Chars.end(), S);
+
     // Lex Tokens for the TokenBuffer.
     clang::Lexer Lexer(clang::SourceLocation(), Parser.getLangOpts(),
-            Chars.data(), Chars.data(), &(*(Chars.end())));
+            S, S, S + Chars.size());
     while (true) {
       Token Tok;
       Lexer.LexFromRawLexer(Tok);

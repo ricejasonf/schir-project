@@ -56,6 +56,7 @@ class Heap : public llvm::AllocatorBase<Heap<Derived>> {
   }
 
   AllocatorTy TrashHeap;
+  size_t BytesUsed = 0;
 
   // MaxHint - The threshold used to determine if a garbage
   //           collection run is needed. This value is not a
@@ -70,19 +71,17 @@ public:
     : MaxHint(MaxStart)
   { }
 
-  // getBytesAllocated
-  //    - Provide the number of bytes allocated on the
-  //      heap. This does not include intermediate data
-  //      stored on an old heap that is being scavenged.
-  size_t getBytesAllocated() const {
-    return TrashHeap.getBytesAllocated();
+  // Return the number bytes used. This will not include
+  // bytes used by alignment padding or trailing red zones.
+  size_t getBytesUsed() const {
+    return BytesUsed;
   }
 
   // Allocate a potentially large object (like a String).
   void* BigAllocate(size_t Size, size_t Alignment) {
     size_t WorstCase = Size + Alignment;
-    size_t BytesUsed = getBytesAllocated();
-    if (WorstCase >= Derived::MiB && double(WorstCase) / double(BytesUsed) > 0.25) {
+    if (WorstCase >=
+          Derived::MiB && double(WorstCase) / double(BytesUsed) > 0.25) {
       // Just increase the MaxHint since GC will not
       // likely do much in this scenario.
       MaxHint += WorstCase;
@@ -92,6 +91,7 @@ public:
   }
 
   void* Allocate(size_t Size, size_t Alignment) {
+    BytesUsed += Size;
     return TrashHeap.Allocate(Size, Alignment);
   }
 
@@ -100,8 +100,6 @@ public:
   }
 
   void MaybeCollectGarbage() {
-    size_t BytesUsed = getBytesAllocated();
-
     if (BytesUsed > MaxHint)
        getDerived().CollectGarbage();
   }

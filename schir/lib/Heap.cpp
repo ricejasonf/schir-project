@@ -351,7 +351,7 @@ void Context::CollectGarbage() {
   //       are saved as opaque string objects.
   //       Wrap these in some kind of  "ContStack" value
   //       and make a visitor for their captures.
-  llvm::errs() << "NOT COLLECTING GARBAGE: " << getBytesAllocated() << "\n";
+  llvm::errs() << "NOT COLLECTING GARBAGE: " << getBytesUsed() << "\n";
   MaxHint *= 2;
   return;
 

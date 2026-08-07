@@ -649,13 +649,6 @@ inline T* cast_or_null(::schir::Value V) {
 
 template <>
 struct DenseMapInfo<::schir::Value> {
-  static ::schir::Value getEmptyKey() {
-    return DenseMapInfo<::schir::ValueBase*>::getEmptyKey();
-  }
-  static ::schir::Value getTombstoneKey() {
-    return DenseMapInfo<::schir::ValueBase*>::getTombstoneKey();
-  }
-
   static unsigned getHashValue(::schir::Value Arg) {
     uintptr_t OpaqueValue = Arg.getOpaqueValue();
     return DenseMapInfo<uintptr_t>::getHashValue(OpaqueValue);
@@ -2332,14 +2325,6 @@ struct WithSource {
   WithSourceIterator end() const {
     return WithSourceIterator();
   }
-};
-
-struct ValueFormatter : llvm::FormatAdapter<Value> {
-  explicit ValueFormatter(Value V)
-    : llvm::FormatAdapter<Value>(std::move(V)) // uhh... ok
-  { }
-
-  void format(llvm::raw_ostream& OS, llvm::StringRef Style) override;
 };
 
 void format(llvm::raw_ostream &OS, llvm::StringRef Fmt,

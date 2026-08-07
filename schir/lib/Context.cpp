@@ -1778,10 +1778,6 @@ schir::Value Context::ParseLiteral(llvm::StringRef Expr) {
                                   Value(Undefined());
 }
 
-void ValueFormatter::format(llvm::raw_ostream& OS, llvm::StringRef Style) {
-  write(OS, Item);
-}
-
 void schir::format(llvm::raw_ostream &OS, llvm::StringRef Fmt,
                    llvm::ArrayRef<Value> Values, bool Validate) {
   auto const Replacements
@@ -1797,9 +1793,13 @@ void schir::format(llvm::raw_ostream &OS, llvm::StringRef Fmt,
       continue;
     }
 
-    auto W = ValueFormatter{Values[R.Index]};
+    schir::Value Item = Values[R.Index];
+    auto ValueFormatter = [Item](llvm::raw_ostream& OS,
+                                 llvm::StringRef /*Style*/) {
+      write(OS, Item);
+    };
 
-    llvm::FmtAlign Align(W, R.Where, R.Width, R.Pad);
+    llvm::FmtAlign Align(ValueFormatter, R.Where, R.Width, R.Pad);
     Align.format(OS, R.Options);
   }
 }

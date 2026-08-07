@@ -20,8 +20,9 @@ module {
 // CHECK-SAME: %[[ARG1:arg[0-9]*]]: vector<3xf32>
 // CHECK-COUNT-9: spirv.FMul
 // CHECK-NOT: spirv.FMul
-// CHECK-COUNT-5: spirv.FAdd
+// CHECK-COUNT-2: spirv.FAdd
 // CHECK-NOT: spirv.FAdd
+// CHECk-COUNT-3: spirv.FSub
 // CHECK: spirv.Return
 func.func @gprod(%arg0: !vec3, %arg1: !vec3)
         -> !geomalg.unknown {
