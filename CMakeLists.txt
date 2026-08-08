@@ -44,4 +44,5 @@ add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 # TODO Make a dynamic list of check targets.
 add_dependencies(check check-schir)
 add_dependencies(check check-geomalg)
+add_dependencies(check check-nbdl)
 add_dependencies(check SchirUnitTests)
