@@ -59,6 +59,7 @@ schir::ExternFunction function_type_inputs;
 schir::ExternFunction attr;
 schir::ExternFunction type_attr;
 schir::ExternFunction value_attr;
+schir::ExternFunction unit_attr;
 template <typename AttrTy>
 schir::ExternFunction string_attr;
 schir::ExternFunction float_attr;
@@ -722,6 +723,14 @@ void value_attr(Context& C, ValueRefs Args) {
   C.Cont(C.CreateAny(Attr));
 }
 
+void unit_attr(Context& C, ValueRefs Args) {
+  if (!Args.empty())
+    return C.RaiseError("invalid arity");
+  mlir::MLIRContext* MLIRContext = getCurrentContext(C);
+  mlir::Attribute Attr = mlir::UnitAttr::get(MLIRContext);
+  C.Cont(C.CreateAny(Attr));
+}
+
 template <typename AttrTy>
 void string_attr(Context& C, ValueRefs Args) {
   if (Args.size() != 1)
@@ -1007,6 +1016,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   SCHIR_MLIR_VAR(attr) = schir::mlir_bind::attr;
   SCHIR_MLIR_VAR(type_attr) = schir::mlir_bind::type_attr;
   SCHIR_MLIR_VAR(value_attr) = schir::mlir_bind::value_attr;
+  SCHIR_MLIR_VAR(unit_attr) = schir::mlir_bind::unit_attr;
   SCHIR_MLIR_VAR(string_attr<mlir::StringAttr>)
     = schir::mlir_bind::string_attr<mlir::StringAttr>;
   SCHIR_MLIR_VAR(string_attr<mlir::FlatSymbolRefAttr>)
@@ -1049,6 +1059,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"attr", SCHIR_MLIR_VAR(attr)},
     {"type-attr", SCHIR_MLIR_VAR(type_attr)},
     {"value-attr", SCHIR_MLIR_VAR(value_attr)},
+    {"unit-attr", SCHIR_MLIR_VAR(unit_attr)},
     {"string-attr", SCHIR_MLIR_VAR(string_attr<mlir::StringAttr>)},
     {"float-attr", SCHIR_MLIR_VAR(float_attr)},
     {"flat-symbolref-attr",

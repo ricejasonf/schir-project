@@ -3,7 +3,7 @@
 //
 // Define functions and classes for transpiling Nbdl dialect operations to
 // C++ which tries to maintain source locations to declarations in DSL code.
-// 
+//
 #include <nbdl_spec/NbdlDialect.h>
 #include <schir/Source.h>
 #include <schir/Value.h>
@@ -197,8 +197,13 @@ public:
    *********** Expr Printing **********
    ************************************/
 
+  // Indicate if the value is printed directly or bound to variable.
+  static constexpr
+  auto  IsConstantLike = [](mlir::Value V) -> bool {
+    return isa_and_nonnull<LiteralOp, ConstexprOp, ConstOp>(V.getDefiningOp());
+  };
+
   void WriteExpr(mlir::Value V, bool IsFwd = false) {
-    // We do not need to forward literals and junk.
     if (auto Op = V.getDefiningOp<LiteralOp>()) {
       WriteExpr(Op);
     } else if (auto Op = V.getDefiningOp<ConstexprOp>()) {
@@ -447,34 +452,75 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   }
 
   void Visit(VisitOp Op) {
-    // If the return type is not the unit type assign
-    // the result to a variable.
     if (!isa<nbdl_spec::UnitType>(Op.getResult().getType())) {
+      // Bind the result to a reference variable on the stack.
       OS << "auto&& "
          << SetLocalVarName(Op.getResult(), "result_")
          << " = ";
     }
 
-    mlir::Value Fn = Op.getFn();
-    mlir::OperandRange Args = Op.getArgs();
-
-    if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
-      if (Args.empty()) {
-        SetError("member literal callee expects at least one argument", Op);
-        return;
+    // Write the RHS which might also need to be in a requires clause.
+    auto WriteVisitRHS = [&Op, this] {
+      mlir::Value Fn = Op.getFn();
+      mlir::OperandRange Args = Op.getArgs();
+      if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
+        if (Args.empty()) {
+          SetError("member literal callee expects at least one argument", Op);
+          return;
+        }
+        WriteExpr(Args.front());
+        OS << '.' << MemberNameOp.getName();
+        Args = Args.drop_front();
+      } else {
+        WriteExpr(Op.getFn());
       }
-      WriteExpr(Args.front());
-      OS << '.' << MemberNameOp.getName();
-      Args = Args.drop_front();
+      OS << '(';
+      llvm::interleave(Args, OS,
+          [&](mlir::Value V) {
+            WriteExpr(V);
+          }, ", ");
+      OS << ")";
+    };
+
+    if (Op.getSfinae()) {
+      // Make a sfinae thunk callable wrapper.
+      mlir::Value Fn = Op.getFn();
+      mlir::OperandRange Args = Op.getArgs();
+      llvm::SmallVector<mlir::Value, 8> WrapperArgs;
+      if (!Fn.getDefiningOp<nbdl_spec::MemberNameOp>())
+        WrapperArgs.push_back(Fn);
+      WrapperArgs.append(Args.begin(), Args.end());
+      // Remove constant values that are written directly.
+      llvm::erase_if(WrapperArgs, IsConstantLike);
+      bool IsMemberCall = Fn.getDefiningOp<nbdl_spec::MemberNameOp>();
+
+      { // Begin scope for lambda param vars.
+        ValueMapScope Scope(ValueMap);
+        OS << "::nbdl::detail::sfinae{[](";
+        llvm::interleave(WrapperArgs, OS,
+            [&](mlir::Value V) {
+              OS << "auto&& " << SetLocalVarName(V, "thunk_arg_");
+            }, ", ");
+        OS << ") -> decltype(auto)\n requires(requires { ";
+        WriteVisitRHS(); // Inside requires clause
+        OS << "; })\n"; // End requires clause.
+
+        OS << "{ return ";
+        WriteVisitRHS(); // Evalutated expression
+        OS << "; }}";
+      } // End lambda args scope.
+
+      // Call args
+      OS << '(';
+      llvm::interleave(WrapperArgs, OS,
+          [&](mlir::Value V) {
+            WriteExpr(V);
+          }, ", ");
+      OS << ')';
     } else {
-      WriteExpr(Op.getFn());
+      WriteVisitRHS();
     }
-    OS << '(';
-    llvm::interleave(Args, OS,
-        [&](mlir::Value V) {
-          WriteExpr(V);
-        }, ",\n");
-    OS << ");\n";
+    OS << ";\n";
   }
 
   void Visit(DiscardOp) {
@@ -582,16 +628,12 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ") {\n";
     VisitRegion(Then);
 
-    // Check if the else region is a single MatchIfOp
-    // for pretty chaining.
-    OS << "} else ";
-    if (auto ChainedIfOp = dyn_cast<MatchIfOp>(Else.front().front())) {
-      Visit(ChainedIfOp);
-    } else {
-      OS << "{\n";
-      VisitRegion(Op.getElseRegion());
-      OS << "}\n";
-    }
+    // Every operation in the body of the else region must be in the
+    // translated else statement so it must be a compound statement
+    // and not directly chained with another if statement.
+    OS << "} else {\n";
+    VisitRegion(Op.getElseRegion());
+    OS << "}\n";
   }
 
   void Visit(MatchEachOp Op) {

@@ -46,7 +46,59 @@ T&& declval() { }
 template <typename T>
 T&& declval();
 #endif // defined(__clang__)
+
+struct invalid { }; // Tag for sfinae_result
+
+template <typename Result>
+struct sfinae_result {
+  Result sfinae_result_value;
+
+  constexpr explicit operator bool() const {
+    if constexpr (requires { static_cast<bool>(sfinae_result_value); })
+      return sfinae_result_value;
+    else
+      return true;
+  }
+};
+
+template <>
+struct sfinae_result<invalid> {
+  constexpr explicit operator bool() const {
+    return false;
+  }
+};
+
+template <>
+struct sfinae_result<void> {
+  constexpr explicit operator bool() const {
+    return true;
+  }
+};
+
+template <typename ThunkFn>
+struct sfinae {
+  ThunkFn fn;
+
+  // Note `sfinae_result` is aggregate initialized
+  // to prevent a dangling reference.
+  template <typename ...Args>
+  decltype(auto) operator()(Args&& ...args) const {
+    if constexpr(std::invocable<ThunkFn, Args...>) {
+      if constexpr(std::same_as<std::invoke_result_t<ThunkFn, Args...>, void>)
+        return sfinae_result<void>{};
+      else
+        return sfinae_result{std::invoke(fn, std::forward<Args>(args)...)};
+    } else {
+      return sfinae_result<invalid>{};
+    }
+  }
+};
 } // namespace nbdl::detail
+
+namespace nbdl {
+  // TODO Implement match_impl.
+//template <typename ThunkFn>
+} // namespace nbdl
 
 
 #endif // NBDL_SPEC_HPP

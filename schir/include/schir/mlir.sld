@@ -29,6 +29,7 @@
     attr
     type-attr
     value-attr
+    unit-attr
     string-attr
     flat-symbolref-attr
     float-attr

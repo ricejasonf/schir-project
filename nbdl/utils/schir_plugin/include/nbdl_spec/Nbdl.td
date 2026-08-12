@@ -362,9 +362,13 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     Call a function with resolved stores as arguments
     returning a result. This is analogous to std::visit
     except only one function is generated.
+
+    The Sfinae unit attribute indicates the call should
+    be wrapped in a SFINAE check.
   }];
   let arguments = (ins Nbdl_TypePlus:$fn,
-                       Variadic<Nbdl_Type>:$args);
+                       Variadic<Nbdl_Type>:$args,
+                       UnitAttr:$sfinae);
   let results = (outs Nbdl_Type:$result);
 }
 

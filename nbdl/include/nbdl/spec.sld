@@ -804,7 +804,11 @@
     (define (discarded-loc Obj)
       (and (discarded? Obj) (cadr Obj)))
 
-    (define (build-visit MatchingResults? Loc Results)
+    (define (build-visit MatchingResults? Sfinae? Loc Results)
+      (define SfinaeAttr
+        (if Sfinae?
+          (unit-attr)
+          #f))
       (define ResultType
         (if MatchingResults?
           (infer-visit-result Results)
@@ -814,13 +818,13 @@
           (create-op "nbdl.visit"
                      (loc: Loc)
                      (operands: Results)
-                     (attributes:)
+                     (attributes: ("sfinae" SfinaeAttr))
                      (result-types: ResultType))))
       (if MatchingResults?
         VisitResult
         (build-discard Loc VisitResult)))
 
-    (define (visit-aux MatchingResults? Loc ParamsSpec)
+    (define (visit-aux-aux MatchingResults? Sfinae? Loc ParamsSpec)
       (close-previous-scope)
       ;; This %expr is for the whole visit expr (ie its result).
       (if MatchingResults?
@@ -829,11 +833,24 @@
             (%match-results
               ParamsSpec
               (lambda (Results)
-                (Fn (build-visit MatchingResults? Loc Results))))))
-        (%match-results
+                (Fn (build-visit MatchingResults? Sfinae? Loc Results))))))
+        (%match-results ; Sfinae is #f
           ParamsSpec
           (lambda (Results)
-            (build-visit MatchingResults? Loc Results)))))
+            (build-visit MatchingResults? #f Loc Results)))))
+
+    (define-syntax visit-aux
+      (syntax-rules ()
+        ((visit-aux Sfinae? Callee StoreN ...)
+         (let ()
+           (define MatchingResults? matching-results?)
+           (define CalleeLoc (syntax-source-loc Callee))
+           (define ParamsSpec
+             (list
+               (%single-expr+ Callee)
+               (%single-expr StoreN) ...))
+           (visit-aux-aux matching-results? Sfinae? CalleeLoc ParamsSpec)
+           ))))
 
     ;; Analogous to std::visit but it takes stores
     ;; for all of its parameters including the callee.
@@ -846,15 +863,16 @@
     (define-syntax visit
       (syntax-rules ()
         ((visit Callee StoreN ...)
-         (let ()
-           (define MatchingResults? matching-results?)
-           (define CalleeLoc (syntax-source-loc Callee))
-           (define ParamsSpec
-             (list
-               (%single-expr+ Callee)
-               (%single-expr StoreN) ...))
-           (visit-aux matching-results? CalleeLoc ParamsSpec)
-           ))))
+         (visit-aux #f Callee StoreN ...))))
+
+    ;; Create sfinae friendly visit when used as the direct input
+    ;; to match-if conditional argument. The boundaries of the
+    ;; sfinae check are limited to the call itself with all operands
+    ;; being resolved.
+    (define-syntax sfinae-visit
+      (syntax-rules ()
+        ((sfinae-visit Callee StoreN ...)
+         (visit-aux #t Callee StoreN ...))))
 
     (define (infer-match-each-element ParamVals)
       ;; Since we will not likely support the
