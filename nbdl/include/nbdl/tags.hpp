@@ -36,7 +36,7 @@ namespace nbdl {
   //                  (Also the default for nbdl::variant)
   //
   struct unresolved { };
-
+  
   // Provide a key to access elements of
   // tuple-likes and sequences by their index.
   // (ie similar to std::get<i>)

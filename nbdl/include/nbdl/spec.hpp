@@ -47,15 +47,18 @@ template <typename T>
 T&& declval();
 #endif // defined(__clang__)
 
-struct invalid { }; // Tag for sfinae_result
+struct invalid { }; // Tag for detail::sfinae_result
+struct sfinae_result_tag { }; // boost::hana dispatch tag
 
 template <typename Result>
 struct sfinae_result {
+  using hana_tag = sfinae_result_tag;
+
   Result sfinae_result_value;
 
   constexpr explicit operator bool() const {
     if constexpr (requires { static_cast<bool>(sfinae_result_value); })
-      return sfinae_result_value;
+      return static_cast<bool>(sfinae_result_value);
     else
       return true;
   }
@@ -63,6 +66,7 @@ struct sfinae_result {
 
 template <>
 struct sfinae_result<invalid> {
+  using hana_tag = sfinae_result_tag;
   constexpr explicit operator bool() const {
     return false;
   }
@@ -70,6 +74,7 @@ struct sfinae_result<invalid> {
 
 template <>
 struct sfinae_result<void> {
+  using hana_tag = sfinae_result_tag;
   constexpr explicit operator bool() const {
     return true;
   }
@@ -96,8 +101,13 @@ struct sfinae {
 } // namespace nbdl::detail
 
 namespace nbdl {
-  // TODO Implement match_impl.
-//template <typename ThunkFn>
+template <>
+struct match_impl<detail::sfinae_result_tag> {
+  template <typename Store, typename Fn>
+  static constexpr void apply(Store&& s, Fn&& fn) {
+    std::forward<Fn>(fn)(std::forward<Store>(s).sfinae_result_value);
+  }
+};
 } // namespace nbdl
 
 

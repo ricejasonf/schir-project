@@ -191,9 +191,9 @@
          (%match-path-spec Expr Fn))
         ((discarded-loc Expr)
          => (lambda (DiscardLoc)
-              (error "value is discarded and cannot be used"
-                     (error-note "value discarded here" (dump DiscardLoc)))))
-         (else (error "unable to resolve value: {}" Expr)))
+              (error-with-loc Loc "value is discarded and cannot be used"
+                     (error-note "value discarded here" DiscardLoc))))
+         (else (error-with-loc Loc "unable to resolve value: {}" Expr)))
       ; Return a "discarded" value to provide a better error message.
       ; This prevents the user from passing around out of scope SSA values.
       ; FIXME nbdl.scope was created to prevent this,
@@ -798,6 +798,19 @@
                    (result-types:))
       (list %nbdl-discard Loc))
 
+    (define (discard-aux Loc Expr)
+      (%match-results
+        (list Expr)
+        (lambda (Results)
+          (define Value (car Results) )
+          (build-discard Loc Value))))
+
+    (define-syntax discard
+      (syntax-rules ()
+        ((discard Value)
+         (discard-aux (syntax-source-loc Value)
+                      (%single-expr Value)))))
+
     (define (discarded? Obj)
       (and (pair? Obj) (eq? (car Obj) %nbdl-discard)))
 
@@ -1002,12 +1015,11 @@
     ; The syntax match-if is not so different from
     ; if except that it operates on expressions that
     ; resolve stores (ie via get, visit, et al.)
-    ; If Else is not specified map it to C++ false
-    ; for use as conditionals in cond clauses.
+    ; If Else is not specified then yield 'false.
     (define-syntax match-if
       (syntax-rules ()
         ((match-if Cond Then)
-         (match-if Cond Then 'false))
+         (match-if Cond Then (discard 'false)))
         ((match-if Cond Then Else)
          (match-if-impl (syntax-source-loc Cond)
                         (lambda (Loc Fn)
@@ -1074,6 +1086,7 @@
     match-if
     match-params-fn
     visit
+    sfinae-visit
     noop
     dump-cpp
     dump-op
