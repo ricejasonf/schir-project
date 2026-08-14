@@ -79,6 +79,7 @@ void WithBuilderImpl(Context& C, mlir::OpBuilder const& Builder,
 
 llvm::LogicalResult WithDiagnosticsHandler(
                                schir::Context& C,
+                               schir::SourceLocation Loc,
                                llvm::function_ref<llvm::LogicalResult()> Thunk,
                                llvm::StringRef ErrorMsg,
                                schir::Value Irr) {
@@ -98,11 +99,11 @@ llvm::LogicalResult WithDiagnosticsHandler(
         schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
                                            schir::Empty());
         Irrs.push_back(Error);
-        return llvm::failure();
+        return llvm::success(); // Disable mlir error output.
       });
 
   if (mlir::failed(Thunk())) {
-    C.RaiseError(ErrorMsg, Irrs);
+    C.RaiseError(Loc, ErrorMsg, Irrs);
     return llvm::failure();
   }
   return llvm::success();

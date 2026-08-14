@@ -179,7 +179,15 @@ public:
   void WithExceptionHandlers(Value NewHandlers, Value Thunk);
   void WithExceptionHandler(Value Handler, Value Thunk);
   void Raise(Value Obj);
-  void RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs);
+  void RaiseError(SourceLocation Loc, String* Msg,
+                  llvm::ArrayRef<Value> IrrArgs);
+  void RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs) {
+    RaiseError(this->Loc, Msg, IrrArgs);
+  }
+  void RaiseError(SourceLocation Loc, llvm::StringRef Msg,
+                  llvm::ArrayRef<Value> IrrArgs = {}) {
+    RaiseError(Loc, CreateString(Msg), IrrArgs);
+  }
   void RaiseError(llvm::StringRef Msg, llvm::ArrayRef<Value> IrrArgs = {}) {
     RaiseError(CreateString(Msg), IrrArgs);
   }

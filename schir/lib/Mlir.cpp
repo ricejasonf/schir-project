@@ -877,13 +877,18 @@ void parent_op(Context& C, schir::ValueRefs Args) {
   }
 }
 
-// Return true if operation verify is success otherwise
-// false. Diagnostics are output to stderr by default via MLIR.
+// Return true if operation verify is success otherwise raise an
+// error with attached corresponding diagnostics.
 // (verify _op_)
 void verify(Context& C, schir::ValueRefs Args) {
   if (mlir::Operation* Op = getSingleOpArg(C, Args)) {
-    bool Success = mlir::verify(Op).succeeded();
-    C.Cont(schir::Bool(Success));
+    llvm::LogicalResult Result = WithDiagnosticsHandler(C,
+        schir::Value(Op).getSourceLocation(),
+        [&] { return mlir::verify(Op); },
+        "operation failed verification");
+    if (mlir::failed(Result))
+      return;
+    C.Cont(schir::Bool(true));
   }
 }
 

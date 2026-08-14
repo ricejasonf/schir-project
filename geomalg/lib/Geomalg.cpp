@@ -173,6 +173,7 @@ void geomalg_apply_metric(schir::Context& C, schir::ValueRefs Args) {
 
   llvm::LogicalResult PassResult =
     schir::mlir_helper::WithDiagnosticsHandler(C,
+          schir::Value(Op).getSourceLocation(),
           [&] { return PM.run(Op); },
           "failed to apply metric to function: {}", FuncName);
   if (mlir::failed(PassResult))

@@ -34,6 +34,7 @@ void WithBuilderImpl(Context& C, mlir::OpBuilder const& Builder,
 // Return the result of Thunk.
 llvm::LogicalResult WithDiagnosticsHandler(
                                schir::Context& C,
+                               schir::SourceLocation Loc,
                                llvm::function_ref<llvm::LogicalResult()> Thunk,
                                llvm::StringRef ErrorMsg,
                                schir::Value Irr = schir::Undefined());

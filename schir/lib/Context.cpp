@@ -1325,11 +1325,12 @@ void Context::Raise(Value Obj) {
   }, {Handler, Obj}));
 }
 
-void Context::RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs) {
+void Context::RaiseError(SourceLocation Loc, String* Msg,
+                         llvm::ArrayRef<Value> IrrArgs) {
   Value IrrList = Empty();
   for (Value Irr : llvm::reverse(IrrArgs))
     IrrList = CreatePair(Irr, IrrList);
-  Value Error = CreateError(this->Loc, Msg, IrrList);
+  Value Error = CreateError(Loc, Msg, IrrList);
   Raise(Error);
 }
 
