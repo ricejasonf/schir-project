@@ -805,7 +805,7 @@ mlir::Value OpGen::createSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
   // Save the insertion point for top level define-syntax.
   mlir::OpBuilder::InsertPoint PrevIp = Builder.saveInsertionPoint();
 
-  Symbol* Keyword = dyn_cast<Symbol>(SyntaxSpec->Car);
+  Symbol* Keyword = unwrapIdentifier(SyntaxSpec->Car);
   if (!Keyword) return SetError("expecting syntax spec keyword", SyntaxSpec);
 
   std::string MangledName;
