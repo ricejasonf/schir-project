@@ -623,11 +623,46 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   void Visit(MatchIfOp Op) {
     mlir::Region& Then = Op.getThenRegion();
     mlir::Region& Else = Op.getElseRegion();
+    mlir::Value Cond = Op.getCond();
+    mlir::Value ThenArg = Then.getArgument(0);
     OS << "if (";
-    WriteExpr(Op.getCond());
+    WriteExpr(Cond);
     OS << ") {\n";
-    VisitRegion(Then);
 
+    // Then Region
+
+    // Bind ThenArg to a new var (without finishing the statement).
+    auto WriteThenArg = [&] {
+      OS << "auto&& "
+         << SetLocalVarName(ThenArg, "sfinae_arg_")
+         << " = ";
+      WriteExpr(Cond);
+    };
+
+
+    auto VOp = Cond.getDefiningOp<VisitOp>();
+    bool IsSfinae = VOp && VOp.getSfinae();
+    if (IsSfinae) {
+      // Guard substitution failure with `if constexpr`.
+      OS << "if constexpr("
+         << "!::nbdl::SameAs<::nbdl::detail::sfinae_invalid , decltype(";
+      WriteExpr(Cond);
+      OS << ")>) {";
+      // Unwrap the sfinae result and bind it to the Then region's block arg.
+      WriteThenArg();
+      OS << ".sfinae_result_value;";
+    } else {
+      // Bind ThenArg to the same value as Cond.
+      WriteThenArg();
+      OS << ";";
+    }
+    VisitRegion(Then);
+    if (IsSfinae) {
+      // Finish the constexpr block.
+      OS << "}\n";
+    }
+
+    // Else Region
     // Every operation in the body of the else region must be in the
     // translated else statement so it must be a compound statement
     // and not directly chained with another if statement.

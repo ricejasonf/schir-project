@@ -72,9 +72,23 @@ struct sfinae_result<invalid> {
   }
 };
 
+using sfinae_invalid = sfinae_result<invalid>;
+
 template <>
 struct sfinae_result<void> {
   using hana_tag = sfinae_result_tag;
+
+  class void_t {
+    friend sfinae_result<void>;
+    explicit void_t() = default;
+  };
+
+  void_t sfinae_result_value;
+
+  sfinae_result()
+    : sfinae_result_value(void_t{})
+  { }
+
   constexpr explicit operator bool() const {
     return true;
   }

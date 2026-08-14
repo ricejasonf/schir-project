@@ -1,5 +1,9 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_FOO_FAIL -fsyntax-only -Xclang -verify %s
+
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -o %t
 // RUN: %t
@@ -51,16 +55,16 @@ int sum(int a, int b) {
     (sfinae-visit '.get_five Store))
   (match-cond
     ((GetFive store)
-     (fn 5)) ; // FIXME Should be able to use GetFive here.
-             ; // (Needs local syntax for that to work)
+     (match (GetFive store) ; // valid within region
+      (else => (lambda (val) (fn val)))))
     (else (fn 1))))
 
-; // Not in SFINAE context
+; // Not in SFINAE context (ie not conditional)
 (match-params-fn test_3 (store fn)
   (define (GetFive Store)
     (sfinae-visit '.get_five Store))
-  (GetFive store) ; // Fails for foo but not bar.
-  (fn 5)) ; // FIXME (fn (GetFive store)) should work
+  (match (GetFive store)
+    (else => fn))) // Fails for foo but not bar.
 
 (match-params-fn test_4 (store x fn)
   (define (GetVoid Store)
@@ -70,10 +74,8 @@ int sum(int a, int b) {
   (match-cond
     ((GetVoid store)
      (fn 1))
-    ((GetFivePlus store -5) ; // 5 - 5 = 0 so fall through
-     (fn 2))
-    ((GetFivePlus store x)
-     (fn 7)) ; // TODO Use => or something
+    ((GetFivePlus store -5) => fn) ; // 5 - 5 = 0 so fall through
+    ((GetFivePlus store x) => fn)
     (else (fn 1000))))
 
 (match-params-fn test_5 (store x fn)
@@ -124,8 +126,10 @@ int main() {
     my::test_2(bar, [&](int result) {
       result_2 = result;
     });
-#if 0 // TODO Test compiler failure here
-// error: no member name 'get_five' in 'my::foo'
+#ifdef TEST_FOO_FAIL
+    // expected-error@* {{no member named 'sfinae_result_value'}}
+    // expected-note@* 2 {{in instantiation of function template specialization}}
+    // expected-note@+1 {{in instantiation of function template specialization}}
     my::test_3(foo, [&](int result) {
       result_3 = result;
     });

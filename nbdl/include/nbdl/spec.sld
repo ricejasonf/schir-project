@@ -46,9 +46,17 @@
         module-cpp
         (lambda ()
           (define TopLevelOp (Thunk))
+          (define Loc (source-loc TopLevelOp))
           ; The verify pass may also raise a more specific error.
           (unless (verify TopLevelOp)
-            (error "operation failed verification: {}" TopLevelOp))
+            ; TODO Use mlir diagnostics handler to have error mlir diagnostics
+            ;      appear as error-notes with scheme source locations.
+            ;      `verify` should take an error handler so the error is raised
+            ;      by the user. The error handler should receive a list of
+            ;      these notes objects.
+            (error-with-loc Loc "operation failed verification"
+                            (error-note "operation prints as follows: {}"
+                                        TopLevelOp)))
           (translate-cpp TopLevelOp lexer-writer)
           (flush-tokens)
           TopLevelOp)))
@@ -486,7 +494,7 @@
                  (length '(stores ...))
                  (lambda (stores ... %FnVal)
                    (with-resolver
-                     Loc
+                     (syntax-source-loc fn)
                      %FnVal
                      (lambda (fn) body ...)))
                  )))))))
@@ -678,7 +686,7 @@
     (define (build-resolve-params Loc FnVal ParamVals)
       (unless (or (pair? ParamVals)
                   (null? ParamVals))
-        (error "expecting list of params: {}" ParamVals))
+        (error-with-loc Loc "expecting list of params: {}" ParamVals))
       (let ()
         (define Result
           (result
@@ -805,6 +813,8 @@
           (define Value (car Results) )
           (build-discard Loc Value))))
 
+    ;; Discard the result of an expression
+    ;; (typically from `visit`.)
     (define-syntax discard
       (syntax-rules ()
         ((discard Value)
@@ -887,6 +897,15 @@
         ((sfinae-visit Callee StoreN ...)
          (visit-aux #t Callee StoreN ...))))
 
+    ;; Make a store callable (in scheme) strictly for use
+    ;; with syntax that use => on procs or stores
+    ;; representing a visitor.
+    (define (make-visit-proc Store)
+      (if (procedure? Store)
+        Store
+        (lambda (Arg)
+          (visit Store Arg))))
+
     (define (infer-match-each-element ParamVals)
       ;; Since we will not likely support the
       ;; projection argument, we can get the result
@@ -932,7 +951,7 @@
       (syntax-rules (=>)
         ((match-aux PathSpec
           (TypeN => FnN) ...)
-         (%match-path-spec PathSpec
+         (%match-results (list PathSpec)
           (lambda (Store)
             (%top-level
               (lambda()
@@ -947,7 +966,7 @@
                   (attributes:)
                   (result-types:)
                   (region: "overloads" ((OverloadArg : (GetArgType TypeN)))
-                    (FnN OverloadArg)) ...))))))))
+                    ((make-visit-proc FnN) OverloadArg)) ...))))))))
 
     ;; Match a resolved object by its type.
     ;; - It is an error if a type appears more that once as an alternative.
@@ -963,20 +982,18 @@
           (else => DefaultFn))
          (match PathSpec
            ("" => DefaultFn)))
-        ((match Path
+        ((match PathSpec
           (Type1 => Fn1)
           (TypeN => FnN) ...
           (else => DefaultFn))
-         (match Path
+         (match PathSpec
            (Type1 => Fn1)
            (TypeN => FnN) ...
            ("" => DefaultFn)))
-        ; TODO Do we want this to be (%expr Store) to allow visit?
-        ;      (Which would also require %match-results in match-aux)
-        ((match Store
+        ((match PathSpec
            (Type1 => Fn1)
            (TypeN => FnN) ...)
-         (match-aux Store
+         (match-aux (%single-expr PathSpec)
            (Type1 => Fn1)
            (TypeN => FnN) ...))
         ))
@@ -992,15 +1009,19 @@
       (when #f #f))
 
     (define (build-match-if Loc CondResult ThenThunk ElseThunk)
+      (define ThenArgT
+        (get-type CondResult))
       (create-op "nbdl.match_if"
                  (loc: Loc)
                  (operands: CondResult)
                  (attributes:)
                  (result-types:)
-                 (region: "then" () (%top-level ThenThunk))
+                 (region: "then" ((ThenArg : ThenArgT))
+                          (%top-level
+                            (lambda () (ThenThunk ThenArg))))
                  (region: "else" () (%top-level ElseThunk))))
 
-    (define (match-if-impl Loc CondExprFn ThenThunk ElseThunk)
+    (define (match-if-aux Loc CondExprFn ThenThunk ElseThunk)
       (define CondExpr
         (%expr Loc CondExprFn))
       (define ParamsSpec
@@ -1021,10 +1042,10 @@
         ((match-if Cond Then)
          (match-if Cond Then (discard 'false)))
         ((match-if Cond Then Else)
-         (match-if-impl (syntax-source-loc Cond)
+         (match-if-aux (syntax-source-loc Cond)
                         (lambda (Loc Fn)
                           (%match-expr Loc Cond Fn))
-                        (lambda () Then)
+                        (lambda (ThenArg) Then)
                         (lambda () Else)))))
 
     ; This is basically a copy of R7RS `cond` syntax
@@ -1034,19 +1055,19 @@
         ((match-cond (else result1 result2 ...))
          (begin result1 result2 ...))
         ((match-cond (test => result))
-         (let ((temp test))
-           (match-if temp (result temp))))
+         (match-if-aux (syntax-source-loc test)
+                       (lambda (Loc Fn) (%match-expr Loc test Fn))
+                       (lambda (ThenArg) ((make-visit-proc result) ThenArg))
+                       (lambda () 0))) ; FIXME??
         ((match-cond (test => result) clause1 clause2 ...)
-         (let ((temp test))
-           (match-if temp
-             (result temp)
-             (match-cond clause1 clause2 ...))))
+         (match-if-aux (syntax-source-loc test)
+                       (lambda (Loc Fn) (%match-expr Loc test Fn))
+                       (lambda (ThenArg) ((make-visit-proc result) ThenArg))
+                       (lambda () (match-cond clause1 clause2 ...))))
         ((match-cond (test)) test)
         ((match-cond (test) clause1 clause2 ...)
-         (let ((temp test))
-           (match-if temp
-             temp
-             (match-cond clause1 clause2 ...))))
+         (match-cond (test => (lambda (DiscardMe) 0))
+                     clause1 clause2 ...))
         ((match-cond (test result1 result2 ...))
          (match-if test (begin result1 result2 ...)))
         ((match-cond (test result1 result2 ...)
