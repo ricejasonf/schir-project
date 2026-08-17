@@ -92,7 +92,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
     (visit 'nbdl::assign
            (get context '.last_message)
            message)
-    (fn (get context '.last_message)))
+    (visit fn (get context '.last_message)))
 }
 }  // namespace my
 }  // namespace

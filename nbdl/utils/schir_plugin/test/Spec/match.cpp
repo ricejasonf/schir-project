@@ -44,25 +44,25 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
   ; // get values initialized with literals
   (match-params-fn match_0 (store fn)
     (define root-path (get store))
-    (fn
-      (get store '.foo)
-      (get root-path '.bar)))
+    (visit fn
+          (get store '.foo)
+          (get root-path '.bar)))
 
   ; // get nested pair
   (match-params-fn match_1 (store fn)
     (define root-path (get store))
-    (fn
-      (get store '.baz)
-      (get store '.boo '.first)))
+    (visit fn
+          (get store '.baz)
+          (get store '.boo '.first)))
 
   ; // get nested pair
   (match-params-fn match_2 (store fn)
-    (fn (get store '.boo '.second)))
+    (visit fn (get store '.boo '.second)))
 
   ; // match variant alternative with overloaded fn.
   ; // equivalent to (get store 'my_var unit)
   (match-params-fn match_3 (store fn)
-    (fn (get store '.my_var '.value)))
+    (visit fn (get store '.my_var '.value)))
 
   ; // match variant alternative with overloaded fn.
   ; // equivalent to (get store 'my_var unit)
@@ -82,13 +82,13 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
   (match-params-fn match_6 (store fn)
     (define my-var-index
       (get store '.my_var 'nbdl::variant_index))
-    (fn my-var-index))
+    (visit fn my-var-index))
 
   ; // match variant index (not flat)
   (match-params-fn match_7 (store fn)
     (define my-var-index
       (get store '.my_var '|nbdl::variant_index_t{}|))
-    (fn my-var-index))
+    (visit fn my-var-index))
 
   ; // match variant index (match root store type)
   (match-params-fn match_8 (store fn)
@@ -97,7 +97,7 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
       (lambda (store)
         (define my-var-index
           (get store '.my_var '|nbdl::variant_index_t{}|))
-        (fn my-var-index)))))
+        (visit fn my-var-index)))))
 }
 }  // namespace foo
 }  // namespace

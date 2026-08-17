@@ -39,7 +39,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
                   (visit '.push_back
                          (get Context '.receiver)
                          X)
-                  (Fn 42)))))))))
+                  (visit Fn 42)))))))))
 } // schir_scheme
 } // namespace foo
 } // namespace

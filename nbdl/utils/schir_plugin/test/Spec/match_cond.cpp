@@ -65,7 +65,7 @@ namespace foo {
     (my-concat (get context '.val1))
     (my-concat (get context '.val2))
     (my-concat (get context '.val3))
-    (fn 5))
+    (visit fn 5))
 
     ;; // TODO Test (test => recipient) style match-cond.
 }

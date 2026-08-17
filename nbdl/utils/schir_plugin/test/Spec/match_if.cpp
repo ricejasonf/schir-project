@@ -14,7 +14,7 @@
 ; // No `else` case
 (match-params-fn test_1 (fn)
   (match-if 'true
-   (fn 42)))
+   (visit fn 42)))
 } // schir_scheme
 
 int main() {

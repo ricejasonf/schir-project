@@ -62,7 +62,7 @@ namespace foo {
     (visit 'nbdl::assign
            (get Ctx '.hidden_parent_ '.id)
            (get Ctx html::event_data '.id))
-    (Fn (get Ctx html::event_data '.id)))
+    (visit Fn (get Ctx html::event_data '.id)))
 
   ;; // Simulate an existing use case where we decorate
   ;; // a store with an html::event_data key.

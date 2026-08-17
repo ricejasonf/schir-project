@@ -46,8 +46,8 @@ int sum(int a, int b) {
 (match-params-fn test_1 (store fn)
   (match-cond
     ((sfinae-visit '.get_void store)
-     (fn 42))
-    (else (fn 1))))
+     (visit fn 42))
+    (else (visit fn 1))))
 
 ; // Nullary int returning member function
 (match-params-fn test_2 (store fn)
@@ -56,8 +56,8 @@ int sum(int a, int b) {
   (match-cond
     ((GetFive store)
      (match (GetFive store) ; // valid within region
-      (else => (lambda (val) (fn val)))))
-    (else (fn 1))))
+      (else => (lambda (val) (visit fn val)))))
+    (else (visit fn 1))))
 
 ; // Not in SFINAE context (ie not conditional)
 (match-params-fn test_3 (store fn)
@@ -73,26 +73,26 @@ int sum(int a, int b) {
     (sfinae-visit '.get_five_plus Store X))
   (match-cond
     ((GetVoid store)
-     (fn 1))
+     (visit fn 1))
     ((GetFivePlus store -5) => fn) ; // 5 - 5 = 0 so fall through
     ((GetFivePlus store x) => fn)
-    (else (fn 1000))))
+    (else (visit fn 1000))))
 
 (match-params-fn test_5 (store x fn)
   (define (MaybeFive Store X)
     (sfinae-visit '.maybe_five Store X))
   (match-cond
    ((MaybeFive store 4)
-    (fn 1))
+    (visit fn 1))
    ((MaybeFive store 6)
-    (fn 2))
+    (visit fn 2))
    ((MaybeFive store 5)
     (match-cond
      ((sfinae-visit 'my::sum x "moo")
-       (fn 3))
+       (visit fn 3))
      ((sfinae-visit 'my::sum x 12)
        (visit fn (visit 'my::sum x 12))) ; // Sorry
-     (else (fn 4))))
+     (else (visit fn 4))))
    (else (visit fn (visit 'my::sum x 100)))))
 
 } // namespace my

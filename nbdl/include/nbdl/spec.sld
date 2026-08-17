@@ -138,7 +138,8 @@
                 (lambda (Loc_ Fn)
                   (%match-expr Loc_ Input Fn))))))
 
-    ;; Handle single expr that can include member names.
+    ;; Handle single expr that can include member names
+    ;; and scheme procedures that take resolved values.
     (define-syntax %single-expr+
       (syntax-rules ()
         ((%single-expr+ Input)
@@ -168,8 +169,6 @@
     ; Maybe lift to a LiteralOp or ConstexprOp.
     (define (maybe-build-expr Loc Arg)
       (cond
-        ((member-name-expr? Arg)
-          (error "unexpected member name literal"))
         ((symbol? Arg)
           (build-constexpr Loc Arg))
         ((number? Arg)
@@ -182,7 +181,7 @@
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
     (define (maybe-build-expr+ Loc Arg)
-      (if (member-name-expr? Arg)
+      (if (member-name-literal? Arg)
         (build-member-name Loc Arg)
         (maybe-build-expr Loc Arg)))
 
@@ -190,9 +189,6 @@
       (cond
         ((value? Expr)
          (Fn Expr))
-        ((resolver-val Expr) => Fn)
-        ((procedure? Expr)
-         (Expr Fn))
         ((expr? Expr)
           (%invoke-expr Expr Fn))
         ((path? Expr)
@@ -213,8 +209,15 @@
       (list %nbdl-discard Loc))
 
     (define (%match-expr Loc ExprArg Fn)
-      (define Expr (maybe-build-expr Loc ExprArg))
-      (%match-expr-aux Loc Expr Fn))
+      ;; Disallow expr+ extra cases.
+      (cond
+        ((procedure? ExprArg)
+         (error-with-loc Loc "unexpected procedure"))
+        ((member-name-literal? ExprArg)
+         (error-with-loc Loc "unexpected member name: {}" ExprArg))
+        (else
+          (let ((Expr (maybe-build-expr Loc ExprArg)))
+            (%match-expr-aux Loc Expr Fn)))))
 
     (define (%match-expr+ Loc ExprArg Fn)
       (define Expr (maybe-build-expr+ Loc ExprArg))
@@ -239,7 +242,7 @@
     (define (build-constexpr Loc ExprStr)
       (define StoreT
         (!nbdl.store (expr->type ExprStr)))
-      (when (member-name-expr? ExprStr)
+      (when (member-name-literal? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
         (create-op "nbdl.constexpr"
@@ -252,7 +255,7 @@
     (define (build-store-key Loc Key)
       (cond
         ((value? Key) Key)
-        ((member-name-expr? Key)
+        ((member-name-literal? Key)
            (build-member-name Loc Key))
         (else (build-constexpr Loc Key))))
 
@@ -260,7 +263,7 @@
     (define (build-member-name Loc Name)
       (define StrippedName
         (begin
-          (unless (member-name-expr? Name)
+          (unless (member-name-literal? Name)
             (error "expecting member name: {}" Name))
           (string-copy Name 1)))
       (result
@@ -434,49 +437,6 @@
            ...
            ))))
 
-    ; Provide the callback function for match-params-fn syntax
-    ; %FnVal is a mlir.value.
-    (define (%match-params-resolver Loc %FnVal)
-      (lambda ParamsSpec_
-        (define (ToExpr Param)
-          (%single-expr Loc Param))
-        (define ParamsSpec
-          (map ToExpr ParamsSpec_))
-        (define (VisitFn ParamVals)
-          (build-resolve-params Loc %FnVal ParamVals))
-        (close-previous-scope)
-        (%match-params-spec ParamsSpec VisitFn)))
-
-    ;; Maintain a lookup for resolver procedures and
-    ;; their corresponding mlir.value so we can use
-    ;; the callable Fn object as a store.
-    (define resolver-stack '())
-    ;; Thunk: Fn => ()
-    (define (with-resolver Loc %FnVal Thunk)
-      (define Fn
-        (%match-params-resolver Loc %FnVal))
-      (define Prev resolver-stack)
-      (define Entry (cons Fn %FnVal))
-      (define Cur (cons Entry Prev))
-      (dynamic-wind
-        (lambda ()
-          (set! resolver-stack Cur))
-        (lambda ()
-          (unless (resolver-val Fn)
-            (error "sanity check failed"))
-          (Thunk Fn))
-        (lambda ()
-          (set! resolver-stack Prev))))
-
-    ;; Get the resolver mlir.value or #f.
-    (define (resolver-val Proc)
-      (define Val
-        (and (procedure? Proc)
-             (assq Proc resolver-stack)))
-      (if Val
-        (cdr Val)
-        #f))
-
     ;; Define a function to receive a matched set of parameters.
     ;; Each path node should be of the format:
     ;;  (%Kind Loc Args...)
@@ -492,11 +452,8 @@
                (%build-match-params
                  'name
                  (length '(stores ...))
-                 (lambda (stores ... %FnVal)
-                   (with-resolver
-                     (syntax-source-loc fn)
-                     %FnVal
-                     (lambda (fn) body ...)))
+                 (lambda (stores ... fn)
+                   body ...)
                  )))))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
@@ -531,6 +488,9 @@
          (Fn PathSpec))
         ((expr? PathSpec)
          (%invoke-expr PathSpec Fn))
+        ; Procedures pass through (via expr+).
+        ((procedure? PathSpec)
+         PathSpec)
         ((and (pair? PathSpec)
               (eqv? '%nbdl-path (car PathSpec)))
          (let ((RootStore (cadr PathSpec))
@@ -616,7 +576,7 @@
         (region: "overloads" ((ResolvedStore : StoreT))
           (Fn ResolvedStore))))
 
-    (define (member-name-expr? PathNode)
+    (define (member-name-literal? PathNode)
       (and (symbol? PathNode)
            (eq? (string-ref PathNode 0) #\.)))
 
@@ -625,6 +585,12 @@
       (let ((PathNode
               (maybe-build-expr+ Loc PathNode)))
         (cond
+          ; TODO A match-params-fn should lift a proc to take Fn.
+          ;; A scheme procedure is akey where
+          ;; its `get` implementation is determined by
+          ; invoking it.
+          ((procedure? PathNode)
+           (Fn (PathNode Store))) ; TODO Test this.
           ; Member name is the only key kind where nbdl.get is required
           ; but we have to apply the identity first to unwrap the store.
           ; (Which means the member name is applied to all alternatives.)
@@ -733,7 +699,8 @@
 
     ;; Indicate that we require intermediate result values
     ;; from a ParamsSpec usually to become operands
-    ;; to a call to visit.
+    ;; to a call to visit. Fn will be called with mlir.values
+    ;; or, in the case of expr+, a scheme procedure. (TODO)
     (define (%match-results ParamsSpec Fn)
       (define prev matching-results?)
       (dynamic-wind
