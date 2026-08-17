@@ -35,8 +35,7 @@
     (load-dialect "nbdl")
 
     ;; Thunk should return a new top level operation using the provided
-    ;; module builder. The new operation is immediately translated to
-    ;; that also translates to C++.
+    ;; module builder. The new operation is immediately translated to to C++.
     ;; This is done immediately to make the C++ type available for
     ;; introspection when making subsequent operations. This is due
     ;; to the way we allow interleaving C++ and Scheme, but in practice
@@ -48,15 +47,7 @@
           (define TopLevelOp (Thunk))
           (define Loc (source-loc TopLevelOp))
           ; The verify pass may also raise a more specific error.
-          (unless (verify TopLevelOp)
-            ; TODO Use mlir diagnostics handler to have error mlir diagnostics
-            ;      appear as error-notes with scheme source locations.
-            ;      `verify` should take an error handler so the error is raised
-            ;      by the user. The error handler should receive a list of
-            ;      these notes objects.
-            (error-with-loc Loc "operation failed verification"
-                            (error-note "operation prints as follows: {}"
-                                        TopLevelOp)))
+          (verify TopLevelOp)
           (translate-cpp TopLevelOp lexer-writer)
           (flush-tokens)
           TopLevelOp)))
@@ -1025,7 +1016,7 @@
          (match-if-aux (syntax-source-loc test)
                        (lambda (Loc Fn) (%match-expr Loc test Fn))
                        (lambda (ThenArg) ((make-visit-proc result) ThenArg))
-                       (lambda () 0))) ; FIXME??
+                       (lambda () 0)))
         ((match-cond (test => result) clause1 clause2 ...)
          (match-if-aux (syntax-source-loc test)
                        (lambda (Loc Fn) (%match-expr Loc test Fn))

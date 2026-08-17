@@ -67,7 +67,7 @@ namespace foo {
     (my-concat (get context '.val3))
     (visit fn 5))
 
-    ;; // TODO Test (test => recipient) style match-cond.
+  ;; // See sfinae_visit.cpp for more tests on =>.
 }
 }  // namespace foo
 }  // namespace
