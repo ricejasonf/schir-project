@@ -20,6 +20,10 @@ using arr_vec = std::array<std::vector<int>, 3>;
 {
   (import (nbdl spec))
 
+  (export-cpp
+    context
+    flatten)
+
   (define-store context (Lol MessageReceiver)
     (store-compose '.lol
       (store '|arr_vec<3>|
@@ -40,6 +44,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
                          (get Context '.receiver)
                          X)
                   (visit Fn 42)))))))))
+
 } // schir_scheme
 } // namespace foo
 } // namespace

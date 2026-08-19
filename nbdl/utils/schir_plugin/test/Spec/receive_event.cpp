@@ -48,6 +48,12 @@ namespace foo {
 {
   (import (nbdl spec))
 
+  (export-cpp
+    my_context
+    some_event_handler
+    receive_event
+    send_event)
+
   (define (ref Store)
     (visit 'std::ref Store))
 
@@ -82,6 +88,7 @@ namespace foo {
            (visit 'html::make_event_data Id)
            'foo::some_event_handler
            Fn))
+
 }
 }  // namespace foo
 }  // namespace

@@ -23,6 +23,11 @@ namespace foo {
 {
   (import (nbdl spec))
 
+  (export-cpp
+    weighted_string
+    context
+    combo_concat)
+
   (define (>= a b)
     (visit '|std::greater_equal<int>{}| a b))
 
@@ -68,6 +73,7 @@ namespace foo {
     (visit fn 5))
 
   ;; // See sfinae_visit.cpp for more tests on =>.
+
 }
 }  // namespace foo
 }  // namespace

@@ -30,6 +30,18 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 #pragma schir_scheme
 {
   (import (nbdl spec))
+
+  (export-cpp context
+              match_0
+              match_1
+              match_2
+              match_3
+              match_4
+              match_5
+              match_6
+              match_7
+              match_8)
+
   (define-context context (arg1 arg2 arg3)
     (member: '.foo 'int
      (init-args: 42))
@@ -98,6 +110,7 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
         (define my-var-index
           (get store '.my_var '|nbdl::variant_index_t{}|))
         (visit fn my-var-index)))))
+
 }
 }  // namespace foo
 }  // namespace

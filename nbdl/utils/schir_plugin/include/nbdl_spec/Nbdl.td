@@ -372,6 +372,18 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let results = (outs Nbdl_Type:$result);
 }
 
+def Nbdl_VisitMatchFnOp : Nbdl_Op<"visit_match_fn", [Terminator]> {
+  let description = [{
+    Visit using a function created with match-params-fn.
+    This is equivalent to a VisitOp and DiscardOp.
+    When lowering, these calls will be be inlined.
+  }];
+
+  let arguments = (ins Variadic<Nbdl_Type>:$args,
+                       Nbdl_Type:$contFn);
+  let results = (outs);
+}
+
 def Nbdl_ConsumerOp : Nbdl_Op<"consumer", []> {
   let description = [{
     A consumer is an object provided with an object

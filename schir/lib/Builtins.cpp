@@ -887,7 +887,10 @@ Value append_rec(Context& C, Value List, Value Cdr) {
 }
 
 void append(Context& C, ValueRefs Args) {
-  Value NewList = Args.empty() ? Empty() : Args.back();
+  if (Args.empty())
+    return C.Cont(Empty());
+
+  Value NewList = Args.back();
   Args = Args.drop_back(1);
   for (auto Itr = Args.rbegin(); Itr != Args.rend(); ++Itr) {
     NewList = append_rec(C, *Itr, NewList);

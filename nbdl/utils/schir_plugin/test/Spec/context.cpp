@@ -19,6 +19,10 @@ namespace foo {
 #pragma schir_scheme
 {
   (import (nbdl spec))
+
+  (export-cpp
+    my_context)
+
   (define-context my_context (arg1 arg2)
    (member: '.foo 'int
     (init-args: 42))

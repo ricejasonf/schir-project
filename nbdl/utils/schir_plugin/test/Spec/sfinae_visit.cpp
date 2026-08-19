@@ -42,6 +42,13 @@ int sum(int a, int b) {
 {
 (import (nbdl spec))
 
+(export-cpp
+  test_1
+  test_2
+  test_3
+  test_4
+  test_5)
+
 ; // Nullary void returning member function
 (match-params-fn test_1 (store fn)
   (match-cond

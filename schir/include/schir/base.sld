@@ -130,6 +130,7 @@
     string-ref
     string-length
     string-join
+    format-string
     values
     with-exception-handler
     write

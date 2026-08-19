@@ -35,12 +35,11 @@
     (load-dialect "nbdl")
 
     ;; Thunk should return a new top level operation using the provided
-    ;; module builder. The new operation is immediately translated to to C++.
+    ;; module builder. The new operation is immediately translated to to C++
+    ;; when its name is in the list of export-cpp names.
     ;; This is done immediately to make the C++ type available for
-    ;; introspection when making subsequent operations. This is due
-    ;; to the way we allow interleaving C++ and Scheme, but in practice
-    ;; it might not be necessary to support this.
-    (define (top-level-cpp-op Thunk)
+    ;; introspection when making subsequent operations.
+    (define (top-level-cpp-op Name Thunk)
       (with-module-builder
         module-cpp
         (lambda ()
@@ -48,8 +47,11 @@
           (define Loc (source-loc TopLevelOp))
           ; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
-          (translate-cpp TopLevelOp lexer-writer)
-          (flush-tokens)
+          ; Emit c++ when exported.
+          (when (memq Name export-cpp-names)
+            (begin
+              (translate-cpp TopLevelOp lexer-writer)
+              (flush-tokens)))
           TopLevelOp)))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
@@ -397,7 +399,7 @@
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
          (begin
            (define Name 'Name)
-           (top-level-cpp-op
+           (top-level-cpp-op 'Name
              (lambda ()
                (define Loc (syntax-source-loc Name))
                (create-op
@@ -428,6 +430,23 @@
            ...
            ))))
 
+    (define %match-fn '%match-fn)
+
+    ;; A 'match-fn' can be used in an expr+
+    (define (make-match-fn SymbolName)
+      (list %match-fn SymbolName))
+
+    ;; Return the match-fn name or #f.
+    (define (match-fn-name Value)
+      (and (pair? Value)
+           (eq? %match-fn (car Value))
+           (cadr Value)))
+
+    (define (visit-match-fn MatchFn Params)
+      (define Name
+        (match-fn-name MatchFn))
+      #;(build-visit-match-fn Name Params) 'TODO)
+
     ;; Define a function to receive a matched set of parameters.
     ;; Each path node should be of the format:
     ;;  (%Kind Loc Args...)
@@ -438,7 +457,7 @@
         ((match-params-fn name (stores ... fn) body ...)
          (begin
            (define name 'name)
-           (top-level-cpp-op
+           (top-level-cpp-op 'name
              (lambda ()
                (%build-match-params
                  'name
@@ -1051,6 +1070,14 @@
     (define (dump-nbdl-module)
       (dump module-cpp))
 
+    (define export-cpp-names '())
+
+    (define-syntax export-cpp
+      (syntax-rules ()
+        ((export-cpp Name ...)
+         (set! export-cpp-names
+           (append '(Name ...) export-cpp-names)))))
+
   ) ; end of... begin
   (export
     define-context
@@ -1084,5 +1111,6 @@
     type
     dump
     reflect-match
+    export-cpp
     )
 )  ; end of (nbdl spec)

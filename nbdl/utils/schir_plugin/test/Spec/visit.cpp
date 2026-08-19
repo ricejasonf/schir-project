@@ -28,6 +28,15 @@ using fav_games = std::unordered_map<std::string, std::string>;
   (import (schir base)
           (nbdl spec))
 
+  (export-cpp
+    message_1
+    message_2
+    message_3
+    message_4
+    message
+    context
+    apply_message)
+
   ; // Add to an integer sum.
   (define-store message_1 (id)
     (store-compose '.value (store 'int (init-args: id))))
@@ -93,6 +102,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
            (get context '.last_message)
            message)
     (visit fn (get context '.last_message)))
+
 }
 }  // namespace my
 }  // namespace
