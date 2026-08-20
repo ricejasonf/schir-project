@@ -2,6 +2,7 @@
 
 #include <schir/Builtins.h>
 #include <schir/Context.h>
+#include <schir/SchirClang.h>
 #include <schir/SchirScheme.h>
 #include <schir/Value.h>
 #include <clang/AST/Expr.h>
@@ -22,6 +23,27 @@
 // Manually mangling to support module lookup.
 #define SCHIR_CLANG_LIB_STR "_SCHIRL5SschirL5Sclang"
 
+namespace schir_clang {
+// The stuff we need to stay alive.
+struct SchirClangImpl {
+  clang::Parser& ClangParser;
+  schir::SchirScheme SchirScheme;
+  llvm::BumpPtrAllocator LexerSpellings; // TODO use PP scratch buffer
+  schir_clang::LexerWriter LexerWriter;
+  bool IsResuming = false;
+  std::function<void(schir::SourceLocation Loc, llvm::StringRef Str)>
+  LexerWriterFn;
+
+  SchirClangImpl(clang::Parser& P)
+    : ClangParser(P),
+      SchirScheme(),
+      LexerSpellings(),
+      LexerWriter(P, LexerSpellings)
+  { }
+  SchirClangImpl(SchirClangImpl const&) = delete;
+};
+} // namespace schir_clang
+
 namespace {
 using schir::ContextLocal;
 using schir_clang::DiagReport;
@@ -30,6 +52,7 @@ using schir_clang::ParseExpression;
 using schir_clang::ParseTypeName;
 using schir_clang::RunTemplateProbe;
 using schir_clang::getSourceLocation;
+using schir_clang::SchirClangImpl;
 
 ContextLocal diag_error;
 ContextLocal diag_warning;
@@ -59,28 +82,8 @@ void LoadModule(schir::Context& Context) {
   });
 }
 
-// The stuff we need to stay alive.
-struct InstanceTy {
-  clang::Parser& ClangParser;
-  schir::SchirScheme SchirScheme;
-  llvm::BumpPtrAllocator LexerSpellings; // TODO use PP scratch buffer
-  schir_clang::LexerWriter LexerWriter;
-  bool IsResuming = false;
-  std::function<void(schir::SourceLocation Loc, llvm::StringRef Str)>
-  LexerWriterFn;
+static std::unique_ptr<schir_clang::SchirClangImpl> ImplInstance;
 
-  InstanceTy(clang::Parser& P)
-    : ClangParser(P),
-      SchirScheme(),
-      LexerSpellings(),
-      LexerWriter(P, LexerSpellings)
-  { }
-  InstanceTy(InstanceTy const&) = delete;
-};
-
-static std::unique_ptr<InstanceTy> Instance;
-
-using Foo = clang::ParserPragmaHandler;
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
 
 public:
@@ -88,14 +91,17 @@ public:
     : ParserPragmaHandler("schir_scheme")
   { }
 
-  void CreateInst(clang::Parser& P, std::unique_ptr<InstanceTy>& Inst) {
+  void CreateInst(clang::Parser& P, std::unique_ptr<SchirClangImpl>& Inst) {
     // All of the references we capture here should be stable
     // for the lifetime of the compiler.
-    Inst = std::make_unique<InstanceTy>(P);
+    Inst = std::make_unique<SchirClangImpl>(P);
     auto& [_, SchirScheme,
            LexerSpellings, TheLexerWriter,
            IsResuming, LexerWriterFn] = *Inst;
     schir::SchirScheme& HS = SchirScheme;
+
+    // Capture Inst pointer to construct SchirClang in lambda procs.
+    SchirClangImpl* InstPtr = Inst.get();
 
     auto ErrorHandler = [&](schir::Context& C,
                             schir::ValueRefs Args) {
@@ -165,7 +171,8 @@ public:
       C.Cont();
     };
 
-    auto expr_eval = [&](schir::Context& C, schir::ValueRefs Args) {
+    auto expr_eval = [InstPtr](schir::Context& C,
+                                  schir::ValueRefs Args) mutable {
       schir::SourceLocation Loc;
       schir::Value Input;
       if (Args.size() == 2) {
@@ -187,75 +194,16 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      clang::ExprResult ExprResult = ParseExpression(P, HS, LexerSpellings,
-                                                     Loc, Source);
-
-      // Process the parsing result if any.
-      if (ExprResult.isInvalid()) {
-        return C.RaiseError("clang expression parsing failed");
-      }
-      clang::Expr* Expr = ExprResult.get();
-
-      if (Expr->isValueDependent()) {
-        return C.RaiseError("cannot evaluate dependent expression");
-      }
-
-      // ConstantExpr eval.
-      clang::Expr::EvalResult EvalResult;
-      if (!Expr->EvaluateAsRValue(EvalResult,
-            P.getActions().getASTContext())) {
-        // The evaluation failed.
-        // TODO Have Clang emit the diagnostics (ie From EvalResult.Diag)
-        C.RaiseError("clang expression evaluation failed");
-        return;
-      }
-
-      // Convert EvalResult/APValue to Scheme value.
-      schir::Value Result;
-      using APValue = clang::APValue;
-      switch (EvalResult.Val.getKind()) {
-        case APValue::None:
-        case APValue::Indeterminate: {
-          // ... Or maybe we allow errors. (ie like SFINAE)
-          Result = schir::Undefined();
-          C.RaiseError("clang expression evaluation failed");
-          return;
-        }
-        case APValue::Int: {
-          llvm::APSInt Int = EvalResult.Val.getInt();
-          if (Expr->getType()->isBooleanType()) {
-            Result = schir::Bool(Int.getBoolValue());
-          } else if (Int.isSignedIntN(32)) {
-            Result = schir::Int(Int.getZExtValue());
-          }
-          break;
-        }
-        // TODO Support these value types.
-        case APValue::Float:
-        case APValue::FixedPoint:
-        case APValue::ComplexInt:
-        case APValue::ComplexFloat:
-        case APValue::Vector:
-        case APValue::Array:
-        case APValue::Struct:
-
-        // Will not support.
-        case APValue::LValue:
-        case APValue::Union:
-        case APValue::MemberPointer:
-        case APValue::AddrLabelDiff:
-          // Do nothing.
-        break;
-      }
-
-      if (Result) {
+      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::Value Result = SchirClang.ExprEval(Loc, Source);
+      if (SchirClang.HasError())
+        C.RaiseError(SchirClang.ErrorMsg);
+      else
         C.Cont(Result);
-      } else {
-        C.RaiseError("unsupported result type");
-      }
     };
 
-    auto expr_type = [&](schir::Context& C, schir::ValueRefs Args) {
+    auto expr_type = [InstPtr](schir::Context& C,
+                                  schir::ValueRefs Args) mutable {
       if (Args.size() != 1)
         return C.RaiseError("invalid arity");
 
@@ -268,28 +216,20 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      clang::ExprResult ExprResult = ParseExpression(P, HS, LexerSpellings,
-                                                     Loc, ExprStr);
-      // Process the parsing result if any.
-      if (ExprResult.isInvalid())
-        return C.RaiseError("clang expression parsing failed");
-      clang::Expr* Expr = ExprResult.get();
+      schir_clang::SchirClang SchirClang(InstPtr);
+      std::string ResultStr = SchirClang.ExprType(Loc, ExprStr);
 
-      if (Expr->isValueDependent())
-        return C.RaiseError("expression has dependent type");
+      if (SchirClang.HasError())
+        return C.RaiseError(SchirClang.ErrorMsg);
 
-      clang::QualType QT = Expr->getType();
-      if (QT.isNull())
-        return C.RaiseError("clang expression type failed");
-
-      std::string ResultStr = schir_clang::TypeToString(QT);
       schir::Value Result = C.CreateSymbol(ResultStr);
       C.Cont(Result);
     };
 
     // Parse a typename in the current context and return a namespace
     // qualified typename (as a string-like.)
-    auto parse_type = [&](schir::Context& C, schir::ValueRefs Args) {
+    auto parse_type = [InstPtr](schir::Context& C,
+                                   schir::ValueRefs Args) mutable {
       if (Args.size() != 1)
         return C.RaiseError("invalid arity");
 
@@ -302,16 +242,12 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      clang::TypeResult TypeResult = ParseTypeName(P, HS, LexerSpellings,
-                                                   Loc, TypeStr);
-      if (TypeResult.isInvalid())
-        return C.RaiseError("clang type parsing failed");
+      schir_clang::SchirClang SchirClang(InstPtr);
+      std::string ResultStr = SchirClang.ParseType(Loc, TypeStr);
 
-      clang::QualType QT = TypeResult.get().get();
-      if (QT.isNull())
-        return C.RaiseError("clang expression type failed");
+      if (SchirClang.HasError())
+        return C.RaiseError(SchirClang.ErrorMsg);
 
-      std::string ResultStr = schir_clang::TypeToString(QT);
       schir::Value Result = C.CreateSymbol(ResultStr);
       C.Cont(Result);
     };
@@ -322,7 +258,8 @@ public:
     //      my::foo<std::remove_cvref_t<decltype(arg)>>{};
     //    });
     //  """)
-    auto template_probe = [&](schir::Context& C, schir::ValueRefs Args) {
+    auto template_probe = [InstPtr](schir::Context& C,
+                                       schir::ValueRefs Args) mutable {
       if (Args.size() != 3)
         return C.RaiseError("invalid arity");
       schir::SourceLocation Loc = Args[0].getSourceLocation();
@@ -332,7 +269,23 @@ public:
         return C.RaiseError("expecting non empty string-like", Args[1]);
       if (Expr.empty())
         return C.RaiseError("expecting non empty string-like", Args[2]);
-      RunTemplateProbe(P, HS, LexerSpellings, C, Loc, TemplateName, Expr);
+
+      schir_clang::SchirClang SchirClang(InstPtr);
+      llvm::SmallVector<std::vector<std::string>, 8> Templates;
+      SchirClang.TemplateProbe(Templates, Loc, TemplateName, Expr);
+
+      if (SchirClang.HasError())
+        return C.RaiseError(SchirClang.ErrorMsg);
+
+      // Return List of Lists
+      schir::Value LOL = schir::Empty();
+      for (auto& TypeStrs : Templates | std::views::reverse) {
+        schir::Value List = schir::Empty();
+        for (auto& TypeStr : TypeStrs | std::views::reverse)
+          List = C.CreatePair(C.CreateSymbol(TypeStr), List);
+        LOL = C.CreatePair(List, LOL);
+      }
+      C.Cont(LOL);
     };
 
     // This is a special system specific function so we can
@@ -384,8 +337,9 @@ public:
     ::expr_type.set(Context, Context.CreateLambda(expr_type));
     ::parse_type.set(Context, Context.CreateLambda(parse_type));
     ::template_probe.set(Context, Context.CreateLambda(template_probe));
+    // (write-lexer Loc StrN ...)
     ::write_lexer.set(Context,
-        Context.CreateLambda([&](schir::Context& C,
+        Context.CreateLambda([InstPtr](schir::Context& C,
                                  schir::ValueRefs Args) mutable {
       schir::SourceLocation Loc;
       schir::Value Output;
@@ -411,18 +365,18 @@ public:
         if (!Loc.isValid()) Loc = C.getLoc();
       }
 
+      schir_clang::SchirClang SchirClang(InstPtr);
       llvm::StringRef Result(BufStr);
-      TheLexerWriter.Tokenize(getSourceLocation(
-            SchirScheme.getFullSourceLocation(Loc)),
-            Result);
+      SchirClang.WriteLexer(Loc, Result);
       C.Cont();
     }));
 
     // Also provide a type erased LexerWriterFnRef which is
     // more suited to calling in c++.
-    LexerWriterFn = [&](schir::SourceLocation Loc, llvm::StringRef Str) {
-      TheLexerWriter.Tokenize(getSourceLocation(
-            SchirScheme.getFullSourceLocation(Loc)), Str);
+    LexerWriterFn = [InstPtr](schir::SourceLocation Loc,
+                                 llvm::StringRef Str) mutable {
+      schir_clang::SchirClang SchirClang(InstPtr);
+      SchirClang.WriteLexer(Loc, Str);
     };
     auto LWF = schir::LexerWriterFnRef(LexerWriterFn);
     ::lexer_writer.set(Context, Context.CreateAny(LWF));
@@ -431,13 +385,17 @@ public:
     // flush tokens and continue evaluation.
     // Note that we merely break where flush is called
     // after evaluation is complete.
-    auto FlushTokens = [&](schir::Context& C, schir::ValueRefs) {
-      if (TheLexerWriter.empty())
+    auto FlushTokens = [InstPtr, this](schir::Context& C, schir::ValueRefs) {
+      auto& HS = InstPtr->SchirScheme;
+      auto& LexerWriter = InstPtr->LexerWriter;
+      bool& IsResuming = InstPtr->IsResuming;
+
+      if (LexerWriter.empty())
         return C.Cont();
       IsResuming = true;
       schir::FullSourceLocation HSLoc = HS.getFullSourceLocation(C.getLoc());
       clang::SourceLocation Loc = getSourceLocation(HSLoc);
-      TheLexerWriter.PushResumeToken(Loc, this);
+      LexerWriter.PushResumeToken(Loc, this);
       HS.Break();
     };
     ::flush_tokens
@@ -449,13 +407,13 @@ public:
                     clang::Parser& P,
                     clang::Token& Tok,
                     clang::DeclGroupRef&) override {
-    // Only supporting one instance.
-    if (!Instance)
-      CreateInst(P, Instance);
-    assert(&Instance->ClangParser == &P);
+    // Only supporting one instance at a time.
+    if (!ImplInstance)
+      CreateInst(P, ImplInstance);
+    assert(&ImplInstance->ClangParser == &P);
     auto& [_, SchirScheme,
            _, TheLexerWriter,
-           IsResuming, _] = *Instance;
+           IsResuming, _] = *ImplInstance;
     clang::Preprocessor& PP = P.getPreprocessor();
 
     schir::Context& Context = SchirScheme.getContext();
@@ -497,8 +455,148 @@ PragmaHandler("schir_scheme", "embed compile-time scheme");
 // Give the PassPlugin stuff access to needed stuff.
 namespace schir_clang {
 schir::SchirScheme* getSchirSchemeInstance() {
-  if (Instance)
-    return &Instance->SchirScheme;
+  if (ImplInstance)
+    return &ImplInstance->SchirScheme;
   return nullptr;
 }
+
+void SchirClang::TemplateProbe(
+              llvm::SmallVectorImpl<std::vector<std::string>>& Results,
+              schir::SourceLocation Loc,
+              llvm::StringRef TemplateName,
+              llvm::StringRef Expr) {
+  auto& [Parser, SchirScheme, LexerSpellings,
+         _, _, _] = getImpl();
+  RunTemplateProbe(Results, ErrorMsg, Parser, SchirScheme,
+                   LexerSpellings, Loc, TemplateName, Expr);
 }
+
+schir::Value SchirClang::ExprEval(schir::SourceLocation Loc,
+                                  llvm::StringRef ExprStr) {
+  auto& [Parser, SchirScheme, LexerSpellings,
+         _, _, _] = getImpl();
+  clang::ExprResult ExprResult = ParseExpression(Parser, SchirScheme,
+                                                 LexerSpellings,
+                                                 Loc, ExprStr);
+
+  // Process the parsing result if any.
+  if (ExprResult.isInvalid()) {
+    SetError("clang expression parsing failed");
+    return nullptr;
+  }
+  clang::Expr* Expr = ExprResult.get();
+
+  if (Expr->isValueDependent()) {
+    SetError("cannot evaluate dependent expression");
+    return nullptr;
+  }
+
+  // ConstantExpr eval.
+  clang::Expr::EvalResult EvalResult;
+  if (!Expr->EvaluateAsRValue(EvalResult,
+        Parser.getActions().getASTContext())) {
+    // The evaluation failed.
+    // TODO Have Clang emit the diagnostics (ie From EvalResult.Diag)
+    SetError("clang expression evaluation failed");
+    return nullptr;
+  }
+
+  // Convert EvalResult/APValue to Scheme value.
+  schir::Value Result;
+  using APValue = clang::APValue;
+  switch (EvalResult.Val.getKind()) {
+    case APValue::None:
+    case APValue::Indeterminate: {
+      // ... Or maybe we allow errors. (ie like SFINAE)
+      Result = schir::Undefined();
+      SetError("clang expression evaluation failed");
+      return nullptr;
+    }
+    case APValue::Int: {
+      llvm::APSInt Int = EvalResult.Val.getInt();
+      if (Expr->getType()->isBooleanType()) {
+        Result = schir::Bool(Int.getBoolValue());
+      } else if (Int.isSignedIntN(32)) {
+        Result = schir::Int(Int.getZExtValue());
+      }
+      break;
+    }
+    // TODO Support these value types.
+    case APValue::Float:
+    case APValue::FixedPoint:
+    case APValue::ComplexInt:
+    case APValue::ComplexFloat:
+    case APValue::Vector:
+    case APValue::Array:
+    case APValue::Struct:
+
+    // Will not support.
+    case APValue::LValue:
+    case APValue::Union:
+    case APValue::MemberPointer:
+    case APValue::AddrLabelDiff:
+      // Do nothing.
+    break;
+  }
+
+  return Result;
+}
+
+std::string SchirClang::ExprType(schir::SourceLocation Loc,
+                                 llvm::StringRef ExprStr) {
+  auto& [Parser, SchirScheme, LexerSpellings,
+         _, _, _] = getImpl();
+  clang::ExprResult ExprResult = ParseExpression(Parser, SchirScheme,
+                                                 LexerSpellings,
+                                                 Loc, ExprStr);
+  // Process the parsing result if any.
+  if (ExprResult.isInvalid()) {
+    SetError("clang expression parsing failed");
+    return {};
+  }
+
+  clang::Expr* Expr = ExprResult.get();
+
+  if (Expr->isValueDependent()) {
+    SetError("expression has dependent type");
+    return {};
+  }
+
+  clang::QualType QT = Expr->getType();
+  if (QT.isNull()) {
+    SetError("clang expression type failed");
+    return {};
+  }
+
+  return schir_clang::TypeToString(QT);
+}
+
+std::string SchirClang::ParseType(schir::SourceLocation Loc,
+                                  llvm::StringRef TypeStr) {
+  auto& [Parser, SchirScheme, LexerSpellings,
+         _, _, _] = getImpl();
+  clang::TypeResult TypeResult = ParseTypeName(Parser, SchirScheme,
+                                               LexerSpellings,
+                                               Loc, TypeStr);
+  if (TypeResult.isInvalid()) {
+    SetError("clang type parsing failed");
+    return {};
+  }
+
+  clang::QualType QT = TypeResult.get().get();
+  if (QT.isNull()) {
+    SetError("clang expression type failed");
+    return {};
+  }
+
+  return schir_clang::TypeToString(QT);
+}
+
+void SchirClang::WriteLexer(schir::SourceLocation Loc, llvm::StringRef Str) {
+  SchirClangImpl& Inst = getImpl();
+  Inst.LexerWriter.Tokenize(getSourceLocation(
+        Inst.SchirScheme.getFullSourceLocation(Loc)),
+        Str);
+}
+
+} // namespace schir_clang

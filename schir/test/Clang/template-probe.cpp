@@ -45,10 +45,10 @@ struct probe {
 
 template <template<typename...> typename probe, typename ...Ts>
 struct make_probes {
-  probe<Ts...> x_0;
-  probe<char, Ts...> x_1;
-  probe<long> x_2;
-  probe<> x_3;
+  probe<> x_0;
+  probe<long> x_1;
+  probe<char, Ts...> x_2;
+  probe<Ts...> x_3;
 };
 
 namespace my_2 {

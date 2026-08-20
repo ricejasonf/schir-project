@@ -83,8 +83,8 @@ clang::ExprResult ParseExpression(clang::Parser& P, schir::SchirScheme& HS,
   clang::EnterExpressionEvaluationContext EvalCtx(
       P.getActions(),
       clang::Sema::ExpressionEvaluationContext::ConstantEvaluated);
-  clang::ExprResult Result =  ParseSource(P, HS, LexerSpellings,
-                                          Loc, Source, [&] {
+  clang::ExprResult Result = ParseSource(P, HS, LexerSpellings,
+                                         Loc, Source, [&] {
     // Parse the expression.
     return P.ParseExpression();
   });

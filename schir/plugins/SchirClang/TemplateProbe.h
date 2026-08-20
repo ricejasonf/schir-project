@@ -12,19 +12,17 @@ namespace schir_clang {
 // Convert TemplateArgs to scheme values and cons the resulting list
 // onto the front of Binding's value. C++ Types and other qualified
 // names are converted to symbols.
-void ProcessTemplateArgs(llvm::ArrayRef<clang::TemplateArgument> TemplateArgs,
-                         schir::Context& Context,
-                         schir::Binding* Binding) {
+static void
+ProcessTemplateArgs(std::vector<std::string>& TemplateResults,
+                    llvm::ArrayRef<clang::TemplateArgument> TemplateArgs) {
   llvm::SmallVector<schir::Value, 8> Values;
-  schir::Context& C = Context; // Avoid Clang ICE.
   auto VisitTA = [&](this auto&& Self,
                      clang::TemplateArgument const& TA) -> void {
     switch (TA.getKind()) {
     case clang::TemplateArgument::Type: {
         // Convert the type into a string of a fully qualified name.
         std::string TypeStr = TypeToString(TA.getAsType());
-        schir::Value Str = C.CreateSymbol(TypeStr);
-        Values.push_back(Str);
+        TemplateResults.push_back(TypeStr);
         break;
       }
     case clang::TemplateArgument::Pack: {
@@ -33,26 +31,22 @@ void ProcessTemplateArgs(llvm::ArrayRef<clang::TemplateArgument> TemplateArgs,
         break;
       }
     default: {
-        TA.dump();
         // Unsupported.
-        Values.push_back(schir::Undefined());
+        Values.push_back({});
         break;
       }
     }
   };
   for (clang::TemplateArgument const& TA : TemplateArgs)
     VisitTA(TA);
-
-  schir::Value Result = Context.CreateList(Values);
-  schir::Value NewB = Context.CreatePair(Result, Binding->getValue());
-  Binding->setValue(NewB);
 }
 
 // Parse Expr and return a scheme list of lists with the template arguments
 // of the instantiations of the class template identified by TemplateName.
-void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
+void RunTemplateProbe(llvm::SmallVectorImpl<std::vector<std::string>>& Results,
+                      std::string& ErrorMsg,
+                      clang::Parser& P, schir::SchirScheme& HS,
                       llvm::BumpPtrAllocator& LexerSpellings,
-                      schir::Context& C,
                       schir::SourceLocation Loc,
                       llvm::StringRef TemplateName,
                       llvm::StringRef Expr) {
@@ -70,7 +64,7 @@ void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
           /*ObjectType=*/nullptr, /*ObjectHasErrors=*/false,
           /*EnteringContext=*/false,
           /*AllowConstructorName=*/false,
-          /*AllowDesctuctorName=*/false,
+          /*AllowDestuctorName=*/false,
           /*AllowDeductionGuide=*/false,
           /*TemplateKWLoc=*/nullptr,
           UnqualifiedId);
@@ -84,21 +78,18 @@ void RunTemplateProbe(clang::Parser& P, schir::SchirScheme& HS,
       return LR.getAsSingle<clang::ClassTemplateDecl>();
     });
 
-  if (!TemplateDecl)
-    return C.RaiseError("expecting class template name for probe");
+  if (!TemplateDecl) {
+    ErrorMsg = "expecting class template name for probe";
+    return;
+  }
 
-  // Prepare to record all the instantiations of TemplateName triggered
-  // while parsing Expr. The result is a scheme list of lists saved to
-  // the scheme binding.
-  schir::Binding* B = C.CreateBinding(schir::Empty());
-
+  // Run the Expr and then get the instantiations of templates.
   ParseExpression(P, HS, LexerSpellings, Loc, Expr);
-
   for (clang::ClassTemplateSpecializationDecl* Spec :
-       TemplateDecl->specializations())
-    ProcessTemplateArgs(Spec->getTemplateArgs().asArray(), C, B);
-
-  C.Cont(B->getValue());
+       TemplateDecl->specializations()) {
+    Results.push_back({});
+    ProcessTemplateArgs(Results.back(), Spec->getTemplateArgs().asArray());
+  }
 }
 
 } // namespace schir_clang
