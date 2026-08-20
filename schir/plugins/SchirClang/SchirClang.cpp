@@ -23,7 +23,7 @@
 // Manually mangling to support module lookup.
 #define SCHIR_CLANG_LIB_STR "_SCHIRL5SschirL5Sclang"
 
-namespace schir_clang {
+namespace schir {
 // The stuff we need to stay alive.
 struct SchirClangImpl {
   clang::Parser& ClangParser;
@@ -42,7 +42,7 @@ struct SchirClangImpl {
   { }
   SchirClangImpl(SchirClangImpl const&) = delete;
 };
-} // namespace schir_clang
+} // namespace schir
 
 namespace {
 using schir::ContextLocal;
@@ -52,7 +52,7 @@ using schir_clang::ParseExpression;
 using schir_clang::ParseTypeName;
 using schir_clang::RunTemplateProbe;
 using schir_clang::getSourceLocation;
-using schir_clang::SchirClangImpl;
+using schir::SchirClangImpl;
 
 ContextLocal diag_error;
 ContextLocal diag_warning;
@@ -65,6 +65,7 @@ ContextLocal expr_type;
 ContextLocal parse_type;
 ContextLocal template_probe;
 ContextLocal flush_tokens;
+ContextLocal current_schir_clang;
 
 void LoadModule(schir::Context& Context) {
   schir::initModuleNames(Context, SCHIR_CLANG_LIB_STR, {
@@ -78,11 +79,12 @@ void LoadModule(schir::Context& Context) {
     {"expr->type", ::expr_type.get(Context)},
     {"parse-type", ::parse_type.get(Context)},
     {"template-probe", ::template_probe.get(Context)},
-    {"flush-tokens", ::flush_tokens.get(Context)}
+    {"flush-tokens", ::flush_tokens.get(Context)},
+    {"current-schir-clang", ::current_schir_clang.get(Context)}
   });
 }
 
-static std::unique_ptr<schir_clang::SchirClangImpl> ImplInstance;
+static std::unique_ptr<schir::SchirClangImpl> ImplInstance;
 
 class SchirSchemePragmaHandler : public clang::ParserPragmaHandler {
 
@@ -100,7 +102,7 @@ public:
            IsResuming, LexerWriterFn] = *Inst;
     schir::SchirScheme& HS = SchirScheme;
 
-    // Capture Inst pointer to construct SchirClang in lambda procs.
+    // Capture Inst pointer (by value) to construct SchirClang in lambda procs.
     SchirClangImpl* InstPtr = Inst.get();
 
     auto ErrorHandler = [&](schir::Context& C,
@@ -194,7 +196,7 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       schir::Value Result = SchirClang.ExprEval(Loc, Source);
       if (SchirClang.HasError())
         C.RaiseError(SchirClang.ErrorMsg);
@@ -216,7 +218,7 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       std::string ResultStr = SchirClang.ExprType(Loc, ExprStr);
 
       if (SchirClang.HasError())
@@ -242,7 +244,7 @@ public:
       if (!Loc.isValid())
         Loc = C.getLoc();
 
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       std::string ResultStr = SchirClang.ParseType(Loc, TypeStr);
 
       if (SchirClang.HasError())
@@ -270,7 +272,7 @@ public:
       if (Expr.empty())
         return C.RaiseError("expecting non empty string-like", Args[2]);
 
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       llvm::SmallVector<std::vector<std::string>, 8> Templates;
       SchirClang.TemplateProbe(Templates, Loc, TemplateName, Expr);
 
@@ -329,6 +331,8 @@ public:
 
     schir::Context& Context = SchirScheme.getContext();
     schir::builtins::InitParseSourceFile(Context, ParseSourceFileFn);
+    ::current_schir_clang.set(Context,
+        Context.CreateAny<schir::SchirClangImpl*>(InstPtr));
     ::diag_error.set(Context, Context.CreateLambda(diag_error));
     ::diag_warning.set(Context, Context.CreateLambda(diag_warning));
     ::diag_note.set(Context, Context.CreateLambda(diag_note));
@@ -365,7 +369,7 @@ public:
         if (!Loc.isValid()) Loc = C.getLoc();
       }
 
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       llvm::StringRef Result(BufStr);
       SchirClang.WriteLexer(Loc, Result);
       C.Cont();
@@ -375,7 +379,7 @@ public:
     // more suited to calling in c++.
     LexerWriterFn = [InstPtr](schir::SourceLocation Loc,
                                  llvm::StringRef Str) mutable {
-      schir_clang::SchirClang SchirClang(InstPtr);
+      schir::SchirClang SchirClang(InstPtr);
       SchirClang.WriteLexer(Loc, Str);
     };
     auto LWF = schir::LexerWriterFnRef(LexerWriterFn);
@@ -459,7 +463,9 @@ schir::SchirScheme* getSchirSchemeInstance() {
     return &ImplInstance->SchirScheme;
   return nullptr;
 }
+} // namespace schir_clang
 
+namespace schir {
 void SchirClang::TemplateProbe(
               llvm::SmallVectorImpl<std::vector<std::string>>& Results,
               schir::SourceLocation Loc,
@@ -599,4 +605,4 @@ void SchirClang::WriteLexer(schir::SourceLocation Loc, llvm::StringRef Str) {
         Str);
 }
 
-} // namespace schir_clang
+} // namespace schir

@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace schir_clang {
+namespace schir {
 struct SchirClangImpl;
 
 // Provide a public interface for the SchirClang plugin hooks
@@ -21,6 +21,7 @@ class SchirClang {
 public:
   std::string ErrorMsg = {};
 
+  SchirClang() = default;
   SchirClang(SchirClangImpl* Impl) : Impl(Impl) { }
   SchirClangImpl& getImpl() const { return *Impl; }
 
@@ -40,6 +41,6 @@ public:
   void WriteLexer(schir::SourceLocation Loc, llvm::StringRef Str);
 };
 
-} // namespace schir_clang
+} // namespace schir
 
 #endif // SCHIR_SCHIRCLANG_H

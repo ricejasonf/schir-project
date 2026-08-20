@@ -32,20 +32,19 @@ public:
 
 #pragma schir_scheme
 {
-(import (nbdl spec)
-        (only (schir base)
-          write
-          newline))
+(import (nbdl spec))
 
 (export-cpp
   test_0)
 
-(match-params-fn test_0 (Store Fn)
+(match-params-fn test_unit_match (Store Fn)
   (match (get Store '.value)
     (else => Fn)))
 
-; // TODO
-;(write (run-pass-nbdl-flatten))
-(newline)
+; // TODO Test
+
+; // FIXME To test this we need a way to specify the argument type.
+(run-pass-nbdl-flatten)
+(write-nbdl-module)
 
 } // schir_scheme

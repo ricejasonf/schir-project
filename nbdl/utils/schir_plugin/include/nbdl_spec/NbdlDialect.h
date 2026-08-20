@@ -8,11 +8,18 @@
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
 
+namespace schir {
+class SchirClangImpl;
+}
+
 namespace nbdl_spec {
 using mlir::func::CallOp;
 using mlir::func::FuncOp;
 using mlir::func::ReturnOp;
 using mlir::StringAttr;
+
+llvm::LogicalResult runFlattenPass(mlir::ModuleOp ModuleOp,
+        schir::SchirClangImpl* SchirClangImpl = nullptr);
 }
 
 // Include the generated header files

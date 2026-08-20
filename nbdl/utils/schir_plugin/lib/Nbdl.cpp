@@ -1,7 +1,11 @@
+// Copyright 2026 Jason Rice
+
 #include <nbdl_spec/NbdlDialect.h>
+#include <nbdl_spec/TranslateCpp.h>
 #include <schir/Context.h>
 #include <schir/Value.h>
 #include <schir/MlirHelper.h>
+#include <schir/SchirClang.h>
 #include <llvm/Support/Casting.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <memory>
@@ -18,11 +22,6 @@ using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
 using llvm::isa_and_nonnull;
-
-namespace nbdl_spec {
-extern std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
-translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op);
-}
 
 extern "C" {
 // Create a function and call the thunk with a new builder
@@ -265,4 +264,32 @@ void nbdl_get_member_name(schir::Context& C, schir::ValueRefs Args) {
   llvm::StringRef Name = Op.getName();
   return C.Cont(C.CreateSymbol(Name));
 }
+
+void nbdl_run_flatten_pass(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.empty() || Args.size() > 2)
+    return C.RaiseError("invalid arity");
+
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args.front());
+  mlir::ModuleOp ModuleOp = dyn_cast_or_null<mlir::ModuleOp>(Op);
+  Args = Args.drop_front();
+
+  if (!ModuleOp)
+    return C.RaiseError("expecting ModuleOp");
+
+  schir::SchirClangImpl* Impl = nullptr;
+  if (Args.size() == 1) {
+    Impl = schir::any_cast<schir::SchirClangImpl*>(Args.front());
+    if (!Impl)
+      return C.RaiseError("expecting SchirClang object");
+  }
+
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, C.getLoc(),
+    [&] { return nbdl_spec::runFlattenPass(ModuleOp, Impl); },
+    "nbdl flatten pass failed");
+  if (llvm::failed(Result))
+    return;
+  C.Cont();
+}
+
 } //  extern "C"

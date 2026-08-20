@@ -4,7 +4,9 @@
 // Define functions and classes for transpiling Nbdl dialect operations to
 // C++ which tries to maintain source locations to declarations in DSL code.
 //
+
 #include <nbdl_spec/NbdlDialect.h>
+#include <nbdl_spec/TranslateCpp.h>
 #include <schir/Source.h>
 #include <schir/Value.h>
 #include <llvm/ADT/ScopedHashTable.h>
@@ -12,6 +14,7 @@
 #include <llvm/ADT/Twine.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h>
 #include <mlir/IR/Value.h>
 #include <mlir/IR/Operation.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
@@ -22,6 +25,25 @@
 namespace schir {
 class SourceLocationEncoding;
 }
+
+namespace nbdl_spec {
+void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_string_ostream& OS,
+                    WriteExprFn WriteExpr) {
+  mlir::Value Fn = Op.getFn();
+  mlir::OperandRange Args = Op.getArgs();
+  if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
+    assert(!Args.empty() && "member call should have at least one argument");
+    WriteExpr(Args.front());
+    OS << '.' << MemberNameOp.getName();
+    Args = Args.drop_front();
+  } else {
+    WriteExpr(Op.getFn());
+  }
+  OS << '(';
+  llvm::interleave(Args, OS, WriteExpr, ", ");
+  OS << ")";
+};
+} // namespace nbdl_spec
 
 namespace {
 using namespace nbdl_spec;
@@ -460,27 +482,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     }
 
     // Write the RHS which might also need to be in a requires clause.
-    auto WriteVisitRHS = [&Op, this] {
-      mlir::Value Fn = Op.getFn();
-      mlir::OperandRange Args = Op.getArgs();
-      if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
-        if (Args.empty()) {
-          SetError("member literal callee expects at least one argument", Op);
-          return;
-        }
-        WriteExpr(Args.front());
-        OS << '.' << MemberNameOp.getName();
-        Args = Args.drop_front();
-      } else {
-        WriteExpr(Op.getFn());
-      }
-      OS << '(';
-      llvm::interleave(Args, OS,
-          [&](mlir::Value V) {
-            WriteExpr(V);
-          }, ", ");
-      OS << ")";
-    };
+    nbdl_spec::WriteExprFn WriteExprFn = [&](mlir::Value V) { WriteExpr(V); };
 
     if (Op.getSfinae()) {
       // Make a sfinae thunk callable wrapper.
@@ -502,11 +504,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
               OS << "auto&& " << SetLocalVarName(V, "thunk_arg_");
             }, ", ");
         OS << ") -> decltype(auto)\n requires(requires { ";
-        WriteVisitRHS(); // Inside requires clause
+        writeVisitExpr(Op, OS, WriteExprFn); // Inside requires clause
         OS << "; })\n"; // End requires clause.
 
         OS << "{ return ";
-        WriteVisitRHS(); // Evalutated expression
+        writeVisitExpr(Op, OS, WriteExprFn);  // Evalutated expression
         OS << "; }}";
       } // End lambda args scope.
 
@@ -518,7 +520,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
           }, ", ");
       OS << ')';
     } else {
-      WriteVisitRHS();
+      writeVisitExpr(Op, OS, WriteExprFn);
     }
     OS << ";\n";
   }

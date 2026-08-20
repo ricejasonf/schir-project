@@ -26,6 +26,8 @@
       (load-builtin "nbdl_spec_create_store_type"))
     (define get-member-name
       (load-builtin "nbdl_get_member_name"))
+    (define nbdl_run_flatten_pass
+      (load-builtin "nbdl_run_flatten_pass"))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
     (define module-cpp (create-top-module "nbdl_spec_module_cpp"))
@@ -1071,6 +1073,10 @@
     (define (dump-nbdl-module)
       (dump module-cpp))
 
+    (define (write-nbdl-module)
+      (write module-cpp)
+      (newline))
+
     (define export-cpp-names '())
 
     (define-syntax export-cpp
@@ -1080,8 +1086,8 @@
            (append '(Name ...) export-cpp-names)))))
 
     (define (run-pass-nbdl-flatten)
-      (run-passes module-cpp
-                  "nbdl-flatten"))
+      (nbdl_run_flatten_pass
+        module-cpp current-schir-clang))
 
   ) ; end of... begin
   (export
@@ -1102,6 +1108,7 @@
     dump-cpp
     dump-op
     dump-nbdl-module
+    write-nbdl-module
     ; reexport some base stuff
     define
     define-syntax
