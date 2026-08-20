@@ -6,7 +6,7 @@ from lit.llvm import llvm_config
 config.name = 'nbdl'
 config.test_source_root = os.path.dirname(__file__)
 config.test_format = lit.formats.ShTest()
-config.suffixes = ['.cpp']
+config.suffixes = ['.cpp', '.mlir']
 config.excludes = [
     "Inputs",
     "CMakeLists.txt",

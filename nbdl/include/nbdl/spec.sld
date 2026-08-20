@@ -3,6 +3,7 @@
 (define-library (nbdl spec)
   (import (schir base)
           (schir mlir)
+          (schir mlir all-passes)
           (schir clang))
   (begin
     ;; Note that the %match functions in this implementation
@@ -1078,6 +1079,10 @@
          (set! export-cpp-names
            (append '(Name ...) export-cpp-names)))))
 
+    (define (run-pass-nbdl-flatten)
+      (run-passes module-cpp
+                  "nbdl-flatten"))
+
   ) ; end of... begin
   (export
     define-context
@@ -1112,5 +1117,6 @@
     dump
     reflect-match
     export-cpp
+    run-pass-nbdl-flatten
     )
 )  ; end of (nbdl spec)

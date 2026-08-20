@@ -8,3 +8,8 @@ mlir_tablegen(NbdlTypes.cpp.inc -gen-typedef-defs)
 mlir_tablegen(NbdlDialect.h.inc -gen-dialect-decls)
 mlir_tablegen(NbdlDialect.cpp.inc -gen-dialect-defs)
 add_public_tablegen_target(NbdlOpsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Passes.td)
+mlir_tablegen(NbdlPasses.h.inc -gen-pass-decls -name Nbdl)
+add_public_tablegen_target(NbdlPassesIncGen PROPERTIES
+  DESCRIPTION "Nbdl MLIR transformation passes")

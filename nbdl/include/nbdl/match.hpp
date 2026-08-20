@@ -34,6 +34,11 @@ namespace nbdl {
     concept HasMatchUnitImpl = Store<T> && requires (T t) {
         match_impl<hana::tag_of_t<T>>::apply(t, nbdl::noop);
       };
+
+    template <typename T>
+    concept HasMatchImplMember = requires (T t) {
+        typename T::nbdl_match_impl;
+      };
   }
 
   template <Store Store, typename Key, typename Fn>
@@ -62,6 +67,16 @@ namespace nbdl {
       std::forward<Fn>(fn)(std::forward<Store>(s));
     }
   };
+
+  template <detail::HasMatchImplMember T>
+  struct match_impl<T> {
+    template <typename Store, typename ...Args>
+    static constexpr void apply(Store&& s, Args&& ...args) {
+      using Impl = std::remove_cvref_t<Store>::nbdl_match_impl;
+      Impl::apply(std::forward<Store>(s), std::forward<Args>(args)...);
+    }
+  };
+
 
   template <State Tag>
   struct match_impl<Tag> {
