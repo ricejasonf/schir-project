@@ -17,17 +17,18 @@ nbdl_catch_test_suite(build_targets "test.nbdl.core"
   delta.cpp
   detail/filter_empties.cpp
   detail/string_concat.cpp
-  detail/string_concat_view.cpp
+  # detail/string_concat_view.cpp # Requires Dyno
   detail/match_if.cpp
   detail/params_view.cpp
   echo_producer.cpp
   entity.cpp
-  get_path.cpp
+  # get_path.cpp # Requires Awful
   hold_lazy.cpp
   local_version.cpp
   map_store.cpp
   match.cpp
   match_path.cpp
+  memref.cpp
   message.cpp
   pipe.cpp
   run_async_loop.cpp

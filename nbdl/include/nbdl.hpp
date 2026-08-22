@@ -12,10 +12,12 @@
 #include <nbdl/apply_delta.hpp>
 #include <nbdl/apply_foreign_message.hpp>
 #include <nbdl/bind_map.hpp>
+#include <nbdl/bind_memref.hpp>
 #include <nbdl/bind_sequence.hpp>
 #include <nbdl/bind_variant.hpp>
 #include <nbdl/catch.hpp>
 #include <nbdl/concept/BindableMap.hpp>
+#include <nbdl/concept/BindableMemref.hpp>
 #include <nbdl/concept/BindableSequence.hpp>
 #include <nbdl/concept/BindableVariant.hpp>
 #include <nbdl/concept/Consumer.hpp>
@@ -43,6 +45,7 @@
 #include <nbdl/make_store.hpp>
 #include <nbdl/map_store.hpp>
 #include <nbdl/match.hpp>
+#include <nbdl/memref.hpp>
 #include <nbdl/message.hpp>
 #include <nbdl/message_api.hpp>
 #include <nbdl/notify_state_change.hpp>

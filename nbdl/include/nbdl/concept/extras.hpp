@@ -8,12 +8,18 @@
 #define NBDL_CONCEPT_EXTRAS_HPP
 
 #include <concepts>
+#include <ranges>
 #include <type_traits>
 
 namespace nbdl {
 template <typename T, typename U>
 concept SameAs = std::same_as<std::remove_cvref_t<T>,
                               std::remove_cvref_t<U>>;
+
+template <typename T>
+concept SizedContiguousRange =
+     std::ranges::contiguous_range<std::remove_cvref_t<T>>
+  && std::ranges::sized_range<std::remove_cvref_t<T>>;
 
 template <typename T, typename U>
 concept NotSameAs = (!std::same_as<std::remove_cvref_t<T>,
