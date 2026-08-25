@@ -12,8 +12,6 @@
     ;; of possible branches.
 
     (load-plugin "libNbdl.so")
-    (define %build-match-params
-      (load-builtin "nbdl_spec_build_match_params"))
     (define translate-cpp
       (load-builtin "nbdl_spec_translate_cpp"))
     (define close-previous-scope
@@ -457,17 +455,31 @@
     ;;  (%nbdl-path PathNodes...)
     (define-syntax match-params-fn
       (syntax-rules ()
-        ((match-params-fn name (stores ... fn) body ...)
+        ((match-params-fn name (Stores ... Fn) Body ...)
          (begin
            (define name 'name)
-           (top-level-cpp-op 'name
+           (top-level-cpp-op
+             'name
              (lambda ()
-               (%build-match-params
-                 'name
-                 (length '(stores ...))
-                 (lambda (stores ... fn)
-                   body ...)
-                 )))))))
+               (create-op
+                 "func.func"
+                 (loc: (syntax-source-loc name))
+                 (operands:)
+                 (attributes:
+                   ("sym_name" (string-attr 'name))
+                   ("function_type"
+                    (type-attr
+                      (%function-type
+                        (make-vector
+                          (length '(Stores ... Fn))
+                          (!nbdl.store))
+                        #()))))
+                 (result-types:)
+                 (region: "body" ((Stores : (!nbdl.store))
+                                  ...
+                                 (Fn : (!nbdl.store)))
+                          Body ...))))))))
+
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
