@@ -65,6 +65,7 @@ ContextLocal expr_type;
 ContextLocal parse_type;
 ContextLocal template_probe;
 ContextLocal flush_tokens;
+ContextLocal namespace_prefix;
 ContextLocal current_schir_clang;
 
 void LoadModule(schir::Context& Context) {
@@ -80,7 +81,8 @@ void LoadModule(schir::Context& Context) {
     {"parse-type", ::parse_type.get(Context)},
     {"template-probe", ::template_probe.get(Context)},
     {"flush-tokens", ::flush_tokens.get(Context)},
-    {"current-schir-clang", ::current_schir_clang.get(Context)}
+    {"current-schir-clang", ::current_schir_clang.get(Context)},
+    {"namespace-prefix", ::namespace_prefix.get(Context)}
   });
 }
 
@@ -261,7 +263,7 @@ public:
     //    });
     //  """)
     auto template_probe = [InstPtr](schir::Context& C,
-                                       schir::ValueRefs Args) mutable {
+                                    schir::ValueRefs Args) mutable {
       if (Args.size() != 3)
         return C.RaiseError("invalid arity");
       schir::SourceLocation Loc = Args[0].getSourceLocation();
@@ -288,6 +290,43 @@ public:
         LOL = C.CreatePair(List, LOL);
       }
       C.Cont(LOL);
+    };
+
+    // Prefix an optionally provided string-like name with
+    // the fully qualified namespace.
+    // Return result as a string.
+    auto namespace_prefix = [&P](schir::Context& C, schir::ValueRefs Args) {
+      if (Args.size() > 1)
+        return C.RaiseError("invalid arity");
+
+      llvm::StringRef Name;
+      if (Args.size() == 1) {
+        if (!schir::isa<schir::String, schir::Symbol>(Args[0]))
+          return C.RaiseError("expecting string or identifier", Args[0]);
+        Name = Args[0].getStringRef();
+      }
+
+      // Walk up the enclosing DeclContexts collecting namespace
+      // names ignoring anonymous namespaces.
+      llvm::SmallVector<llvm::StringRef, 4> Names;
+      if (!Name.empty())
+        Names.push_back(Name);
+      for (clang::DeclContext* DC = P.getActions().CurContext;
+           DC; DC = DC->getParent()) {
+        if (auto* NS = clang::dyn_cast<clang::NamespaceDecl>(DC))
+          if (!NS->isAnonymousNamespace())
+            Names.push_back(NS->getName());
+      }
+
+      llvm::SmallString<64> Prefix;
+      for (llvm::StringRef N : llvm::reverse(Names)) {
+        Prefix += "::";
+        Prefix += N;
+      }
+      if (Prefix.empty())
+        Prefix += "::";
+
+      C.Cont(schir::Value(C.CreateString(Prefix)));
     };
 
     // This is a special system specific function so we can
@@ -341,6 +380,7 @@ public:
     ::expr_type.set(Context, Context.CreateLambda(expr_type));
     ::parse_type.set(Context, Context.CreateLambda(parse_type));
     ::template_probe.set(Context, Context.CreateLambda(template_probe));
+    ::namespace_prefix.set(Context, Context.CreateLambda(namespace_prefix));
     // (write-lexer Loc StrN ...)
     ::write_lexer.set(Context,
         Context.CreateLambda([InstPtr](schir::Context& C,
