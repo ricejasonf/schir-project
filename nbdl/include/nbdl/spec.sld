@@ -56,6 +56,7 @@
           TopLevelOp)))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
+    (define !nbdl.func_name (type "!nbdl.func_name"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define i32 (type "i32"))
     (define f32 (type "f32"))
@@ -184,9 +185,11 @@
         ((value? Expr)
          (Fn Expr))
         ((expr? Expr)
-          (%invoke-expr Expr Fn))
+         (%invoke-expr Expr Fn))
         ((path? Expr)
          (%match-path-spec Expr Fn))
+        ((match-fn? Expr)
+         (Fn (build-func-name Expr)))
         ((discarded-loc Expr)
          => (lambda (DiscardLoc)
               (error-with-loc Loc "value is discarded and cannot be used"
@@ -434,19 +437,23 @@
     (define %match-fn '%match-fn)
 
     ;; A 'match-fn' can be used in an expr+
-    (define (make-match-fn SymbolName)
-      (list %match-fn SymbolName))
+    (define (make-match-fn SymbolName FuncOp)
+      (list %match-fn SymbolName FuncOp))
 
-    ;; Return the match-fn name or #f.
-    (define (match-fn-name Value)
+    (define (match-fn? Value)
       (and (pair? Value)
-           (eq? %match-fn (car Value))
-           (cadr Value)))
+           (eq? %match-fn (car Value))))
 
-    (define (visit-match-fn MatchFn Params)
-      (define Name
-        (match-fn-name MatchFn))
-      #;(build-visit-match-fn Name Params) 'TODO)
+    (define (build-func-name MatchFn)
+      (define-values (_ Name FuncOp)
+        (apply values MatchFn))
+      (result (create-op
+                "nbdl.func_name"
+                (loc: (source-loc FuncOp))
+                (operands:)
+                (attributes:
+                  ("name" (flat-symbolref-attr Name)))
+                (result-types: !nbdl.func_name))))
 
     ;; Define a function to receive a matched set of parameters.
     ;; Each path node should be of the format:
@@ -455,31 +462,32 @@
     ;;  (%nbdl-path PathNodes...)
     (define-syntax match-params-fn
       (syntax-rules ()
-        ((match-params-fn name (Stores ... Fn) Body ...)
+        ((match-params-fn Name (Stores ... Fn) Body ...)
          (begin
-           (define name 'name)
-           (top-level-cpp-op
-             'name
-             (lambda ()
-               (create-op
-                 "func.func"
-                 (loc: (syntax-source-loc name))
-                 (operands:)
-                 (attributes:
-                   ("sym_name" (string-attr 'name))
-                   ("function_type"
-                    (type-attr
-                      (%function-type
-                        (make-vector
-                          (length '(Stores ... Fn))
-                          (!nbdl.store))
-                        #()))))
-                 (result-types:)
-                 (region: "body" ((Stores : (!nbdl.store))
-                                  ...
-                                 (Fn : (!nbdl.store)))
-                          Body ...))))))))
-
+           (define Name
+             (make-match-fn
+               'Name
+               (top-level-cpp-op
+                 'Name
+                 (lambda ()
+                   (create-op
+                     "func.func"
+                     (loc: (syntax-source-loc Name))
+                     (operands:)
+                     (attributes:
+                       ("sym_name" (string-attr 'Name))
+                       ("function_type"
+                        (type-attr
+                          (%function-type
+                            (make-vector
+                              (length '(Stores ... Fn))
+                              (!nbdl.store))
+                            #()))))
+                     (result-types:)
+                     (region: "body" ((Stores : (!nbdl.store))
+                                      ...
+                                      (Fn : (!nbdl.store)))
+                              Body ...))))))))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.

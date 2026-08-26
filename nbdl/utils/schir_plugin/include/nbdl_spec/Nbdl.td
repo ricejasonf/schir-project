@@ -83,14 +83,19 @@ def Nbdl_Tag : TypeDef<Nbdl_Dialect, "Tag", []> {
 def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "MemberName"> {
   let mnemonic = "member_name";
   let description = [{
-    Represent member name as a key.
-    For C++ targets, this should be a valid C++ identifier.
-    The intended primary use case is to specify a member of a Struct.
+    Represent member name for use as a key to denote access
+    to a member of a struct or for use as a visitor to denote
+    a member function call.
 
-    TODO
-    Since member names should exist in the Static Context, then this
-    should have the name as an attribute instead of an operand to the
-    operation (I think.)
+    For C++ targets, this should be a valid C++ identifier.
+  }];
+}
+
+def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
+  let mnemonic = "func_name";
+  let description = [{
+    Represent the type of a result of lifting the symbol
+    name of a FuncOp to a value.
   }];
 }
 
@@ -103,7 +108,8 @@ def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
 def Nbdl_TypePlus : AnyTypeOf<[Nbdl_Store,
                                Nbdl_Unit,
                                Nbdl_Tag,
-                               Nbdl_MemberName]>;
+                               Nbdl_MemberName,
+                               Nbdl_FuncName]>;
 
 // Implicitly default to the unit type for keys.
 def Nbdl_Key : Optional<Nbdl_TypePlus>;
@@ -205,6 +211,15 @@ def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
 
   let arguments = (ins StrAttr:$name);
   let results = (outs Nbdl_MemberName:$result);
+}
+
+def Nbdl_FuncNameOp : Nbdl_Op<"func_name", []> {
+  let description = [{
+    Lift the symbol name of a FuncOp to a value.
+  }];
+
+  let arguments = (ins FlatSymbolRefAttr:$name);
+  let results = (outs Nbdl_FuncName:$result);
 }
 
 def Nbdl_StoreComposeOp : Nbdl_Op<"store_compose", []> {
@@ -313,8 +328,6 @@ def Nbdl_StoreOp : Nbdl_Op<"store", []> {
     Construct a store object. The name should be a
     symbol that refers to a DefineStoreOp which can
     be external (ie just the name of C++ type.)
-
-    TODO $name should just be a part of the result type.
   }];
 
   let arguments = (ins
@@ -370,18 +383,6 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
                        Variadic<Nbdl_Type>:$args,
                        UnitAttr:$sfinae);
   let results = (outs Nbdl_Type:$result);
-}
-
-def Nbdl_VisitMatchFnOp : Nbdl_Op<"visit_match_fn", [Terminator]> {
-  let description = [{
-    Visit using a function created with match-params-fn.
-    This is equivalent to a VisitOp and DiscardOp.
-    When lowering, these calls will be be inlined.
-  }];
-
-  let arguments = (ins Variadic<Nbdl_Type>:$args,
-                       Nbdl_Type:$contFn);
-  let results = (outs);
 }
 
 def Nbdl_ConsumerOp : Nbdl_Op<"consumer", []> {

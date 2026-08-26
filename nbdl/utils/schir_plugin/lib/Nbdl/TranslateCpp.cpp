@@ -232,6 +232,8 @@ public:
       WriteExpr(Op);
     } else if (auto Op = V.getDefiningOp<ConstOp>()) {
       WriteExpr(Op);
+    } else if (auto Op = V.getDefiningOp<FuncNameOp>()) {
+      WriteExpr(Op);
     } else {
       if (IsFwd) {
         OS << "static_cast<decltype(";
@@ -288,6 +290,14 @@ public:
     OS << "::std::as_const(";
     WriteExpr(Op.getArg());
     OS << ")";
+  }
+
+  void WriteExpr(FuncNameOp Op) {
+    auto LocScope = MakeLocRAII(Op.getLoc());
+    llvm::StringRef Expr = Op.getName();
+    if (Expr.empty())
+      SetError("expecting func name", Op);
+    OS << Expr;
   }
 
   /************************************
@@ -389,6 +399,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
          if (isa<MatchOp>(Op))        return Visit(cast<MatchOp>(Op));
     else if (isa<MemberNameOp>(Op))   return Visit(cast<MemberNameOp>(Op));
+    else if (isa<FuncNameOp>(Op))     return Visit(cast<FuncNameOp>(Op));
     else if (isa<GetOp>(Op))          return Visit(cast<GetOp>(Op));
     else if (isa<DiscardOp>(Op))      return Visit(cast<DiscardOp>(Op));
     else if (isa<VisitOp>(Op))        return Visit(cast<VisitOp>(Op));
@@ -698,6 +709,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     // We could implement in MatchOp, but it is a very
     // unlikely use case.
   }
+
+  void Visit(FuncNameOp) {
+    // Like MemberNameOp, FuncNameOp is printed at the call site.
+  }
+
 };
 
 class ContextWriter : public NbdlSpecWriter<ContextWriter> {
