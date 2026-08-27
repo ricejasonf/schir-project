@@ -215,6 +215,14 @@ public:
     return SetLocalVarName(V, "anon_");
   }
 
+  llvm::StringRef DropNamespacePrefix(llvm::StringRef Name) const {
+    // TODO Drop the namespace prefix that should be given to us
+    //      (ie a member of this base class.)
+    // Blindly, strip the namespace qualifiers.
+    auto [Front, Back] = Name.rsplit("::");
+    return (Back.empty()) ? Front : Back;
+  }
+
   /************************************
    *********** Expr Printing **********
    ************************************/
@@ -430,6 +438,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   void Visit(FuncOp Op) {
     mlir::FunctionType FT = Op.getFunctionType();
     llvm::StringRef Name = Op.getSymName();
+    Name = DropNamespacePrefix(Name);
 
     // Write the lambda variable declaration.
     OS << "[[maybe_unused]] inline constexpr auto " << Name << " = []";
@@ -759,10 +768,10 @@ public:
     auto ContOp = getContOp(Op);
     llvm::TypeSwitch<mlir::Operation*>(ContOp.getArg().getDefiningOp())
       .Case<UnitOp>([&, this](auto) {
-          this->CreateTag(Op.getName());
+          this->CreateTag(Op.getSymName());
         })
       .Case<StoreOp, VariantOp>([&, this](auto ResultOp) {
-          this->CreateStrongAlias(Op.getName(), ResultOp.getResult());
+          this->CreateStrongAlias(Op.getSymName(), ResultOp.getResult());
         })
       .Case<StoreComposeOp>([&, this](auto) {
           this->CreateClass(Op);
@@ -771,10 +780,12 @@ public:
   }
 
   void CreateTag(llvm::StringRef Name) {
+    Name = DropNamespacePrefix(Name);
     OS << "struct " << Name << " { };\n";
   }
 
   void CreateStrongAlias(llvm::StringRef Name, mlir::Value V) {
+    Name = DropNamespacePrefix(Name);
     OS << "class " << Name << " : public nbdl::strong_alias<";
     VisitType(V);
     OS << "> {\n"
@@ -788,7 +799,7 @@ public:
   }
 
   void CreateClass(DefineStoreOp Op) {
-    llvm::StringRef Name = Op.getName();
+    llvm::StringRef Name = DropNamespacePrefix(Op.getSymName());
     OS << "class " << Name << " {\n";
     OS << "public:\n";
     WriteMemberDecls(Op);
@@ -866,7 +877,7 @@ public:
     if (!ContOp)
       return;
 
-    OS << "explicit " << Op.getName();
+    OS << "explicit " << DropNamespacePrefix(Op.getSymName());
     OS << '(';
     llvm::interleaveComma(Op.getBody().getArguments(), OS,
         [&](mlir::BlockArgument const& Arg) {

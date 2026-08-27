@@ -402,23 +402,26 @@
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
          (begin
-           (define Name 'Name)
-           (top-level-cpp-op 'Name
-             (lambda ()
-               (define Loc (syntax-source-loc Name))
-               (create-op
-                 "nbdl.define_store"
-                 (loc: Loc)
-                 (operands:)
-                 (attributes: ("sym_name" (string-attr Name)))
-                 (result-types:)
-                 (region: "body" ((InitParams : (!nbdl.store)) ...)
-                          (define-store-aux
-                            Loc
-                            (lambda (ProcessBody)
-                              ;; Ensure nonempty lambda.
-                              (ProcessBody StoreFunctionalN) ... #t)
-                          )))))))))
+           (define Name
+             (let ((QualName (namespace-prefix 'Name)))
+               (top-level-cpp-op
+                 QualName
+                 (lambda ()
+                   (define Loc (syntax-source-loc Name))
+                   (create-op
+                     "nbdl.define_store"
+                     (loc: Loc)
+                     (operands:)
+                     (attributes: ("sym_name" (string-attr QualName)))
+                     (result-types:)
+                     (region: "body" ((InitParams : (!nbdl.store)) ...)
+                              (define-store-aux
+                                Loc
+                                (lambda (ProcessBody)
+                                  ;; Ensure nonempty lambda.
+                                  (ProcessBody StoreFunctionalN) ... #t)
+                                )))))
+               QualName))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -463,19 +466,19 @@
     (define-syntax match-params-fn
       (syntax-rules ()
         ((match-params-fn Name (Stores ... Fn) Body ...)
-         (begin
-           (define Name
+         (define Name
+           (let ((QualName (namespace-prefix 'Name)))
              (make-match-fn
-               'Name
+               QualName
                (top-level-cpp-op
-                 'Name
+                 QualName
                  (lambda ()
                    (create-op
                      "func.func"
                      (loc: (syntax-source-loc Name))
                      (operands:)
                      (attributes:
-                       ("sym_name" (string-attr 'Name))
+                       ("sym_name" (string-attr QualName))
                        ("function_type"
                         (type-attr
                           (%function-type
@@ -1103,7 +1106,9 @@
       (syntax-rules ()
         ((export-cpp Name ...)
          (set! export-cpp-names
-           (append '(Name ...) export-cpp-names)))))
+           (append
+             (list (namespace-prefix 'Name) ...)
+             export-cpp-names)))))
 
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass

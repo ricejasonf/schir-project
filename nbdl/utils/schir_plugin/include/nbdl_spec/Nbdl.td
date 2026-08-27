@@ -274,16 +274,6 @@ def Nbdl_DefineStoreOp : Nbdl_Op<"define_store", [Symbol, IsolatedFromAbove]> {
   let results = (outs);
   let extraClassDeclaration = [{
     bool isExternal() { return getBody().empty(); }
-
-    // Get the fully qualified name.
-    // This is needed for defining template specializations.
-    llvm::StringRef getFullName() { return getSymName(); }
-
-    // Get the unqualified name.
-    llvm::StringRef getName() {
-      llvm::StringRef SymName = getSymName();
-      return SymName.take_back(SymName.rfind(':'));
-    }
   }];
 }
 
@@ -300,18 +290,6 @@ def Nbdl_ContextOp : Nbdl_Op<"context", [Symbol]> {
 
   let arguments = (ins StrAttr:$sym_name, FlatSymbolRefAttr:$implName);
   let results = (outs);
-
-  let extraClassDeclaration = [{
-    // Get the fully qualified name.
-    // This is needed for defining template specializations.
-    llvm::StringRef getFullName() { return getSymName(); }
-
-    // Get the unqualified name.
-    llvm::StringRef getName() {
-      llvm::StringRef SymName = getSymName();
-      return SymName.take_back(SymName.rfind(':'));
-    }
-  }];
 }
 
 def Nbdl_ContOp : Nbdl_Op<"cont", [Terminator]> {
