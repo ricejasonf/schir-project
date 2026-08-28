@@ -27,7 +27,7 @@ class SourceLocationEncoding;
 }
 
 namespace nbdl_spec {
-void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_string_ostream& OS,
+void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS,
                     WriteExprFn WriteExpr) {
   mlir::Value Fn = Op.getFn();
   mlir::OperandRange Args = Op.getArgs();

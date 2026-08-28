@@ -128,7 +128,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       nbdl_spec::WriteExprFn WriteExprFn = [&](mlir::Value V) {
         llvm::StringRef TypeStr = getSingleCppAlt(V);
         if (!WriteExprFail && !TypeStr.empty())
-          OS << "::std::declval<" << TypeStr << ">()";
+          OS << "::nbdl::detail::declval<" << TypeStr << ">()";
         else
           WriteExprFail = true;
       };
@@ -254,7 +254,8 @@ llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
 
   // The mutex wrapper will be necessary if we end
   // up using nested passes.
-  auto SCM = std::make_shared<SchirClangMutex>(SchirClangImpl);
+  auto SCM = SchirClangImpl ? std::make_shared<SchirClangMutex>(SchirClangImpl)
+                            : std::shared_ptr<SchirClangMutex>();
   PM.addPass(std::make_unique<FlattenPass>(std::move(SCM)));
   return PM.run(Op);
 }

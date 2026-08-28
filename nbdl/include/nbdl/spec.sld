@@ -49,7 +49,8 @@
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
           ;; Infer types and simplify operations.
-          (nbdl_run_flatten_pass TopLevelOp)
+          (nbdl_run_flatten_pass TopLevelOp
+                                 current-schir-clang)
           ;; Emit c++ when exported.
           (when (memq Name export-cpp-names)
             (begin
@@ -770,37 +771,6 @@
         (map DeclVal StoreAlts)
         #f))
 
-    ;; Return !nbdl.store possibly denoting an alternative
-    ;; iff all the operands are singletons.
-    (define (infer-visit-result Results)
-      (define MemberName
-        (let ((MN (value? !nbdl.member_name (car Results))))
-          (if MN
-            (get-member-name MN)
-            #f)))
-      (define Args
-        (if MemberName
-          (cdr Results)
-          Results))
-      (define StoreAlts
-        (get-infer-args Args))
-      (define Expr
-        (cond
-          ((not StoreAlts)
-            #f)
-          (MemberName
-            (string-append (car StoreAlts) "." MemberName "("
-                           (string-join (cdr StoreAlts) ", ")
-                           ")"))
-          (else
-            (string-append (car StoreAlts) "("
-                           (string-join (cdr StoreAlts) ", ")
-                           ")"))))
-
-      (if Expr
-        (!nbdl.store (expr->type Expr))
-        (!nbdl.store)))
-
     (define %nbdl-discard '%nbdl-discard)
 
     (define (build-discard Loc Value)
@@ -839,7 +809,7 @@
           #f))
       (define ResultType
         (if MatchingResults?
-          (infer-visit-result Results)
+          (!nbdl.store)
           !nbdl.unit))
       (define VisitResult
         (result

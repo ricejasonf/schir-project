@@ -45,6 +45,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
                          X)
                   (visit Fn 42)))))))))
 
+  ;(dump-op flatten)
 } // schir_scheme
 } // namespace foo
 } // namespace
