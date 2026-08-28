@@ -14,7 +14,7 @@ class NbdlPass<string name, string operation = "">
                            "mlir::func::FuncDialect"];
 }
 
-def FlattenPass : NbdlPass<"nbdl-flatten", "mlir::ModuleOp"> {
+def FlattenPass : NbdlPass<"nbdl-flatten"> {
   let summary = "infer types and flatten continuations where possible";
   let description = [{
     Given optionally provided functions for C++ introspection, deduce

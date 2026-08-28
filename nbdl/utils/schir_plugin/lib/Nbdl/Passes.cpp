@@ -237,8 +237,8 @@ public:
       signalPassFailure();
   }
 
-  llvm::LogicalResult run(mlir::ModuleOp ModuleOp) {
-    if (llvm::failed(mlir::applyPatternsGreedily(ModuleOp, Patterns)))
+  llvm::LogicalResult run(mlir::Operation* Op) {
+    if (llvm::failed(mlir::applyPatternsGreedily(Op, Patterns)))
       return llvm::failure();
     return llvm::success();
   }
@@ -248,16 +248,15 @@ public:
 
 namespace nbdl_spec {
 
-llvm::LogicalResult runFlattenPass(mlir::ModuleOp ModuleOp,
+llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
                             schir::SchirClangImpl* SchirClangImpl) {
-  mlir::PassManager PM(ModuleOp->getContext(),
-                       mlir::ModuleOp::getOperationName());
+  mlir::PassManager PM(Op->getContext());
 
   // The mutex wrapper will be necessary if we end
   // up using nested passes.
   auto SCM = std::make_shared<SchirClangMutex>(SchirClangImpl);
   PM.addPass(std::make_unique<FlattenPass>(std::move(SCM)));
-  return PM.run(ModuleOp);
+  return PM.run(Op);
 }
 
 } // namespace nbdl_spec

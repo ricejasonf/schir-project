@@ -199,11 +199,10 @@ void nbdl_run_flatten_pass(schir::Context& C, schir::ValueRefs Args) {
     return C.RaiseError("invalid arity");
 
   mlir::Operation* Op = dyn_cast<mlir::Operation>(Args.front());
-  mlir::ModuleOp ModuleOp = dyn_cast_or_null<mlir::ModuleOp>(Op);
   Args = Args.drop_front();
 
-  if (!ModuleOp)
-    return C.RaiseError("expecting ModuleOp");
+  if (!Op)
+    return C.RaiseError("expecting mlir.operation");
 
   schir::SchirClangImpl* Impl = nullptr;
   if (Args.size() == 1) {
@@ -214,7 +213,7 @@ void nbdl_run_flatten_pass(schir::Context& C, schir::ValueRefs Args) {
 
   llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
     C, C.getLoc(),
-    [&] { return nbdl_spec::runFlattenPass(ModuleOp, Impl); },
+    [&] { return nbdl_spec::runFlattenPass(Op, Impl); },
     "nbdl flatten pass failed");
   if (llvm::failed(Result))
     return;

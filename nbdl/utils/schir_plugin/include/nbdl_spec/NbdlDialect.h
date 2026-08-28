@@ -18,7 +18,7 @@ using mlir::func::FuncOp;
 using mlir::func::ReturnOp;
 using mlir::StringAttr;
 
-llvm::LogicalResult runFlattenPass(mlir::ModuleOp ModuleOp,
+llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
         schir::SchirClangImpl* SchirClangImpl = nullptr);
 }
 

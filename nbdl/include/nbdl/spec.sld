@@ -28,7 +28,7 @@
       (load-builtin "nbdl_run_flatten_pass"))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
-    (define module-cpp (create-top-module "nbdl_spec_module_cpp"))
+    (define main-module (create-top-module "nbdl_spec_module_cpp"))
 
     (register-nbdl-dialect)
     (load-dialect "func")
@@ -40,15 +40,17 @@
     ;; when its name is in the list of export-cpp names.
     ;; This is done immediately to make the C++ type available for
     ;; introspection when making subsequent operations.
-    (define (top-level-cpp-op Name Thunk)
+    (define (top-level-op Name Thunk)
       (with-module-builder
-        module-cpp
+        main-module
         (lambda ()
           (define TopLevelOp (Thunk))
           (define Loc (source-loc TopLevelOp))
-          ; The verify pass may also raise a more specific error.
+          ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
-          ; Emit c++ when exported.
+          ;; Infer types and simplify operations.
+          (nbdl_run_flatten_pass TopLevelOp)
+          ;; Emit c++ when exported.
           (when (memq Name export-cpp-names)
             (begin
               (translate-cpp TopLevelOp lexer-writer)
@@ -404,7 +406,7 @@
          (begin
            (define Name
              (let ((QualName (namespace-prefix 'Name)))
-               (top-level-cpp-op
+               (top-level-op
                  QualName
                  (lambda ()
                    (define Loc (syntax-source-loc Name))
@@ -470,7 +472,7 @@
            (let ((QualName (namespace-prefix 'Name)))
              (make-match-fn
                QualName
-               (top-level-cpp-op
+               (top-level-op
                  QualName
                  (lambda ()
                    (create-op
@@ -1082,22 +1084,22 @@
     ; FIXME Make this dump to error output.
     (define (dump-cpp name)
       (define Op
-        (module-lookup module-cpp name))
+        (module-lookup main-module name))
       (translate-cpp Op)
       (flush-tokens)
       (newline))
 
     (define (dump-op name)
       (define Op
-        (module-lookup module-cpp name))
+        (module-lookup main-module name))
       (dump Op)
       (newline))
 
     (define (dump-nbdl-module)
-      (dump module-cpp))
+      (dump main-module))
 
     (define (write-nbdl-module)
-      (write module-cpp)
+      (write main-module)
       (newline))
 
     (define export-cpp-names '())
@@ -1110,9 +1112,10 @@
              (list (namespace-prefix 'Name) ...)
              export-cpp-names)))))
 
+    ; FIXME Remove once we call flatten pass on every top-level-op.
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
-        module-cpp current-schir-clang))
+        main-module current-schir-clang))
 
   ) ; end of... begin
   (export
