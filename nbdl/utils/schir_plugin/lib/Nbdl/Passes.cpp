@@ -120,28 +120,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     bool WriteExprFail = false;
     llvm::SmallString<128> Expr;
     llvm::raw_svector_ostream OS(Expr);
-
-    { // Build the Expr.
-      if (Op.getSfinae())
-        OS << "::nbdl::detail::sfinae_result<";
-
-      nbdl_spec::WriteExprFn WriteExprFn = [&](mlir::Value V) {
-        llvm::StringRef TypeStr = getSingleCppAlt(V);
-        if (!WriteExprFail && !TypeStr.empty())
-          OS << "::nbdl::detail::declval<" << TypeStr << ">()";
-        else
-          WriteExprFail = true;
-      };
-
-      if (WriteExprFail)
-        return Rewriter.notifyMatchFailure(Op,
-                            "arg type not writeable as c++");
-
-      writeVisitExpr(Op, OS, WriteExprFn);
-
-      if (Op.getSfinae())
-        OS << ">";
-    }
+    writeVisitExpr(Op, OS);
 
     std::string Typename;
 
@@ -154,6 +133,12 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       });
     if (llvm::failed(SCResult)) {
       Op.emitError("clang expr type introspection failed");
+      return llvm::failure();
+    } else if (Typename.empty()) {
+      Op.emitError("clang expr type yielded empty string");
+      return llvm::failure();
+    } else if (Typename.starts_with('<')) {
+      Op.emitError("clang expr type yielded placeholder: " + Typename);
       return llvm::failure();
     }
 
@@ -192,7 +177,8 @@ struct InferMatchIfThenArgType
     // Implicitly unwrap a `sfinae_result`
     auto VOp = Cond.getDefiningOp<nbdl_spec::VisitOp>();
     if (VOp && VOp.getSfinae()) {
-      llvm::StringRef Prefix = "::nbdl::detail::sfinae_result<";
+      CondTypeStr.consume_front("::");
+      llvm::StringRef Prefix = "nbdl::detail::sfinae_result<";
       assert(CondTypeStr.starts_with(Prefix) &&
              CondTypeStr.ends_with(">") && "expecting sfinae_result");
 

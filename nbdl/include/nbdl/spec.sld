@@ -1051,10 +1051,15 @@
            (begin result1 result2 ...)
            (match-cond clause1 clause2 ...)))))
 
-    ; FIXME Make this dump to error output.
-    (define (dump-cpp name)
+    (define (write-cpp Name)
       (define Op
-        (module-lookup main-module name))
+        (cond
+          ((match-fn? Name)
+            (let ()
+              (define-values (_ _ FuncOp)
+                (apply values Name))
+              FuncOp))
+         (else (module-lookup main-module Name))))
       (translate-cpp Op)
       (flush-tokens)
       (newline))
@@ -1103,7 +1108,7 @@
     visit
     sfinae-visit
     noop
-    dump-cpp
+    write-cpp
     dump-op
     dump-nbdl-module
     write-nbdl-module

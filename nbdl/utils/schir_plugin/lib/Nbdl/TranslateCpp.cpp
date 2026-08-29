@@ -26,25 +26,6 @@ namespace schir {
 class SourceLocationEncoding;
 }
 
-namespace nbdl_spec {
-void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS,
-                    WriteExprFn WriteExpr) {
-  mlir::Value Fn = Op.getFn();
-  mlir::OperandRange Args = Op.getArgs();
-  if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
-    assert(!Args.empty() && "member call should have at least one argument");
-    WriteExpr(Args.front());
-    OS << '.' << MemberNameOp.getName();
-    Args = Args.drop_front();
-  } else {
-    WriteExpr(Op.getFn());
-  }
-  OS << '(';
-  llvm::interleave(Args, OS, WriteExpr, ", ");
-  OS << ")";
-};
-} // namespace nbdl_spec
-
 namespace {
 using namespace nbdl_spec;
 using llvm::isa;
@@ -78,6 +59,10 @@ public:
     : LexerWriter(LexerWriter),
       OS(OutputBuffer)
   { }
+
+  ValueMapScope MakeValueMapScope() {
+    return ValueMapScope(ValueMap);
+  }
 
   class LocRAII {
     NbdlSpecWriter& NW;
@@ -502,8 +487,12 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     }
 
     // Write the RHS which might also need to be in a requires clause.
-    nbdl_spec::WriteExprFn WriteExprFn = [&](mlir::Value V) { WriteExpr(V); };
+    WriteVisitExpr(Op);
+    OS << ";\n";
+  }
 
+  void WriteVisitExpr(VisitOp Op) {
+    //nbdl_spec::WriteExprFn WriteExprFn = [&](mlir::Value V) { WriteExpr(V); };
     if (Op.getSfinae()) {
       // Make a sfinae thunk callable wrapper.
       mlir::Value Fn = Op.getFn();
@@ -524,11 +513,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
               OS << "auto&& " << SetLocalVarName(V, "thunk_arg_");
             }, ", ");
         OS << ") -> decltype(auto)\n requires(requires { ";
-        writeVisitExpr(Op, OS, WriteExprFn); // Inside requires clause
+        WriteVisitExprBare(Op); // Inside requires clause
         OS << "; })\n"; // End requires clause.
 
         OS << "{ return ";
-        writeVisitExpr(Op, OS, WriteExprFn);  // Evalutated expression
+        WriteVisitExprBare(Op);  // Evaluated expression
         OS << "; }}";
       } // End lambda args scope.
 
@@ -540,9 +529,27 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
           }, ", ");
       OS << ')';
     } else {
-      writeVisitExpr(Op, OS, WriteExprFn);
+      WriteVisitExprBare(Op);
     }
-    OS << ";\n";
+  }
+
+  void WriteVisitExprBare(VisitOp Op) {
+    mlir::Value Fn = Op.getFn();
+    mlir::OperandRange Args = Op.getArgs();
+    if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
+      assert(!Args.empty() && "member call should have at least one argument");
+      WriteExpr(Args.front());
+      OS << '.' << MemberNameOp.getName();
+      Args = Args.drop_front();
+    } else {
+      WriteExpr(Op.getFn());
+    }
+    OS << '(';
+    llvm::interleave(Args, OS,
+          [&](mlir::Value V) {
+            WriteExpr(V);
+          }, ", ");
+    OS << ")";
   }
 
   void Visit(DiscardOp) {
@@ -983,6 +990,28 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
     return std::make_tuple(std::string("unhandled operation"),
                 static_cast<schir::SourceLocationEncoding*>(nullptr), Op);
   }
+}
 
+// Print visit expr including possible sfinae wrapper.
+void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
+  auto LexerWriter = [&OS](schir::SourceLocation, llvm::StringRef Buffer) {
+    OS << Buffer;
+  };
+
+  FuncWriter Writer(LexerWriter);
+
+  // Populate the input args with declvals.
+  auto Scope = Writer.MakeValueMapScope();
+  for (mlir::Value Arg : Op.getArgs()) {
+    if (auto ST = dyn_cast<StoreType>(Arg.getType());
+        ST && ST.getAlts().size() == 1) {
+      if (auto CT = dyn_cast<CppType>(ST.getAlts().front().getValue()))
+        Writer.SetLocalVal(Arg,
+            "::nbdl::detail::declval<" + CT.getCppTypename() + ">()");
+    }
+  }
+
+  Writer.WriteVisitExpr(Op);
+  Writer.Flush(); // Writer has its own buffer.
 }
-}
+} // namespace nbdl_spec
