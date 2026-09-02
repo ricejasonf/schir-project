@@ -100,8 +100,15 @@ llvm::StringRef getSingleCppAlt(mlir::Value V) {
   return CT.getCppTypename();
 };
 
+constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
+  mlir::Type T = V.getType();
+  return isa<nbdl_spec::MemberNameType, nbdl_spec::FuncNameType>(T) ||
+         !getSingleCppAlt(V).empty();
+};
+
 
 // Resolve the result type of nbdl.visit.
+// This pattern requires a ModuleOp level pass.
 struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   using Base::Base;
 
@@ -113,49 +120,68 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!needsResolve(Op.getResult()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
-    if (llvm::any_of(Op.getArgs(), needsResolve))
+    if (needsResolve(Op.getFn()) ||
+        llvm::any_of(Op.getArgs(), needsResolve))
       return Rewriter.notifyMatchFailure(Op, "args are not resolved");
 
-    // FIXME
-    // If any argument isn't writeable as a single C++ type, fail.
-    bool WriteExprFail = false;
-    llvm::SmallString<128> Expr;
-    llvm::raw_svector_ostream OS(Expr);
-    {
+    mlir::MLIRContext* Ctx = Op.getContext();
+    nbdl_spec::StoreType NewStoreT;
+
+    if (auto FN = Op.getFn().getDefiningOp<nbdl_spec::FuncNameOp>()) {
+      // Look up the symbol and get the result type.
+      auto M = Op->getParentOfType<mlir::ModuleOp>();
+      mlir::Operation* Lookup = nullptr;
+      if (M)
+        Lookup = M.lookupSymbol(FN.getName());
+      auto F = dyn_cast_or_null<mlir::func::FuncOp>(Lookup);
+      llvm::ArrayRef<mlir::Type> ResultTs;
+      if (F)
+        ResultTs = F.getResultTypes();
+      if (ResultTs.size() == 1) {
+        auto TA = mlir::TypeAttr::get(ResultTs.front());
+        NewStoreT = nbdl_spec::StoreType::get(Ctx, TA);
+      }
+    } else if (llvm::all_of(Op.getArgs(), isCppWriteable)) {
+      // All arguments are writeable as C++.
+      std::string Typename;
+      llvm::SmallString<128> Expr;
+      llvm::raw_svector_ostream OS(Expr);
+
       // This only generates the text for the expr.
-      auto [Result, _] = writeVisitExpr(Op, OS);
-      if (llvm::failed(Result)) {
+      auto [WriteResult, _] = writeVisitExpr(Op, OS);
+      if (llvm::failed(WriteResult)) {
         Op.emitError("clang write visit expr failed");
         return llvm::failure();
       }
+
+      auto [SCResult, ErrorMsg] = WithSchirClang(
+        [&](schir::SchirClang SchirClang) {
+          schir::SourceLocation Loc(mlir::OpaqueLoc
+              ::getUnderlyingLocationOrNull<
+                schir::SourceLocationEncoding*>(Op.getLoc()));
+          Typename = SchirClang.ExprType(Loc, Expr);
+        });
+      if (llvm::failed(SCResult)) {
+        Op.emitError("clang expr type introspection failed");
+        return llvm::failure();
+      } else if (Typename.empty()) {
+        Op.emitError("clang expr type yielded empty string");
+        return llvm::failure();
+      } else if (Typename.starts_with('<')) {
+        Op.emitError("clang expr type yielded placeholder: " + Typename);
+        return llvm::failure();
+      }
+
+      auto NewCppT = mlir::TypeAttr::get(nbdl_spec::CppType::get(Ctx, Typename));
+      NewStoreT = nbdl_spec::StoreType::get(Ctx, NewCppT);
     }
 
-    std::string Typename;
-
-    auto [SCResult, ErrorMsg] = WithSchirClang(
-      [&](schir::SchirClang SchirClang) {
-        schir::SourceLocation Loc(mlir::OpaqueLoc
-            ::getUnderlyingLocationOrNull<
-              schir::SourceLocationEncoding*>(Op.getLoc()));
-        Typename = SchirClang.ExprType(Loc, Expr);
-      });
-    if (llvm::failed(SCResult)) {
-      Op.emitError("clang expr type introspection failed");
-      return llvm::failure();
-    } else if (Typename.empty()) {
-      Op.emitError("clang expr type yielded empty string");
-      return llvm::failure();
-    } else if (Typename.starts_with('<')) {
-      Op.emitError("clang expr type yielded placeholder: " + Typename);
+    if (NewStoreT) {
+      Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
+      return llvm::success();
+    } else {
       return llvm::failure();
     }
-
-    mlir::MLIRContext* Ctx = Op.getContext();
-    auto NewCppT = mlir::TypeAttr::get(nbdl_spec::CppType::get(Ctx, Typename));
-    auto NewStoreT = nbdl_spec::StoreType::get(Ctx, NewCppT);
-
-    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
-    return llvm::success();
   }
 };
 

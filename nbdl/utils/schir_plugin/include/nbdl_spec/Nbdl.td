@@ -206,7 +206,7 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
 
 def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
   let description = [{
-    Denote a member name as a value.
+    Denote a member name as a store-like value.
   }];
 
   let arguments = (ins StrAttr:$name);
@@ -215,7 +215,7 @@ def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
 
 def Nbdl_FuncNameOp : Nbdl_Op<"func_name", []> {
   let description = [{
-    Lift the symbol name of a FuncOp to a value.
+    Lift the symbol name of a FuncOp to a store-like value.
   }];
 
   let arguments = (ins FlatSymbolRefAttr:$name);
