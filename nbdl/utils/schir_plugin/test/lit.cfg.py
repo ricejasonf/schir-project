@@ -15,6 +15,7 @@ config.excludes = [
 ]
 config.substitutions.append(('%schir_module_path', config.schir_module_path))
 config.substitutions.append(('%nbdl_module_path', config.nbdl_module_path))
+config.substitutions.append(('%geomalg_module_path', config.geomalg_module_path))
 
 llvm_config.with_environment('LD_LIBRARY_PATH', config.nbdl_lib_dir, append_path=True)
 llvm_config.with_environment('PATH', config.schir_tools_dir, append_path=True)

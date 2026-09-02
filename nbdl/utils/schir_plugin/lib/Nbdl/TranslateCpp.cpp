@@ -993,7 +993,8 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
 }
 
 // Print visit expr including possible sfinae wrapper.
-void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
+std::pair<llvm::LogicalResult, std::string /*ErrMsg*/>
+writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
   auto LexerWriter = [&OS](schir::SourceLocation, llvm::StringRef Buffer) {
     OS << Buffer;
   };
@@ -1013,5 +1014,6 @@ void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
 
   Writer.WriteVisitExpr(Op);
   Writer.Flush(); // Writer has its own buffer.
+  return {llvm::failure(Writer.CheckError()), std::move(Writer.ErrMsg)};
 }
 } // namespace nbdl_spec

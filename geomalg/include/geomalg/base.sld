@@ -6,6 +6,7 @@
     geomalg-module-init
     with-metric
     define-func
+    define-func-aux
     !basis-vector
     !blade
     !multivector
@@ -112,20 +113,19 @@
     (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))
 
     ; Args are checked within after expanding with metric.
-    (define-syntax %define-call-fn
+    (define-syntax %make-call-fn
       (syntax-rules ()
-        ((%define-call-fn FuncOp (FuncName ArgN ...))
-         (set! FuncName
-           (lambda (ArgN ...)
-             (result
-               (create-op "geomalg.call"
-                          (loc: (current-source-loc))
-                          (operands: ArgN ...)
-                          (attributes:
-                            ("callee" (flat-symbolref-attr 'FuncName)))
-                          (result-types: (function-type-results FuncOp)))))))))
+        ((%make-call-fn FuncOp (FuncName ArgN ...))
+         (lambda (ArgN ...)
+           (result
+             (create-op "geomalg.call"
+                        (loc: (current-source-loc))
+                        (operands: ArgN ...)
+                        (attributes:
+                          ("callee" (flat-symbolref-attr 'FuncName)))
+                        (result-types: (function-type-results FuncOp))))))))
 
-    (define (define-func-impl Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
+    (define (define-func-aux-aux Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
         (create-op "func.func"
                    (loc: Loc)
@@ -156,26 +156,37 @@
       (apply-metric FuncName FuncOp)
       FuncOp)
 
+    ;; Generate a FuncOp that automatically returns the last expr via geomalg.return.
+    ;; Export this to expose to nbdl.
+    (define-syntax define-func-aux
+      (syntax-rules()
+        ((define-func FuncName ((ArgName : ArgType) ...)
+                      BodyI ... BodyN)
+         (define-func-aux-aux
+           (syntax-source-loc FuncName)
+           (syntax-source-loc BodyN)
+           'FuncName
+           (list ArgType ...)
+           (list (syntax-source-loc ArgName) ...)
+           (lambda (ArgName ...)
+             BodyI
+             ...
+             BodyN)))))
+
     ; Define a lambda by the given FuncName that
     ; creates a call to the generated function.
+    ;; This is currently only used within geomalg's tests.
     (define-syntax define-func
       (syntax-rules()
         ((define-func FuncName ((ArgName : ArgType) ...)
-                      BodyExprI ... BodyExprN)
+                      BodyI ... BodyN)
          (begin
-           (define FuncName '()) ; Define with a placeholder.
-           (let ((FuncOp
-               (define-func-impl (syntax-source-loc FuncName)
-                                 (syntax-source-loc BodyExprN)
-                                 'FuncName
-                                 (list ArgType ...)
-                                 (list (syntax-source-loc ArgName) ...)
-                                 (lambda (ArgName ...)
-                                   BodyExprI
-                                   ...
-                                   BodyExprN))))
-             (%define-call-fn FuncOp (FuncName ArgName ...))
-             )))))
+           ;; Overwrite the FuncOp with a callable lambda that builds the call expression.
+           (define FuncName
+             (let ((FuncOp (define-func-aux FuncName
+                                            ((ArgName : ArgType) ...)
+                                            BodyI ... BodyN)))
+              (%make-call-fn FuncOp (FuncName ArgName ...))))))))
 
     ; Shorcut to create ops with result only specifying
     ; operands and inferring result type.

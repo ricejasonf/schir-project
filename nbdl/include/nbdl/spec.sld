@@ -191,13 +191,13 @@
          (%invoke-expr Expr Fn))
         ((path? Expr)
          (%match-path-spec Expr Fn))
-        ((match-fn? Expr)
+        ((named-fn? Expr)
          (Fn (build-func-name Expr)))
         ((discarded-loc Expr)
          => (lambda (DiscardLoc)
               (error-with-loc Loc "value is discarded and cannot be used"
                      (error-note "value discarded here" DiscardLoc))))
-         (else (error-with-loc Loc "unable to resolve value: {}" Expr)))
+        (else (error-with-loc Loc "unable to resolve value: {}" Expr)))
       ; Return a "discarded" value to provide a better error message.
       ; This prevents the user from passing around out of scope SSA values.
       ; FIXME nbdl.scope was created to prevent this,
@@ -440,19 +440,19 @@
            ...
            ))))
 
-    (define %match-fn '%match-fn)
+    (define %named-fn '%named-fn)
 
-    ;; A 'match-fn' can be used in an expr+
-    (define (make-match-fn SymbolName FuncOp)
-      (list %match-fn SymbolName FuncOp))
+    ;; A 'named-fn' can be used in an expr+
+    (define (make-named-fn SymbolName FuncOp)
+      (list %named-fn SymbolName FuncOp))
 
-    (define (match-fn? Value)
+    (define (named-fn? Value)
       (and (pair? Value)
-           (eq? %match-fn (car Value))))
+           (eq? %named-fn (car Value))))
 
-    (define (build-func-name MatchFn)
+    (define (build-func-name NamedFn)
       (define-values (_ Name FuncOp)
-        (apply values MatchFn))
+        (apply values NamedFn))
       (result (create-op
                 "nbdl.func_name"
                 (loc: (source-loc FuncOp))
@@ -471,7 +471,7 @@
         ((match-params-fn Name (Stores ... Fn) Body ...)
          (define Name
            (let ((QualName (namespace-prefix 'Name)))
-             (make-match-fn
+             (make-named-fn
                QualName
                (top-level-op
                  QualName
@@ -1054,7 +1054,7 @@
     (define (write-cpp Name)
       (define Op
         (cond
-          ((match-fn? Name)
+          ((named-fn? Name)
             (let ()
               (define-values (_ _ FuncOp)
                 (apply values Name))
@@ -1108,11 +1108,9 @@
     visit
     sfinae-visit
     noop
-    write-cpp
-    dump-op
-    dump-nbdl-module
-    write-nbdl-module
-    ; reexport some base stuff
+    export-cpp
+
+    ;; Reexport some base stuff
     define
     define-syntax
     error
@@ -1125,8 +1123,14 @@
     source-loc
     type
     dump
-    reflect-match
-    export-cpp
+
+    ;; Stuff that should be broken out as a common details lib
+    top-level-op
+    make-named-fn
+    write-cpp
+    dump-op
+    dump-nbdl-module
+    write-nbdl-module
     run-pass-nbdl-flatten
     )
 )  ; end of (nbdl spec)

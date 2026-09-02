@@ -21,7 +21,11 @@ include_directories(${LLVM_INCLUDE_DIRS})
 
 include_directories(${CMAKE_SOURCE_DIR}/schir/include)
 
+# Scheme module paths (same as c++ headers)
 set(SCHIR_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/schir/include)
+set(NBDL_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/nbdl/include)
+set(GEOMALG_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/geomalg/include)
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 

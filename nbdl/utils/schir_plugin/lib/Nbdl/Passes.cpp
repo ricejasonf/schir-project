@@ -116,11 +116,19 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (llvm::any_of(Op.getArgs(), needsResolve))
       return Rewriter.notifyMatchFailure(Op, "args are not resolved");
 
+    // FIXME
     // If any argument isn't writeable as a single C++ type, fail.
     bool WriteExprFail = false;
     llvm::SmallString<128> Expr;
     llvm::raw_svector_ostream OS(Expr);
-    writeVisitExpr(Op, OS);
+    {
+      // This only generates the text for the expr.
+      auto [Result, _] = writeVisitExpr(Op, OS);
+      if (llvm::failed(Result)) {
+        Op.emitError("clang write visit expr failed");
+        return llvm::failure();
+      }
+    }
 
     std::string Typename;
 
@@ -164,19 +172,16 @@ struct InferMatchIfThenArgType
     if (!needsResolve(ThenArg))
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
 
-    if (needsResolve(Cond))
-      return Rewriter.notifyMatchFailure(Op, "cond type not yet resolved");
-
-    llvm::StringRef CondTypeStr = getSingleCppAlt(Cond);
-    if (CondTypeStr.empty())
-      return Rewriter.notifyMatchFailure(Op,
-                          "cond type not writeable as c++");
-
-    mlir::Type NewThenArgT;
+    // Other than special cases (e.g. sfinae), the ThenArg should
+    // be the result of the conditional expression.
+    mlir::Type NewThenArgT = getSingleAlt(Cond);
+    if (!NewThenArgT)
+      return Rewriter.notifyMatchFailure(Op, "cond type not single alt");
 
     // Implicitly unwrap a `sfinae_result`
+    llvm::StringRef CondTypeStr = getSingleCppAlt(Cond);
     auto VOp = Cond.getDefiningOp<nbdl_spec::VisitOp>();
-    if (VOp && VOp.getSfinae()) {
+    if (VOp && VOp.getSfinae() && !CondTypeStr.empty()) {
       CondTypeStr.consume_front("::");
       llvm::StringRef Prefix = "nbdl::detail::sfinae_result<";
       assert(CondTypeStr.starts_with(Prefix) &&
@@ -186,8 +191,6 @@ struct InferMatchIfThenArgType
       mlir::TypeAttr InnerCppT =
           mlir::TypeAttr::get(nbdl_spec::CppType::get(Op.getContext(), Inner));
       NewThenArgT = nbdl_spec::StoreType::get(Op.getContext(), InnerCppT);
-    } else {
-      NewThenArgT = Cond.getType();
     }
 
     Rewriter.modifyOpInPlace(Op, [&] { ThenArg.setType(NewThenArgT); });

@@ -6,5 +6,4 @@ include_directories(include)
 add_subdirectory(include/nbdl_spec ${CMAKE_BINARY_DIR}/include/nbdl_spec)
 add_subdirectory(lib)
 
-set(NBDL_MODULE_PATH ${CMAKE_SOURCE_DIR}/nbdl/include)
 add_subdirectory(test)

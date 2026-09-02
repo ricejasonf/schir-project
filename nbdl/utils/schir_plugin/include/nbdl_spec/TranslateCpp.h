@@ -19,7 +19,8 @@ translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op);
 using WriteExprFn = llvm::function_ref<void(mlir::Value)>;
 
 // Write the RHS of a nbdl.visit.
-void writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS);
+std::pair<llvm::LogicalResult, std::string /*ErrMsg*/>
+writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS);
 
 } // namespace nbdl_spec
 

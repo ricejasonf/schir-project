@@ -87,6 +87,7 @@ llvm::LogicalResult WithDiagnosticsHandler(
   // Attach mlir diagnostics as "notes" to the scheme error
   // to be raised if PassManager::run fails.
   llvm::SmallVector<schir::Value, 1> Irrs;
+  bool HasErrors = false;
   if (!isa<schir::Undefined>(Irr))
     Irrs.push_back(Irr);
   mlir::ScopedDiagnosticHandler DH(MCtx,
@@ -99,10 +100,11 @@ llvm::LogicalResult WithDiagnosticsHandler(
         schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
                                            schir::Empty());
         Irrs.push_back(Error);
+        HasErrors = true;
         return llvm::success(); // Disable mlir error output.
       });
 
-  if (mlir::failed(Thunk())) {
+  if (mlir::failed(Thunk()) || HasErrors) {
     C.RaiseError(Loc, ErrorMsg, Irrs);
     return llvm::failure();
   }

@@ -5,6 +5,7 @@ from lit import llvm
 
 config.schir_module_path    = "@SCHIR_MODULE_PATH@"
 config.nbdl_module_path     = "@NBDL_MODULE_PATH@"
+config.geomalg_module_path  = "@GEOMALG_MODULE_PATH@"
 config.schir_tools_dir      = "@CMAKE_BINARY_DIR@/bin"
 config.llvm_tools_dir       = "@LLVM_TOOLS_DIR@"
 config.nbdl_lib_dir         = "@CMAKE_BINARY_DIR@/lib"
