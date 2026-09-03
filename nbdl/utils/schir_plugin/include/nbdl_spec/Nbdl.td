@@ -351,11 +351,14 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
 def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let description = [{
     Call a function with resolved stores as arguments
-    returning a result. This is analogous to std::visit
-    except only one function is generated.
+    returning a result. This is analogous to std::visit,
+    but if any function parameter is not a store type then
+    the corresponding argument must be of that exact type or a
+    store type with a single alternative of that exact type.
 
     The Sfinae unit attribute indicates the call should
-    be wrapped in a SFINAE check.
+    be wrapped in a SFINAE check which only has meaning
+    as the operand to a conditional.
   }];
   let arguments = (ins Nbdl_TypePlus:$fn,
                        Variadic<Nbdl_Type>:$args,

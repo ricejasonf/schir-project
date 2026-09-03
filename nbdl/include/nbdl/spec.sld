@@ -652,7 +652,6 @@
           )))
 
     (define (build-node-get Store Loc KeyVal)
-      ; TODO Use get-single-alternative
       ;; Infer type for single alternatives only.
       (define StoreT (get-single-alternative Store))
       (define KeyT (get-single-alternative KeyVal))
@@ -758,18 +757,6 @@
         Thunk
         (lambda ()
           (set! matching-results? prev))))
-
-    ;; Map a list of mlir store values
-    ;; to strings of C++ exprs type inference.
-    ;; Return #f if any of the values do no map to a single alternative.
-    (define (get-infer-args Args)
-      (define (DeclVal T)
-        (string-append "::nbdl::detail::declval<" T ">()"))
-      (define StoreAlts
-        (map get-single-alternative Args))
-      (if (every symbol? StoreAlts)
-        (map DeclVal StoreAlts)
-        #f))
 
     (define %nbdl-discard '%nbdl-discard)
 
@@ -881,34 +868,20 @@
         (lambda (Arg)
           (visit Store Arg))))
 
-    (define (infer-match-each-element ParamVals)
-      ;; Since we will not likely support the
-      ;; projection argument, we can get the result
-      ;; of dereferencing the result of begin expr.
-      (define Args
-        (get-infer-args ParamVals))
-      (define Begin
-        (and Args (car Args)))
-      (if Begin
-        (!nbdl.store
-          (expr->type (string-append "*(" Begin ")")))
-        (!nbdl.store)))
-
     (define (match-each-aux Begin End Fn)
       (define ParamsSpec (list Begin End))
       (%match-results ParamsSpec
         (lambda (ParamVals)
           (%top-level
             (lambda ()
-              (define ElementT
-                (infer-match-each-element ParamVals))
               (create-op "nbdl.match_each"
                          (loc: 0)
                          (operands: ParamVals)
                          (attributes:)
                          (result-types:)
-                         (region: "body" ((Element : ElementT))
-                            (Fn Element))))))))
+                         (region: "body" ((Element : (!nbdl.store)))
+                                  (Fn Element))))))))
+                          ;; TODO support (visit Fn ...)
 
     ;; Match each element of a range. (side effects only)
     (define-syntax match-each

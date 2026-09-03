@@ -3,6 +3,7 @@
 // RUN:   -fsyntax-only %s | FileCheck %s
 
 #include <nbdl/spec.hpp>
+#include <vector>
 
 namespace {
 namespace foo {
@@ -79,6 +80,18 @@ public:
          ((sfinae-visit '.get_float NotAStore) => Fn)
          (else (visit Fn "nope"))
          )))))
+
+; // CHECK-LABEL: @"::test_infer_match_each_element"
+; // CHECK: "nbdl.match_each"({{[^)]+}})
+; // CHECK-NEXT: ([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"float">>)
+(match-params-fn test_infer_match_each_element (Store Dest Fn)
+  (match (get Store)
+    ('std::vector<float> =>
+     (lambda (Vector)
+       (match-each Vector
+         (lambda (Element)
+          (visit '.push_back Dest Element))))))
+  (visit Fn Dest))
 
 (write-nbdl-module)
 

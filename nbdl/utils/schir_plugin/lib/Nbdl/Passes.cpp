@@ -4,6 +4,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/Twine.h>
 #include <mlir/IR/Dominance.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
@@ -156,6 +157,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
 
       auto [SCResult, ErrorMsg] = WithSchirClang(
         [&](schir::SchirClang SchirClang) {
+          // TODO Loc could be hoisted from here.
           schir::SourceLocation Loc(mlir::OpaqueLoc
               ::getUnderlyingLocationOrNull<
                 schir::SourceLocationEncoding*>(Op.getLoc()));
@@ -224,6 +226,58 @@ struct InferMatchIfThenArgType
   }
 };
 
+struct InferMatchEachArgType
+    : OpRewriteSchirClang<nbdl_spec::MatchEachOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::MatchEachOp Op, mlir::PatternRewriter& Rewriter) const override {
+    mlir::Value ElementArg = Op.getBody().getArgument(0);
+    if (!needsResolve(ElementArg))
+      return Rewriter.notifyMatchFailure(Op, "type already resolved");
+
+    mlir::Value BeginArg = Op.getBegin();
+    mlir::Type BeginArgT = getSingleAlt(BeginArg);
+    if (!BeginArgT)
+      return Rewriter.notifyMatchFailure(Op, "input not single alt");
+
+    nbdl_spec::StoreType NewStoreT;
+
+    // Handle cpp type.
+    llvm::StringRef BeginTypeStr = getSingleCppAlt(BeginArg);
+    if (!BeginTypeStr.empty()) {
+      std::string Typename;
+      std::string Expr = llvm::Twine("*(::nbdl::detail::declval<" +
+                                     BeginTypeStr + ">())").str();
+      schir::SourceLocation Loc(mlir::OpaqueLoc
+          ::getUnderlyingLocationOrNull<
+            schir::SourceLocationEncoding*>(Op.getLoc()));
+      auto [SCResult, ErrorMsg] = WithSchirClang(
+        [&](schir::SchirClang SchirClang) {
+          Typename = SchirClang.ExprType(Loc, Expr);
+        });
+      if (llvm::failed(SCResult)) {
+        Op.emitError("clang expr type introspection failed");
+        return llvm::failure();
+      } else if (Typename.empty()) {
+        Op.emitError("clang expr type yielded empty string");
+        return llvm::failure();
+      }
+      mlir::TypeAttr InnerCppT =
+          mlir::TypeAttr::get(
+              nbdl_spec::CppType::get(Op.getContext(), Typename));
+      NewStoreT = nbdl_spec::StoreType::get(Op.getContext(), InnerCppT);
+    }
+
+    if (NewStoreT) {
+      Rewriter.modifyOpInPlace(Op, [&] { ElementArg.setType(NewStoreT); });
+      return llvm::success();
+    } else {
+      return llvm::failure();
+    }
+  }
+};
+
 class FlattenPass : public nbdl_spec::impl::FlattenPassBase<FlattenPass> {
   using Base = nbdl_spec::impl::FlattenPassBase<FlattenPass>;
   mlir::FrozenRewritePatternSet Patterns;
@@ -240,6 +294,7 @@ public:
     mlir::RewritePatternSet PS(Ctx);
 
     PS.add<InferVisitResultType>(SchirClangOpt.get(), Ctx);
+    PS.add<InferMatchEachArgType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchIfThenArgType>(Ctx);
 
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS));
