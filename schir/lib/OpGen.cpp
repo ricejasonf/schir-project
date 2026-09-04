@@ -20,6 +20,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/ADT/STLExtras.h"
@@ -137,12 +138,6 @@ std::string OpGen::mangleFunctionName(llvm::StringRef Name) {
 
 std::string OpGen::mangleVariable(schir::Value Name) {
   return createMangler().mangleVariable(getModulePrefix(), Name);
-}
-
-// Mangle the variable name of a syntax object.
-std::string OpGen::mangleSyntax(schir::Value Name) {
-  schir::Mangler Mangler = createMangler();
-  return Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
 }
 
 mlir::ModuleOp OpGen::getModuleOp() {
@@ -812,10 +807,20 @@ mlir::Value OpGen::createSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
   if (isTopLevel()) {
     TopLevelEnv = Context.GetTopLevelEnvironment();
     assert(TopLevelEnv && "expecting top level environment");
-    // Create the syntax as a global.
-    MangledName = mangleSyntax(Keyword);
-    if (MangledName.empty())
-      return Error();
+
+    EnvEntry ExistingEntry = TopLevelEnv->Lookup(Context, Keyword);
+    if (ExistingEntry.MangledName) {
+      // Shadow any previous use of the name.
+      MangledName = ExistingEntry.MangledName->getStringRef().str();
+      if (mlir::Operation* Old = LookupSymbol(MangledName))
+        ShadowGlobalSymbol(Old);
+      Context.AddKnownAddress(MangledName, schir::Value(schir::Undefined()));
+    } else {
+      // Create the syntax as a new global.
+      MangledName = mangleVariable(Keyword);
+      if (MangledName.empty())
+        return Error();
+    }
     SourceLocation DefineLoc = OrigCall.getSourceLocation();
     // FIXME This code is very similar to stuff in createTopLevelDefine
     auto GS = createTopLevel<schir::GlobalSyntaxOp>(DefineLoc, MangledName);
@@ -1141,17 +1146,24 @@ mlir::Value OpGen::createTopLevelDefine(Value Id, Value DefineArgs,
   if (CheckError())
     return Error();
 
-  // If the name already exists in the current module
-  // then it behaves like `set!`
   if (Entry.MangledName) {
     llvm::StringRef MangledNameRef = Entry.MangledName->getStringRef();
-    TailPosScope TPS(*this);
-    IsTailPos = false;
-    mlir::Value Init = VisitDefineArgs(DefineArgs);
-    if (!Init)
-      return mlir::Value();
-    mlir::Value LocalV = create<LoadGlobalOp>(DefineLoc, MangledNameRef);
-    return create<SetOp>(DefineLoc, LocalV, Init);
+    mlir::Operation* Old = LookupSymbol(MangledNameRef);
+    if (Old && isa<schir::GlobalSyntaxOp>(Old)) {
+      // Shadow a syntax name if it exists.
+      ShadowGlobalSymbol(Old);
+      Context.AddKnownAddress(MangledNameRef, schir::Value(schir::Undefined()));
+    } else {
+      // If a variable of the name already exists in the
+      // current module then it behaves like `set!`.
+      TailPosScope TPS(*this);
+      IsTailPos = false;
+      mlir::Value Init = VisitDefineArgs(DefineArgs);
+      if (!Init)
+        return mlir::Value();
+      mlir::Value LocalV = create<LoadGlobalOp>(DefineLoc, MangledNameRef);
+      return create<SetOp>(DefineLoc, LocalV, Init);
+    }
   }
 
   assert(MangledName && !MangledName->getStringRef().empty());
@@ -1681,6 +1693,18 @@ mlir::Operation* OpGen::LookupSymbol(llvm::StringRef MangledName) {
   //       I think we should only see imported names
   M = cast<mlir::ModuleOp>(Context.getModuleOp());
   return M.lookupSymbol(MangledName);
+}
+
+// Anonymize an existing symbol so we can shadow it.
+void OpGen::ShadowGlobalSymbol(mlir::Operation* Old) {
+  mlir::ModuleOp M = getModuleOp();
+  mlir::StringAttr OldName = mlir::SymbolTable::getSymbolName(Old);
+  schir::Mangler Mangler = createMangler();
+  std::string NewNameStr =
+      Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
+  mlir::StringAttr NewName = Builder.getStringAttr(NewNameStr);
+  (void)mlir::SymbolTable::replaceAllSymbolUses(OldName, NewName, M);
+  mlir::SymbolTable::setSymbolName(Old, NewNameStr);
 }
 
 void OpGen::Export(Value NameList) {

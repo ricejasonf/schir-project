@@ -238,7 +238,6 @@ public:
   std::string mangleModule(schir::Value Name);
   std::string mangleFunctionName(llvm::StringRef Name);
   std::string mangleVariable(schir::Value Name);
-  std::string mangleSyntax(schir::Value Name);
 
   // createHelper - Facilitate creating an operation with proper source
   //                location information.
@@ -436,6 +435,7 @@ public:
   }
 
   mlir::Operation* LookupSymbol(llvm::StringRef MangledName);
+  void ShadowGlobalSymbol(mlir::Operation* Old);
 
   schir::EnvEntry LookupEnv(schir::Value Id, schir::Value ClosedEnv = nullptr);
 

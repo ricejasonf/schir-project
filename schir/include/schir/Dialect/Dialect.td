@@ -565,7 +565,7 @@ def Schir_RenameGlobalOp : SchirOp<"rename_global"> {
     name was defined. In this case the RenameOp can be removed.
   }];
 
-  let arguments = (ins StrAttr:$id, StrAttr:$sym);
+  let arguments = (ins StrAttr:$id, FlatSymbolRefAttr:$sym);
   let results   = (outs Schir_ValueOrBinding:$result);
   let builders = [
     OpBuilder<(ins "::llvm::StringRef":$id, "::llvm::StringRef":$sym)>
