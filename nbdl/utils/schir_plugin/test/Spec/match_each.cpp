@@ -32,7 +32,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
       (store '|std::reference_wrapper<std::vector<int>>|
              (init-args: MessageReceiver))))
 
-  (match-params-fn flatten (Context Fn)
+  (define-match-fn flatten (Context Fn)
     (match Context
       ('::foo::context =>
         (lambda (Context)

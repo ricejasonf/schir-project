@@ -50,14 +50,14 @@ int sum(int a, int b) {
   test_5)
 
 ; // Nullary void returning member function
-(match-params-fn test_1 (store fn)
+(define-match-fn test_1 (store fn)
   (match-cond
     ((sfinae-visit '.get_void store)
      (visit fn 42))
     (else (visit fn 1))))
 
 ; // Nullary int returning member function
-(match-params-fn test_2 (store fn)
+(define-match-fn test_2 (store fn)
   (define (GetFive Store)
     (sfinae-visit '.get_five Store))
   (match-cond
@@ -67,13 +67,13 @@ int sum(int a, int b) {
     (else (visit fn 1))))
 
 ; // Not in SFINAE context (ie not conditional)
-(match-params-fn test_3 (store fn)
+(define-match-fn test_3 (store fn)
   (define (GetFive Store)
     (sfinae-visit '.get_five Store))
   (match (GetFive store)
     (else => fn))) // Fails for foo but not bar.
 
-(match-params-fn test_4 (store x fn)
+(define-match-fn test_4 (store x fn)
   (define (GetVoid Store)
     (sfinae-visit '.get_void Store))
   (define (GetFivePlus Store X)
@@ -85,7 +85,7 @@ int sum(int a, int b) {
     ((GetFivePlus store x) => fn)
     (else (visit fn 1000))))
 
-(match-params-fn test_5 (store x fn)
+(define-match-fn test_5 (store x fn)
   (define (MaybeFive Store X)
     (sfinae-visit '.maybe_five Store X))
   (match-cond

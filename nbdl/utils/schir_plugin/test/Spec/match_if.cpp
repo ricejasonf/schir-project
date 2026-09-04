@@ -15,7 +15,7 @@
   test_1)
 
 ; // No `else` case
-(match-params-fn test_1 (fn)
+(define-match-fn test_1 (fn)
   (match-if 'true
    (visit fn 42)))
 

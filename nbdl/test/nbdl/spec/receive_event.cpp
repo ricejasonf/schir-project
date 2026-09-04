@@ -51,7 +51,7 @@ namespace foo {
     (store-compose '.nocopy (store 'noncopyable))
     (store-compose '.id (store 'int (init-args: Id))))
 
-  (match-params-fn some_event_handler (Ctx Fn)
+  (define-match-fn some_event_handler (Ctx Fn)
     ; // FIXME Should not need .hidden_parent_ to support member name access
     (visit 'nbdl::assign
            (get Ctx '.hidden_parent_ '.id)
@@ -60,9 +60,9 @@ namespace foo {
 
   ;; // Simulate an existing use case where we decorate
   ;; // a store with an html::event_data key.
-  ;; // EventHandler is probably an anonymous match-params-fn
+  ;; // EventHandler is probably an anonymous define-match-fn
   ;; // created by the dsl.
-  (match-params-fn receive_event (Ctx EventData EventHandler Fn)
+  (define-match-fn receive_event (Ctx EventData EventHandler Fn)
     (visit
       EventHandler
       (store-compose html::event_data ;; // Create local context object
@@ -70,7 +70,7 @@ namespace foo {
                      (ref Ctx))
       Fn))
 
-  (match-params-fn send_event (Ctx Id Fn)
+  (define-match-fn send_event (Ctx Id Fn)
     (visit receive_event
            (ref Ctx)
            (visit 'html::make_event_data Id)

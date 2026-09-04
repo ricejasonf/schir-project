@@ -30,7 +30,7 @@ namespace foo {
    (store-compose '.buffer
     (store 'std::vector<int32_t> (init-args: Size))))
 
-#;(match-params-fn test1 (Ctx Dest Fn)
+#;(define-match-fn test1 (Ctx Dest Fn)
    (define (Copy Memref1 Memref2)
      (memref-copy Memref1 Memref2))
    (match (get Ctx '.buffer)

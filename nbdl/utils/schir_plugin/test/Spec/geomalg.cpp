@@ -26,7 +26,7 @@ namespace foo {
   (define-geomalg-fn test_dot ((Point : !vec3) (Axis : !uvec3))
     (dot Point Axis))
 
-  (match-params-fn test_test_dot (Store Fn)
+  (define-match-fn test_test_dot (Store Fn)
     (match (get Store '.point)
       (!vec3 =>
         (lambda (P)

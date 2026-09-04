@@ -36,7 +36,7 @@ public:
 {
 (import (nbdl spec))
 
-(match-params-fn test_unit_match (Store Fn)
+(define-match-fn test_unit_match (Store Fn)
   (match (get Store '.value)
     (else => Fn)))
 
@@ -45,7 +45,7 @@ public:
 ; // CHECK: "nbdl.visit"([[MEMBER]],
 ; // CHECK-SAME: : (!nbdl.member_name, !nbdl.store<!nbdl.cpp<"foo::not_a_store">>)
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"float">>
-(match-params-fn test_infer_visit_result (Store Fn)
+(define-match-fn test_infer_visit_result (Store Fn)
   (match (get Store)
     ('foo::not_a_store =>
      (lambda (NotAStore)
@@ -57,7 +57,7 @@ public:
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
 ; // CHECK: "nbdl.match_if"([[GET0]])
 ; // CHECK-NEXT: ([[THENARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"int">>):
-(match-params-fn test_infer_match_if_then_arg (Store Fn)
+(define-match-fn test_infer_match_if_then_arg (Store Fn)
   (match (get Store)
     ('foo::not_a_store =>
      (lambda (NotAStore)
@@ -72,7 +72,7 @@ public:
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"nbdl::detail::sfinae_result<float>">>
 ; // CHECK: "nbdl.match_if"([[VISIT0]])
 ; // CHECK-NEXT: ([[THENARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"float">>):
-(match-params-fn test_infer_match_if_then_arg_sfinae (Store Fn)
+(define-match-fn test_infer_match_if_then_arg_sfinae (Store Fn)
   (match (get Store)
     ('foo::not_a_store =>
      (lambda (NotAStore)
@@ -84,7 +84,7 @@ public:
 ; // CHECK-LABEL: @"::test_infer_match_each_element"
 ; // CHECK: "nbdl.match_each"({{[^)]+}})
 ; // CHECK-NEXT: ([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"float">>)
-(match-params-fn test_infer_match_each_element (Store Dest Fn)
+(define-match-fn test_infer_match_each_element (Store Dest Fn)
   (match (get Store)
     ('std::vector<float> =>
      (lambda (Vector)

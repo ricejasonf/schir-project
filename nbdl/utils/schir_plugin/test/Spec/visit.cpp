@@ -68,7 +68,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
     (member: '.last_message message (init-args:))
     )
 
-  (match-params-fn apply_message (context message fn)
+  (define-match-fn apply_message (context message fn)
     (define sum (get context '.sum))
     (define (receive-message-1 Message1)
       (visit 'nbdl::apply_action

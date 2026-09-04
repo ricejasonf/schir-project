@@ -461,40 +461,6 @@
                   ("name" (flat-symbolref-attr Name)))
                 (result-types: !nbdl.func_name))))
 
-    ;; Define a function to receive a matched set of parameters.
-    ;; Each path node should be of the format:
-    ;;  (%Kind Loc Args...)
-    ;; or specifically for nested pathspecs:
-    ;;  (%nbdl-path PathNodes...)
-    (define-syntax match-params-fn
-      (syntax-rules ()
-        ((match-params-fn Name (Stores ... Fn) Body ...)
-         (define Name
-           (let ((QualName (namespace-prefix 'Name)))
-             (make-named-fn
-               QualName
-               (top-level-op
-                 QualName
-                 (lambda ()
-                   (create-op
-                     "func.func"
-                     (loc: (syntax-source-loc Name))
-                     (operands:)
-                     (attributes:
-                       ("sym_name" (string-attr QualName))
-                       ("function_type"
-                        (type-attr
-                          (%function-type
-                            (make-vector
-                              (length '(Stores ... Fn))
-                              (!nbdl.store))
-                            #()))))
-                     (result-types:)
-                     (region: "body" ((Stores : (!nbdl.store))
-                                      ...
-                                      (Fn : (!nbdl.store)))
-                              Body ...))))))))))
-
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
     (define (%map-params MapFn Params ParamsFn)
@@ -624,7 +590,7 @@
       (let ((PathNode
               (maybe-build-expr+ Loc PathNode)))
         (cond
-          ; TODO A match-params-fn should lift a proc to take Fn.
+          ; TODO A define-match-fn should lift a proc to take Fn.
           ;; A scheme procedure is akey where
           ;; its `get` implementation is determined by
           ; invoking it.
@@ -1024,6 +990,73 @@
            (begin result1 result2 ...)
            (match-cond clause1 clause2 ...)))))
 
+    (define-syntax %match-fn-body
+      (syntax-rules (:)
+        ((%match-fn-body () Body ...)
+         (begin Body ...))
+        ((%match-fn-body ((X : T) Rest ...) Body ...)
+         (match X
+           (T => (lambda (X) (%match-fn-body (Rest ...) Body ...)))))
+        ((%match-fn-body (X Rest ...) Body ...)
+         (%match-fn-body (Rest ...) Body ...))))
+
+    (define-syntax %define-match-fn-aux
+      (syntax-rules (:)
+        ((%define-match-fn-aux Name ((X : T) Rest ...) (Acc ...) AllFormals Body ...)
+         (%define-match-fn-aux Name (Rest ...) (Acc ... X) AllFormals Body ...))
+        ((%define-match-fn-aux Name (X Rest ...) (Acc ...) AllFormals Body ...)
+         (%define-match-fn-aux Name (Rest ...) (Acc ... X) AllFormals Body ...))
+        ((%define-match-fn-aux Name () (Names ...) AllFormals Body ...)
+         (define Name
+           (let ((QualName (namespace-prefix 'Name)))
+             (make-named-fn
+               QualName
+               (top-level-op
+                 QualName
+                 (lambda ()
+                   (create-op
+                     "func.func"
+                     (loc: (syntax-source-loc Name))
+                     (operands:)
+                     (attributes:
+                       ("sym_name" (string-attr QualName))
+                       ("function_type"
+                        (type-attr
+                          (%function-type
+                            (make-vector
+                              (length '(Names ...))
+                              (!nbdl.store))
+                            #()))))
+                     (result-types:)
+                     (region: "body" ((Names : (!nbdl.store)) ...)
+                              (%match-fn-body AllFormals Body ...)))))))))))
+
+    ;; Define a function to receive a matched set of parameters.
+    ;; An Arg may be and identifier or specify a type via `(Arg : ArgT)`.
+    ;; A specified type is implicitly lifted to a Store type and is implicitly
+    ;; matched (via the match syntax.)
+    (define-syntax define-match-fn
+      (syntax-rules ()
+        ((define-match-fn Name (Arg ... Fn) Body ...)
+         (%define-match-fn-aux Name (Arg ... Fn) () (Arg ... Fn) Body ...))))
+
+    ;; Match stores via a let* like syntax.
+    ;; Optionally, append a type constraint via `:` indentifier.
+    ;; For example,
+    ;;   (match-params ((V1 Expr1)
+    ;;                  (V2 : Type Expr2))
+    ;;     Body ...)
+    (define-syntax match-params
+      (syntax-rules (:)
+        ((match-params () Body ...)
+         (begin Body ...))
+        ((match-params ((V : T Expr) Rest ...) Body ...)
+         (match Expr
+           (T => (lambda (V) (match-params (Rest ...) Body ...)))))
+        ((match-params ((V Expr) Rest ...) Body ...)
+         (match Expr
+           (else => (lambda (V) (match-params (Rest ...) Body ...)))))))
+
     (define (write-cpp Name)
       (define Op
         (cond
@@ -1077,7 +1110,8 @@
     match-cond
     match-each
     match-if
-    match-params-fn
+    define-match-fn
+    match-params
     visit
     sfinae-visit
     noop

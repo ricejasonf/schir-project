@@ -48,7 +48,7 @@ namespace foo {
     (store-compose '.result_val (store 'std::string)))
 
   ; // Concatenate values with keys greater than 42.
-  (match-params-fn combo_concat (context fn)
+  (define-match-fn combo_concat (context fn)
     ; // Concat a member (of context) to result_val
     ; // capitalizing it if its weight is greater than
     ; // the threshold 42.
