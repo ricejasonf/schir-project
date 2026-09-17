@@ -3,6 +3,7 @@
 (define-library (nbdl spec geomalg)
   (export define-geomalg-fn)
   (import (schir base)
+          (schir mlir all-passes)
           (nbdl spec)
           (prefix (geomalg base) geomalg-))
   (begin
@@ -30,8 +31,9 @@
                                            Name ((ArgName : ArgType) ...)
                                            BodyI ...
                                            BodyN)))))
-             ; TODO add to the list
-             ;(export-c FuncOp)
+             ; Run geomalg-lower pass.
+             (run-passes FuncOp
+                         "func.func(geomalg-expand-func{metric=cga})")
              (make-named-fn 'Name FuncOp))))))
 
     ));

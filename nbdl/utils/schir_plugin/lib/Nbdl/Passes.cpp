@@ -3,16 +3,14 @@
 #include <schir/SchirClang.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallString.h>
-#include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
-#include <mlir/IR/Dominance.h>
-#include <mlir/IR/IRMapping.h>
+#include <mlir/AsmParser/AsmParser.h>
 #include <mlir/IR/PatternMatch.h>
-#include <mlir/Parser/Parser.h>
+#include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/CSE.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
-#include <mlir/Transforms/Passes.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -26,7 +24,6 @@ namespace nbdl_spec {
 using llvm::dyn_cast;
 
 namespace {
-
 // Prevent patterns from concurrently accessing Clang.
 struct SchirClangMutex {
   std::mutex Mutex;
@@ -39,17 +36,12 @@ struct SchirClangMutex {
 
 // Enable some patterns to use our Clang integration
 // to perform introspection on C++.
-template <typename Base_>
-class RewriteSchirClangBase : public Base_ {
+class RewriteSchirClangBaseBase {
   SchirClangMutex* SchirClangOpt;
 
-public:
-  using Base = RewriteSchirClangBase;
-
-  template <typename ...Args>
-  RewriteSchirClangBase(SchirClangMutex* SCM, Args&& ...args)
-    : Base_(std::forward<Args>(args)...)
-    , SchirClangOpt(SCM)
+protected:
+  RewriteSchirClangBaseBase(SchirClangMutex* SCM)
+    : SchirClangOpt(SCM)
   { }
 
   bool HasSchirClang() const {
@@ -70,36 +62,64 @@ public:
     else
       return {llvm::success(), {}};
   }
+
+  llvm::LogicalResult CheckVisitArgs(nbdl_spec::VisitOp Op,
+                                     mlir::func::FuncOp CalleeFn) const;
+};
+
+template <typename Base_>
+class RewriteSchirClangBase : public Base_,
+                              protected RewriteSchirClangBaseBase {
+public:
+  using Base = RewriteSchirClangBase;
+
+  template <typename ...Args>
+  RewriteSchirClangBase(SchirClangMutex* SCM, Args&& ...args)
+    : Base_(std::forward<Args>(args)...)
+    , RewriteSchirClangBaseBase(SCM)
+  { }
 };
 
 template <typename OpTy>
 using OpRewriteSchirClang = RewriteSchirClangBase<mlir::OpRewritePattern<OpTy>>;
 
-// Return true if V is a !nbdl.store has no resolved alternatives.
-bool needsResolve(mlir::Value V) {
-  auto ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
+bool needsResolveT(mlir::Type T) {
+  auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   return ST && ST.getAlts().empty();
 }
 
-mlir::Type getSingleAlt(mlir::Value V) {
-  auto ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
+// Return true if V is a !nbdl.store has no resolved alternatives.
+bool needsResolve(mlir::Value V) {
+  return needsResolveT(V.getType());
+}
+
+mlir::Type getSingleAltT(mlir::Type T) {
+  auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   if (ST && ST.getAlts().size() == 1)
     return ST.getAlts().front().getValue();
   else
     return mlir::Type();
 }
 
-llvm::StringRef getSingleCppAlt(mlir::Value V) {
-  auto ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
+mlir::Type getSingleAlt(mlir::Value V) {
+  return getSingleAltT(V.getType());
+}
+
+llvm::StringRef getSingleCppAltT(mlir::Type T) {
+  auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   if (!ST || ST.getAlts().size() != 1)
     return {};
-  mlir::Type T = getSingleAlt(V);
 
-  auto CT = dyn_cast<nbdl_spec::CppType>(T);
-  if (!CT)
+  mlir::Type AltT = getSingleAltT(T);
+  if (auto CT = dyn_cast<nbdl_spec::CppType>(AltT))
+    return CT.getCppTypename();
+  else
     return {};
-  return CT.getCppTypename();
-};
+}
+
+llvm::StringRef getSingleCppAlt(mlir::Value V) {
+  return getSingleCppAltT(V.getType());
+}
 
 constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
   mlir::Type T = V.getType();
@@ -107,9 +127,94 @@ constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
          !getSingleCppAlt(V).empty();
 };
 
+// Check that all type mappings are valid for a visit on a visible callee
+// (ie in IR.)
+// All call argument types should be resolved store types.
+// mapping:
+//  store<...> -> store
+//  store<T> -> store<T>
+//  store<cpp<"T">> -> store<{get_mlir_type<T>}>
+//  store<cpp<"T">> -> {get_mlir_type<T>}
+// where we abuse braces to indicate a mapped type via the
+// expansion of a string to a parsed mlir type.
+llvm::LogicalResult
+RewriteSchirClangBaseBase::CheckVisitArgs(nbdl_spec::VisitOp Op,
+                                          mlir::func::FuncOp CalleeFn) const {
+  mlir::ValueRange Args = Op.getArgs();
+  llvm::ArrayRef<mlir::Type> ParamTs = CalleeFn.getArgumentTypes();
+  if (Args.size() != ParamTs.size()) {
+    Op.emitError("invalid visit arity");
+    return llvm::failure();
+  }
+  else if (Args.empty()) {
+    return llvm::success();
+  }
+
+  // MappedArgTypes must satisfy the first two cases.
+  llvm::SmallVector<mlir::Type, 8> MappedArgTypes;
+
+  // If any (Arg -> Param) should map a CppType to a not CppType,
+  // then all must be mapped via `get_mlir_type`.
+  bool ShouldMapCppToMlir = false;
+  for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
+    if (!getSingleCppAlt(Arg).empty() &&
+        !needsResolveT(ParamT) &&
+        getSingleCppAltT(ParamT).empty()) {
+      ShouldMapCppToMlir = true;
+      break;
+    }
+  }
+  if (ShouldMapCppToMlir) {
+    // Map every arg C++ type to a mlir::Type via nbdl::get_mlir_type
+    // in the current C++ environment.
+
+    // Map cpp type strings to mlir type strings. Allow nullptr.
+    llvm::SmallVector<schir::String*, 8> MappedTypeStrs;
+    auto [SCResult, ErrorMsg] = WithSchirClang(
+      [&](schir::SchirClang SchirClang) {
+        for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
+          llvm::StringRef CppTypeStr = getSingleCppAlt(Arg);
+          llvm::SmallString<128> Expr("::nbdl::get_mlir_type<");
+          Expr.append(CppTypeStr);
+          Expr.append(">()");
+          schir::SourceLocation Loc(mlir::OpaqueLoc
+              ::getUnderlyingLocationOrNull<
+                schir::SourceLocationEncoding*>(Op.getLoc()));
+          auto* S = dyn_cast<schir::String>(SchirClang.ExprEval(Loc, Expr));
+          MappedTypeStrs.push_back(S);
+        }
+      });
+    for (schir::String* TypeStr : MappedTypeStrs) {
+      mlir::MLIRContext* Ctx = Op.getContext();
+      mlir::Type ParsedT;
+      if (TypeStr && !TypeStr->getStringRef().empty())
+        ParsedT = mlir::parseType(TypeStr->getStringRef(),
+                                  Ctx, nullptr,
+                                  schir::String::IsNullTerminated);
+      MappedArgTypes.push_back(ParsedT);
+    }
+  } else {
+    for (mlir::Value Arg : Args)
+      MappedArgTypes.push_back(Arg.getType());
+  }
+
+  // Check that the types are equal or map to a placeholder.
+  assert(MappedArgTypes.size() == Args.size());
+  for (auto [I, ArgT, ParamT] : llvm::enumerate(MappedArgTypes, ParamTs)) {
+    if (ArgT != ParamT && !needsResolveT(ParamT)) {
+      std::string Msg = ("Invalid visit mapping for argument " +
+                         llvm::Twine(I)).str();
+      Op.emitError(Msg);
+      return llvm::failure();
+    }
+  }
+
+  return llvm::success();
+}
 
 // Resolve the result type of nbdl.visit.
-// This pattern requires a ModuleOp level pass.
+// Additionally, validate arguments if we have that in the IR
+//  (ie when the callee is a FuncNameOp.)
 struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   using Base::Base;
 
@@ -136,8 +241,15 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
         Lookup = M.lookupSymbol(FN.getName());
       auto F = dyn_cast_or_null<mlir::func::FuncOp>(Lookup);
       llvm::ArrayRef<mlir::Type> ResultTs;
-      if (F)
+      if (F) {
         ResultTs = F.getResultTypes();
+        // FIXME We will not get here for functions discarding their results
+        //       (ie no result type deduction.)
+        //       // We should move this check to [it's own] subsequent pass.
+        // While we are here, validate the call arguments.
+        if (llvm::failed(CheckVisitArgs(Op, F)))
+          return llvm::failure();
+      }
       if (ResultTs.size() == 1) {
         auto TA = mlir::TypeAttr::get(ResultTs.front());
         NewStoreT = nbdl_spec::StoreType::get(Ctx, TA);

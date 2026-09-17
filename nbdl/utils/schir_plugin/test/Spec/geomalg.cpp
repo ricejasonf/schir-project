@@ -21,38 +21,43 @@ namespace foo {
           (nbdl spec geomalg)
           (geomalg base))
 
-  ;(export-c test_dot)
+  (export-c test_dot)
+  (export-cpp test_test_dot)
 
-  (define-geomalg-fn test_dot ((Point : !vec3) (Axis : !uvec3))
-    (dot Point Axis))
+  ; // TODO check the return type
+  ; //      (ie The define-geomalg-fn should
+  ; //       have expand pass run on it.)
+  ; // TODO Check incorrect type mapping.
+  (define-geomalg-fn test_dot ((A : !vec3) (B : !vec3))
+    (dot A B))
 
   (define-match-fn test_test_dot (Store Fn)
-    (match (get Store '.point)
-      (!vec3 =>
-        (lambda (P)
-          (match (get Store '.axis)
-            (!uvec3 =>
-              (lambda (A)
-                (visit Fn (visit test_dot P A)))))))))
+    (match-params ((A : 'nbdl::vec_f32<3> (get Store '.a))
+                   (B : 'nbdl::vec_f32<3> (get Store '.b)))
+      (visit test_dot A B)))
 
-#| /* TODO A syntax like let would be nice.
-    (match-params ((P (get Store '.point))
-                   (A (get Store '.axis)))
-      (visit test_dot (convert P !vec3)
-                      (convert A !uvec3))))
-   */ |#
+#|
+  (export-c sum_op)
+  (export-cpp test_sum)
+  ; // TODO This should be in...
+  (define (geomalg.sum A B)
+    (sum A B))
 
-#| /* TODO Finish... something
-  (define-geomalg-fn test_test_test_dot ((Points : !memref<?x!vec3>)
-    (match-each Points
-      (lambda (Point)
-    */ |#
+  (define-match-fn foo_test_sum ((Sum : !vec3)
+                                 (Vecs : !memref<?x!vec3>)
+                                 Fn)
+    (match-each (Vecs)
+      (lambda (V)
+        (assign Sum (visit geomalg.sum Sum V))))
+    (Fn Sum))
 
-
-
-
-
-    ;(visit test_dot)
+  ; // Visiting the non-exported foo_test_sum
+  ; // should generate an anonymous function.
+  ; // We would need to deduce whether it was compiled
+  ; // or generated c++.
+  (define-match-fn test_sum (Sum Vecs Fn)
+    (visit foo_test_sum Sum Vecs Fn))
+    |#
 
 }
 } // namespace foo

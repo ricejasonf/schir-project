@@ -13,6 +13,7 @@
 #include <nbdl/ext/std/tuple_like.hpp>
 #include <nbdl/get.hpp>
 #include <nbdl/match.hpp>
+#include <nbdl/spec/mlir.hpp>
 #include <nbdl/store_compose.hpp>
 #include <nbdl/strong_alias.hpp>
 #include <nbdl/tags.hpp>

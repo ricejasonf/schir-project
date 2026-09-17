@@ -1084,6 +1084,7 @@
       (newline))
 
     (define export-cpp-names '())
+    (define export-c-names '())
 
     (define-syntax export-cpp
       (syntax-rules ()
@@ -1093,7 +1094,14 @@
              (list (namespace-prefix 'Name) ...)
              export-cpp-names)))))
 
-    ; FIXME Remove once we call flatten pass on every top-level-op.
+    (define-syntax export-c
+      (syntax-rules ()
+        ((export-c Name ...)
+         (set! export-c-names
+           (append
+             (list 'Name ...)
+             export-c-names)))))
+
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
         main-module current-schir-clang))
@@ -1116,6 +1124,7 @@
     sfinae-visit
     noop
     export-cpp
+    export-c
 
     ;; Reexport some base stuff
     define
