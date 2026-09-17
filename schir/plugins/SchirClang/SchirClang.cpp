@@ -537,6 +537,24 @@ schir::Value SchirClang::ExprEval(schir::SourceLocation Loc,
     return nullptr;
   }
 
+  // Handle std::array<char, N> as schir::String.
+  if (std::optional<uint64_t> N =
+        schir_clang::GetStdArrayCharSize(Expr->getType()))
+    return schir_clang::EvalArrayCharExpr(Parser, SchirScheme, ErrorMsg,
+                                          Expr, *N);
+
+  // Handle std::string_view as schir::String.
+  if (schir_clang::IsStdStringView(Expr->getType()))
+    return schir_clang::EvalStringViewExpr(Parser, SchirScheme,
+                                           LexerSpellings, ErrorMsg,
+                                           Loc, ExprStr);
+
+  if (Expr->getType()->isRecordType()) {
+    SetError("expr-eval expects a std::array<char, N> or "
+             "std::string_view for a string-like result");
+    return nullptr;
+  }
+
   // ConstantExpr eval.
   clang::Expr::EvalResult EvalResult;
   if (!Expr->EvaluateAsRValue(EvalResult,
