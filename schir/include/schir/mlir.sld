@@ -38,26 +38,37 @@
     load-dialect
     verify
     module-lookup
+    copy-op
     value?
     )
   (import (schir base)
           (schir mlir builtins))
   (begin
+    ;; A UserFn of #f leaves the region empty (ie no blocks.)
     (define (init-regions Op BlockArgLocList BlockArgTypesList UserFns)
       (define Is (range (length BlockArgTypesList)))
       (define (InitRegion RegionIndex BlockArgTypes BlockArgLocs UserFn)
-        (with-builder
-          (lambda ()
-            (define Region (get-region Op RegionIndex))
-            (define Block (entry-block Region))
-            (define Args
-              (let ()
-                (define (Proc BlockArgType BlockArgLoc)
-                  (add-argument Block BlockArgType BlockArgLoc))
-                (map Proc BlockArgTypes BlockArgLocs)))
-            (at-block-begin Block)
-            (apply UserFn Args))))
+        (if UserFn
+          (with-builder
+            (lambda ()
+              (define Region (get-region Op RegionIndex))
+              (define Block (entry-block Region))
+              (define Args
+                (let ()
+                  (define (Proc BlockArgType BlockArgLoc)
+                    (add-argument Block BlockArgType BlockArgLoc))
+                  (map Proc BlockArgTypes BlockArgLocs)))
+              (at-block-begin Block)
+              (apply UserFn Args)))))
       (map InitRegion Is BlockArgTypesList BlockArgLocList UserFns))
+
+    ;; Create the function that populates a region or #f
+    ;; if the region should be left empty.
+    (define-syntax region-fn
+      (syntax-rules ()
+        ((region-fn ()) #f)
+        ((region-fn (BlockArg ...) RegionBody1 RegionBodyN ...)
+         (lambda (BlockArg ...) RegionBody1 RegionBodyN ...))))
 
     (define-syntax create-op
       (syntax-rules (: loc: attributes: operands: result-types: region:)
@@ -80,7 +91,7 @@
                     (attributes: (AttrName Attr) ...)
                     (result-types: ResultTypes ...)
                     (region: RegionName ((BlockArg : BlockArgType) ...)
-                             RegionBody1 RegionBodyN ...) ...)
+                             RegionBody ...) ...)
          (let ((Op (%create-op
                      Name
                      (source-loc Loc (syntax-source-loc Name))
@@ -93,8 +104,8 @@
                (BlockArgLocList
                  (list (list (syntax-source-loc BlockArg) ...) ...))
                (BlockArgTypesList (list (list BlockArgType ...) ...))
-               (UserFns (list (lambda (BlockArg ...)
-                                RegionBody1 RegionBodyN ...) ...)))
+               (UserFns (list (region-fn (BlockArg ...)
+                                         RegionBody ...) ...)))
            (init-regions Op BlockArgLocList BlockArgTypesList UserFns)
            Op))
         ))

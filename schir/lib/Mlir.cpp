@@ -70,6 +70,7 @@ schir::ExternFunction parent_op;
 schir::ExternFunction op_next;
 schir::ExternFunction verify;
 schir::ExternFunction module_lookup;
+schir::ExternFunction copy_op;
 schir::ExternFunction is_value;
 }
 
@@ -910,6 +911,19 @@ void module_lookup(Context& C, schir::ValueRefs Args) {
   C.Cont(Result);
 }
 
+// Clone an operation (including its regions) inserting
+// the copy at the insertion point of the current-builder.
+// Return the new operation.
+// (copy-op _op_)
+void copy_op(Context& C, schir::ValueRefs Args) {
+  if (mlir::Operation* Op = getSingleOpArg(C, Args)) {
+    mlir::OpBuilder* Builder = getCurrentBuilder(C);
+    if (!Builder) return;
+    mlir::Operation* NewOp = Builder->clone(*Op);
+    C.Cont(schir::Value(NewOp));
+  }
+}
+
 // (value? obj)
 // (value? _typestr_ obj)
 // (value? mlir.type obj)
@@ -979,7 +993,7 @@ void function_type_inputs(Context& C, ValueRefs Args) {
     return;
 
   llvm::SmallVector<Value, 4> Inputs;
-  for (mlir::Type InputT : FT.getResults())
+  for (mlir::Type InputT : FT.getInputs())
     Inputs.push_back(C.CreateAny(InputT));
   C.Cont(Inputs);
 }
@@ -1032,6 +1046,7 @@ void SCHIR_MLIR_INIT(schir::Context& C) {
   SCHIR_MLIR_VAR(with_new_context) = schir::mlir_bind::with_new_context;
   SCHIR_MLIR_VAR(verify) = schir::mlir_bind::verify;
   SCHIR_MLIR_VAR(module_lookup) = schir::mlir_bind::module_lookup;
+  SCHIR_MLIR_VAR(copy_op) = schir::mlir_bind::copy_op;
   SCHIR_MLIR_VAR(is_value) = schir::mlir_bind::is_value;
 }
 
@@ -1074,6 +1089,7 @@ void SCHIR_MLIR_LOAD_MODULE(schir::Context& C) {
     {"load-dialect", SCHIR_MLIR_VAR(load_dialect)},
     {"verify", SCHIR_MLIR_VAR(verify)},
     {"module-lookup", SCHIR_MLIR_VAR(module_lookup)},
+    {"copy-op", SCHIR_MLIR_VAR(copy_op)},
     {"value?", SCHIR_MLIR_VAR(is_value)},
   });
 }
