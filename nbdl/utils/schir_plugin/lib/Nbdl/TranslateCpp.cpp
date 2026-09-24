@@ -400,6 +400,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<MatchIfOp>(Op))      return Visit(cast<MatchIfOp>(Op));
     else if (isa<MatchEachOp>(Op))    return Visit(cast<MatchEachOp>(Op));
     else if (isa<FuncOp>(Op))         return Visit(cast<FuncOp>(Op));
+    else if (isa<CallOp>(Op))         return Visit(cast<CallOp>(Op));
+    else if (isa<UnwrapOp>(Op))       return Visit(cast<UnwrapOp>(Op));
     else if (isa<StoreComposeOp>(Op)) return Visit(cast<StoreComposeOp>(Op));
     else if (isa<ScopeOp>(Op))
       return VisitRegion(cast<ScopeOp>(Op).getBody());
@@ -554,6 +556,29 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
   void Visit(DiscardOp) {
     // Do nothing.
+  }
+
+  // Call a to-be-lowered function by its C linkage name.
+  void Visit(CallOp Op) {
+    if (Op.getNumResults() > 1)
+      return SetError("call should have less than 2 results", Op);
+    if (Op.getNumResults() == 1 && !Op.getResult(0).use_empty()) {
+      OS << "auto&& "
+         << SetLocalVarName(Op.getResult(0), "result_")
+         << " = ";
+    }
+    OS << Op.getCallee() << '(';
+    llvm::interleaveComma(Op.getOperands(), OS,
+        [&](mlir::Value V) {
+          WriteExpr(V);
+        });
+    OS << ");\n";
+  }
+
+  // The C++ object of a store with a single alternative
+  // is already its contained value.
+  void Visit(UnwrapOp Op) {
+    SetLocalVal(Op.getResult(), GetLocalVal(Op.getValue()));
   }
 
   void Visit(StoreComposeOp Op) {

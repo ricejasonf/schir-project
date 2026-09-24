@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -29,18 +30,8 @@ struct get_mlir_type {
 };
 
 namespace detail {
-constexpr std::string mlir_to_string(unsigned n) {
-  std::string result;
-  do {
-    result.insert(result.begin(), static_cast<char>('0' + n % 10));
-    n /= 10;
-  } while (n != 0);
-  return result;
-}
-} // namespace detail
-
-// Get the MLIR type string of T as a constant expression
-// since a std::string cannot escape constant evaluation.
+// Temporarily, shim for get_mlir_type not
+// returning a compile-time string.
 template <typename T>
 constexpr auto mlir_type_name() {
   constexpr std::size_t size = get_mlir_type<T>::apply().size();
@@ -49,6 +40,7 @@ constexpr auto mlir_type_name() {
   std::copy(str.begin(), str.end(), result.begin());
   return result;
 }
+} // namespace detail
 
 template <>
 struct get_mlir_type<int32_t> {
@@ -67,7 +59,12 @@ struct get_mlir_type<float> {
 template <unsigned n>
 struct get_mlir_type<vec_f32<n>> {
   static constexpr std::string apply() {
-    return std::string("vector<") + detail::mlir_to_string(n) + "xf32>";
+    std::string result = "vector<";
+    char buf[16]{};
+    auto [end, _] = std::to_chars(buf, buf + sizeof(buf), n);
+    result.append(buf, end);
+    result.append("xf32>");
+    return result;
   }
 };
 } // namespace nbdl

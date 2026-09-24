@@ -8,6 +8,8 @@
 #include <schir/SchirClang.h>
 #include <llvm/Support/Casting.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/IR/Builders.h>
+#include <mlir/IR/BuiltinOps.h>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -72,6 +74,32 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
     return C.Raise(Err);
   }
   C.Cont();
+}
+
+// TODO I think this will be replaced once we can copy mlir.funcs in scheme.
+// Create an external FuncOp (ie forward declaration.)
+void nbdl_spec_declare_func(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  auto F = dyn_cast_or_null<mlir::func::FuncOp>(
+      dyn_cast<mlir::Operation>(Args[0]));
+  if (!F)
+    return C.RaiseError("expecting func.func operation: {}", Args[0]);
+  auto M = dyn_cast_or_null<mlir::ModuleOp>(
+      dyn_cast<mlir::Operation>(Args[1]));
+  if (!M)
+    return C.RaiseError("expecting builtin.module operation: {}", Args[1]);
+
+  if (M.lookupSymbol(F.getSymName()))
+    return C.RaiseError("symbol already defined in module: {}", Args[0]);
+
+  mlir::OpBuilder Builder(M.getContext());
+  Builder.setInsertionPointToEnd(M.getBody());
+  auto Decl = mlir::func::FuncOp::create(Builder, F.getLoc(),
+                                         F.getSymName(),
+                                         F.getFunctionType());
+  Decl.setPrivate();
+  C.Cont(schir::Value(Decl.getOperation()));
 }
 
 // If the current block has a terminator, wrap the

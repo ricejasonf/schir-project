@@ -7,13 +7,20 @@
 #ifndef GEOMALG_NBDL_HPP
 #define GEOMALG_NBDL_HPP
 
-#include <nbdl/spec/mlir.hpp>
+#include <charconv>
 #include <cstdint>
 #include <string>
 
-namespace geomalg {
-using nbdl::vec_f32;
+// Forward declare nbdl stuff.
+namespace nbdl {
+template <unsigned n>
+using vec_f32 = float __attribute__((ext_vector_type(n)));
 
+template <typename T>
+struct get_mlir_type;
+} // namespace nbdl
+
+namespace geomalg {
 struct zero {
   float value = 0.0;
 };
@@ -27,12 +34,12 @@ struct blade {
 
 template <typename... BasisVector>
 struct multivector {
-  vec_f32<sizeof...(BasisVector)> value;
+  nbdl::vec_f32<sizeof...(BasisVector)> value;
 };
 
 template <typename... BasisVector>
 struct unit_vector {
-  vec_f32<sizeof...(BasisVector)> value;
+  nbdl::vec_f32<sizeof...(BasisVector)> value;
 };
 
 // Basis vectors and common types (See base.sld.)
@@ -47,7 +54,7 @@ using vec2 = multivector<e1, e2>;
 using vec3 = multivector<e1, e2, e3>;
 using vec4 = multivector<e1, e2, e3, no>;
 using vec5 = multivector<e1, e2, e3, no, ni>;
-}
+} // namespace geomalg
 
 namespace nbdl {
 template <>
@@ -60,7 +67,12 @@ struct get_mlir_type<geomalg::zero> {
 template <uint32_t Tag>
 struct get_mlir_type<geomalg::blade<Tag>> {
   static constexpr std::string apply() {
-    return std::string("!geomalg.blade<") + detail::mlir_to_string(Tag) + '>';
+    std::string result = "!geomalg.blade<";
+    char buf[16]{};
+    auto [end, _] = std::to_chars(buf, buf + sizeof(buf), Tag);
+    result.append(buf, end);
+    result.push_back('>');
+    return result;
   }
 };
 

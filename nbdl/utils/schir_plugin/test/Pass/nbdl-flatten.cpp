@@ -97,9 +97,10 @@ public:
   (visit Fn X))
 
 ; // CHECK-LABEL: @"::test_inline_visit"
-; // CHECK: "nbdl.match"(%arg0)
+; // CHECK-SAME: ([[STORE:%arg[0-9]+]]: !nbdl.store, [[FN:%arg[0-9]+]]: !nbdl.store)
+; // CHECK: "nbdl.match"([[STORE]])
 ; // CHECK-NEXT: ^bb0([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::not_a_store">>):
-; // CHECK-NEXT: [[VISIT:%[0-9]+]] = "nbdl.visit"(%arg1, [[ARG]])
+; // CHECK-NEXT: [[VISIT:%[0-9]+]] = "nbdl.visit"([[FN]], [[ARG]])
 ; // CHECK-NEXT: "nbdl.discard"([[VISIT]])
 (define-match-fn test_inline_visit (Store Fn)
   (match (get Store)

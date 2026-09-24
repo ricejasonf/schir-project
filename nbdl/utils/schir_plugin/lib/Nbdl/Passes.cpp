@@ -136,12 +136,13 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
 
   // Check that all type mappings are valid for a visit on a visible callee
   // (ie in IR.)
-  // All call argument types should be resolved store types.
+  // All call argument types should be resolved store types or map to an
+  // unresolved store.
   // mapping:
   //  store<...> -> store
   //  store<T> -> store<T>
-  //  store<cpp<"T">> -> store<{mlir_type_name<T>}>
-  //  store<cpp<"T">> -> {mlir_type_name<T>}
+  //  store<cpp<"T">> -> store<{get_mlir_type<T>}>
+  //  store<cpp<"T">> -> {get_mlir_type<T>}
   // where we abuse braces to indicate a mapped type via the
   // expansion of a string to a parsed mlir type.
   llvm::LogicalResult matchAndRewrite(nbdl_spec::VisitOp Op,
@@ -170,8 +171,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       return llvm::failure();
     }
 
-    // Wait for argument types to be inferred unless
-    // the parameter accepts anything.
+    // Arguments should be resolved or map to an unresolved store.
     for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs))
       if (needsResolve(Arg) && !needsResolveT(ParamT))
         return Rewriter.notifyMatchFailure(Op, "args are not resolved");
@@ -181,7 +181,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
 
     bool IsCppToMlir = shouldMapCppToMlir(Args, ParamTs);
     if (IsCppToMlir) {
-      // Map every arg C++ type to a mlir::Type via nbdl::mlir_type_name
+      // Map every arg C++ type to a mlir::Type via nbdl::get_mlir_type
       // in the current C++ environment.
 
       // Map cpp type strings to mlir type strings. Allow nullptr.
@@ -191,11 +191,11 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
           for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
             llvm::StringRef CppTypeStr = getSingleCppAlt(Arg);
             if (CppTypeStr.empty()) {
-              // Not a C++ type so there is nothing to map.
+              // This is an invalid case handled in isValidMapping.
               MappedTypeStrs.push_back(nullptr);
               continue;
             }
-            llvm::SmallString<128> Expr("::nbdl::mlir_type_name<");
+            llvm::SmallString<128> Expr("::nbdl::detail::mlir_type_name<");
             Expr.append(CppTypeStr);
             Expr.append(">()");
             schir::SourceLocation Loc(mlir::OpaqueLoc
@@ -207,7 +207,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
           }
         });
       if (llvm::failed(SCResult)) {
-        Op.emitError("clang mlir_type_name evaluation failed: " + ErrorMsg);
+        Op.emitError("clang get_mlir_type evaluation failed: " + ErrorMsg);
         return llvm::failure();
       }
       for (auto [Arg, TypeStr] : llvm::zip(Args, MappedTypeStrs)) {
@@ -334,11 +334,11 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       if (Arg.getType() == ParamT)
         CallArgs.push_back(Arg);
       else
-        CallArgs.push_back(Rewriter.create<nbdl_spec::UnwrapOp>(
-              Arg.getLoc(), ParamT, Arg));
+        CallArgs.push_back(nbdl_spec::UnwrapOp::create(
+              Rewriter, Arg.getLoc(), ParamT, Arg));
     }
 
-    Rewriter.create<mlir::func::CallOp>(Op.getLoc(), CalleeFn, CallArgs);
+    mlir::func::CallOp::create(Rewriter, Op.getLoc(), CalleeFn, CallArgs);
     Rewriter.replaceOpWithNewOp<nbdl_spec::UnitOp>(Op,
         nbdl_spec::UnitType::get(Op.getContext()));
     return llvm::success();
