@@ -93,6 +93,20 @@ public:
           (visit '.push_back Dest Element))))))
   (visit Fn Dest))
 
+(define-match-fn test_inline_callee (X Fn)
+  (visit Fn X))
+
+; // CHECK-LABEL: @"::test_inline_visit"
+; // CHECK: "nbdl.match"(%arg0)
+; // CHECK-NEXT: ^bb0([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::not_a_store">>):
+; // CHECK-NEXT: [[VISIT:%[0-9]+]] = "nbdl.visit"(%arg1, [[ARG]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT]])
+(define-match-fn test_inline_visit (Store Fn)
+  (match (get Store)
+    ('foo::not_a_store =>
+     (lambda (NotAStore)
+       (visit test_inline_callee NotAStore Fn)))))
+
 (write-nbdl-module)
 
 } // schir_scheme

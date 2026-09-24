@@ -6,6 +6,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
 #include <mlir/AsmParser/AsmParser.h>
+#include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
@@ -127,90 +128,240 @@ constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
          !getSingleCppAlt(V).empty();
 };
 
-// Check that all type mappings are valid for a visit on a visible callee
-// (ie in IR.)
-// All call argument types should be resolved store types.
-// mapping:
-//  store<...> -> store
-//  store<T> -> store<T>
-//  store<cpp<"T">> -> store<{get_mlir_type<T>}>
-//  store<cpp<"T">> -> {get_mlir_type<T>}
-// where we abuse braces to indicate a mapped type via the
-// expansion of a string to a parsed mlir type.
-llvm::LogicalResult
-RewriteSchirClangBaseBase::CheckVisitArgs(nbdl_spec::VisitOp Op,
-                                          mlir::func::FuncOp CalleeFn) const {
-  mlir::ValueRange Args = Op.getArgs();
-  llvm::ArrayRef<mlir::Type> ParamTs = CalleeFn.getArgumentTypes();
-  if (Args.size() != ParamTs.size()) {
-    Op.emitError("invalid visit arity");
-    return llvm::failure();
-  }
-  else if (Args.empty()) {
+// Check visit argument types and inline any calls
+// on FuncOps with store type params or lower to
+// raw func.call.
+struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
+  using Base::Base;
+
+  // Check that all type mappings are valid for a visit on a visible callee
+  // (ie in IR.)
+  // All call argument types should be resolved store types.
+  // mapping:
+  //  store<...> -> store
+  //  store<T> -> store<T>
+  //  store<cpp<"T">> -> store<{mlir_type_name<T>}>
+  //  store<cpp<"T">> -> {mlir_type_name<T>}
+  // where we abuse braces to indicate a mapped type via the
+  // expansion of a string to a parsed mlir type.
+  llvm::LogicalResult matchAndRewrite(nbdl_spec::VisitOp Op,
+                      mlir::PatternRewriter& Rewriter) const override {
+    if (Op.getValidCppCrossMap())
+      return Rewriter.notifyMatchFailure(Op, "cpp mapping already certified");
+    if (Op.getSfinae())
+      return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
+
+    mlir::func::FuncOp CalleeFn;
+    auto FN = Op.getFn().getDefiningOp<nbdl_spec::FuncNameOp>();
+    if (!FN)
+      return llvm::failure();
+
+    auto M = Op->getParentOfType<mlir::ModuleOp>();
+    if (M)
+      if (mlir::Operation* Lookup = M.lookupSymbol(FN.getName()))
+        CalleeFn = dyn_cast<mlir::func::FuncOp>(Lookup);
+    if (!CalleeFn)
+      return llvm::failure();
+
+    mlir::ValueRange Args = Op.getArgs();
+    llvm::ArrayRef<mlir::Type> ParamTs = CalleeFn.getArgumentTypes();
+    if (Args.size() != ParamTs.size()) {
+      Op.emitError("invalid visit arity");
+      return llvm::failure();
+    }
+
+    // Wait for argument types to be inferred unless
+    // the parameter accepts anything.
+    for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs))
+      if (needsResolve(Arg) && !needsResolveT(ParamT))
+        return Rewriter.notifyMatchFailure(Op, "args are not resolved");
+
+    // MappedArgTypes must satisfy the first two cases.
+    llvm::SmallVector<mlir::Type, 8> MappedArgTypes;
+
+    bool IsCppToMlir = shouldMapCppToMlir(Args, ParamTs);
+    if (IsCppToMlir) {
+      // Map every arg C++ type to a mlir::Type via nbdl::mlir_type_name
+      // in the current C++ environment.
+
+      // Map cpp type strings to mlir type strings. Allow nullptr.
+      llvm::SmallVector<schir::String*, 8> MappedTypeStrs;
+      auto [SCResult, ErrorMsg] = WithSchirClang(
+        [&](schir::SchirClang SchirClang) {
+          for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
+            llvm::StringRef CppTypeStr = getSingleCppAlt(Arg);
+            if (CppTypeStr.empty()) {
+              // Not a C++ type so there is nothing to map.
+              MappedTypeStrs.push_back(nullptr);
+              continue;
+            }
+            llvm::SmallString<128> Expr("::nbdl::mlir_type_name<");
+            Expr.append(CppTypeStr);
+            Expr.append(">()");
+            schir::SourceLocation Loc(mlir::OpaqueLoc
+                ::getUnderlyingLocationOrNull<
+                  schir::SourceLocationEncoding*>(Op.getLoc()));
+            auto* S = dyn_cast_or_null<schir::String>(
+                SchirClang.ExprEval(Loc, Expr));
+            MappedTypeStrs.push_back(S);
+          }
+        });
+      if (llvm::failed(SCResult)) {
+        Op.emitError("clang mlir_type_name evaluation failed: " + ErrorMsg);
+        return llvm::failure();
+      }
+      for (auto [Arg, TypeStr] : llvm::zip(Args, MappedTypeStrs)) {
+        if (getSingleCppAlt(Arg).empty()) {
+          MappedArgTypes.push_back(Arg.getType());
+          continue;
+        }
+        mlir::MLIRContext* Ctx = Op.getContext();
+        mlir::Type ParsedT;
+        if (TypeStr && !TypeStr->getStringRef().empty())
+          ParsedT = mlir::parseType(TypeStr->getStringRef(),
+                                    Ctx, nullptr,
+                                    schir::String::IsNullTerminated);
+        MappedArgTypes.push_back(ParsedT);
+      }
+    } else {
+      for (mlir::Value Arg : Args)
+        MappedArgTypes.push_back(Arg.getType());
+    }
+
+    // Check that the types are equal or map to a placeholder.
+    assert(MappedArgTypes.size() == Args.size());
+    for (auto [I, ArgT, ParamT] : llvm::enumerate(MappedArgTypes, ParamTs)) {
+      if (!isValidMapping(ArgT, ParamT)) {
+        std::string Msg = ("Invalid visit mapping for argument " +
+                           llvm::Twine(I)).str();
+        Op.emitError(Msg);
+        return llvm::failure();
+      }
+    }
+
+    if (IsCppToMlir) {
+      // Add an attribute to certify the cpp to mlir mappings
+      // since that information is not available in the IR.
+      Rewriter.modifyOpInPlace(Op, [&] { Op.setValidCppCrossMap(true); });
+    } else if (llvm::any_of(ParamTs,
+          [](mlir::Type T) { return isa<nbdl_spec::StoreType>(T); })) {
+      // Inline the function visit call.
+      return inlineVisit(Op, CalleeFn, Rewriter);
+    } else {
+      // Store types should "unwrap" to their contained type.
+      return lowerToCall(Op, CalleeFn, Rewriter);
+    }
+
     return llvm::success();
   }
 
-  // MappedArgTypes must satisfy the first two cases.
-  llvm::SmallVector<mlir::Type, 8> MappedArgTypes;
-
-  // If any (Arg -> Param) should map a CppType to a not CppType,
-  // then all must be mapped via `get_mlir_type`.
-  bool ShouldMapCppToMlir = false;
-  for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
-    if (!getSingleCppAlt(Arg).empty() &&
-        !needsResolveT(ParamT) &&
-        getSingleCppAltT(ParamT).empty()) {
-      ShouldMapCppToMlir = true;
-      break;
-    }
-  }
-  if (ShouldMapCppToMlir) {
-    // Map every arg C++ type to a mlir::Type via nbdl::get_mlir_type
-    // in the current C++ environment.
-
-    // Map cpp type strings to mlir type strings. Allow nullptr.
-    llvm::SmallVector<schir::String*, 8> MappedTypeStrs;
-    auto [SCResult, ErrorMsg] = WithSchirClang(
-      [&](schir::SchirClang SchirClang) {
-        for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
-          llvm::StringRef CppTypeStr = getSingleCppAlt(Arg);
-          llvm::SmallString<128> Expr("::nbdl::get_mlir_type<");
-          Expr.append(CppTypeStr);
-          Expr.append(">()");
-          schir::SourceLocation Loc(mlir::OpaqueLoc
-              ::getUnderlyingLocationOrNull<
-                schir::SourceLocationEncoding*>(Op.getLoc()));
-          auto* S = dyn_cast<schir::String>(SchirClang.ExprEval(Loc, Expr));
-          MappedTypeStrs.push_back(S);
-        }
-      });
-    for (schir::String* TypeStr : MappedTypeStrs) {
-      mlir::MLIRContext* Ctx = Op.getContext();
-      mlir::Type ParsedT;
-      if (TypeStr && !TypeStr->getStringRef().empty())
-        ParsedT = mlir::parseType(TypeStr->getStringRef(),
-                                  Ctx, nullptr,
-                                  schir::String::IsNullTerminated);
-      MappedArgTypes.push_back(ParsedT);
-    }
-  } else {
-    for (mlir::Value Arg : Args)
-      MappedArgTypes.push_back(Arg.getType());
+  // Given an argument type (possibly mapped from C++) check
+  // that it is valid for the parameter type.
+  static bool isValidMapping(mlir::Type ArgT, mlir::Type ParamT) {
+    if (!ArgT)
+      return false;
+    if (ArgT == ParamT || needsResolveT(ParamT))
+      return true;
+    // store<T> -> T
+    if (!isa<nbdl_spec::StoreType>(ParamT) && getSingleAltT(ArgT) == ParamT)
+      return true;
+    // {mlir} -> store<{mlir}>
+    if (!isa<nbdl_spec::StoreType>(ArgT) && getSingleAltT(ParamT) == ArgT)
+      return true;
+    return false;
   }
 
-  // Check that the types are equal or map to a placeholder.
-  assert(MappedArgTypes.size() == Args.size());
-  for (auto [I, ArgT, ParamT] : llvm::enumerate(MappedArgTypes, ParamTs)) {
-    if (ArgT != ParamT && !needsResolveT(ParamT)) {
-      std::string Msg = ("Invalid visit mapping for argument " +
-                         llvm::Twine(I)).str();
-      Op.emitError(Msg);
-      return llvm::failure();
-    }
+  // Get the discard op if the result of the visit is discarded
+  // as the terminator of its block (ie it is in tail position.)
+  static nbdl_spec::DiscardOp getTailDiscard(nbdl_spec::VisitOp Op) {
+    mlir::Value Result = Op.getResult();
+    if (!Result.hasOneUse())
+      return {};
+    auto Discard = dyn_cast<nbdl_spec::DiscardOp>(*Result.user_begin());
+    if (!Discard || Discard->getBlock() != Op->getBlock() ||
+        Discard->getNextNode() != nullptr)
+      return {};
+    return Discard;
   }
 
-  return llvm::success();
-}
+  // Replace the tail call to a function with store type
+  // params with the body of that function.
+  llvm::LogicalResult inlineVisit(nbdl_spec::VisitOp Op,
+                                  mlir::func::FuncOp CalleeFn,
+                                  mlir::PatternRewriter& Rewriter) const {
+    if (CalleeFn.isExternal())
+      return Rewriter.notifyMatchFailure(Op, "callee has no body");
+    if (!CalleeFn.getBody().hasOneBlock())
+      return Rewriter.notifyMatchFailure(Op, "callee has multiple blocks");
+    if (CalleeFn->isAncestor(Op))
+      return Rewriter.notifyMatchFailure(Op, "recursive visit");
+    if (CalleeFn.getNumResults() != 0)
+      return Rewriter.notifyMatchFailure(Op, "callee has results");
+    nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
+    if (!Discard)
+      return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
+
+    mlir::Block& CalleeBody = CalleeFn.getBody().front();
+    mlir::IRMapping Mapping;
+    Mapping.map(CalleeBody.getArguments(), Op.getArgs());
+
+    // The callee body has its own terminator so it
+    // replaces both the visit and the discard.
+    Rewriter.setInsertionPoint(Discard);
+    for (mlir::Operation& CalleeOp : CalleeBody)
+      Rewriter.clone(CalleeOp, Mapping);
+
+    Rewriter.eraseOp(Discard);
+    Rewriter.eraseOp(Op);
+    return llvm::success();
+  }
+
+  // Lower to a func.call where arguments that are stores
+  // are unwrapped to their contained type.
+  llvm::LogicalResult lowerToCall(nbdl_spec::VisitOp Op,
+                                  mlir::func::FuncOp CalleeFn,
+                                  mlir::PatternRewriter& Rewriter) const {
+    mlir::Value Result = Op.getResult();
+    bool IsDiscarded = llvm::all_of(Result.getUsers(),
+        [](mlir::Operation* User) { return isa<nbdl_spec::DiscardOp>(User); });
+    if (!IsDiscarded)
+      return Rewriter.notifyMatchFailure(Op,
+          "lowering visit with used result is not supported");
+
+    llvm::SmallVector<mlir::Value, 8> CallArgs;
+    for (auto [Arg, ParamT] : llvm::zip(Op.getArgs(),
+                                        CalleeFn.getArgumentTypes())) {
+      if (Arg.getType() == ParamT)
+        CallArgs.push_back(Arg);
+      else
+        CallArgs.push_back(Rewriter.create<nbdl_spec::UnwrapOp>(
+              Arg.getLoc(), ParamT, Arg));
+    }
+
+    Rewriter.create<mlir::func::CallOp>(Op.getLoc(), CalleeFn, CallArgs);
+    Rewriter.replaceOpWithNewOp<nbdl_spec::UnitOp>(Op,
+        nbdl_spec::UnitType::get(Op.getContext()));
+    return llvm::success();
+  }
+
+  // If any argument is resolved as a c++ type and maps to a non-cpp
+  // type, indicate that validating the mappings is necessary.
+  bool shouldMapCppToMlir(mlir::ValueRange Args,
+                          mlir::TypeRange ParamTs) const {
+    // If any (Arg -> Param) should map a CppType to a not CppType,
+    // then all must be mapped via `get_mlir_type`.
+    bool Result = false;
+    for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
+      if (!getSingleCppAlt(Arg).empty() &&
+          !needsResolveT(ParamT) &&
+          getSingleCppAltT(ParamT).empty()) {
+        Result = true;
+        break;
+      }
+    }
+    return Result;
+  }
+};
 
 // Resolve the result type of nbdl.visit.
 // Additionally, validate arguments if we have that in the IR
@@ -241,15 +392,8 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
         Lookup = M.lookupSymbol(FN.getName());
       auto F = dyn_cast_or_null<mlir::func::FuncOp>(Lookup);
       llvm::ArrayRef<mlir::Type> ResultTs;
-      if (F) {
+      if (F)
         ResultTs = F.getResultTypes();
-        // FIXME We will not get here for functions discarding their results
-        //       (ie no result type deduction.)
-        //       // We should move this check to [it's own] subsequent pass.
-        // While we are here, validate the call arguments.
-        if (llvm::failed(CheckVisitArgs(Op, F)))
-          return llvm::failure();
-      }
       if (ResultTs.size() == 1) {
         auto TA = mlir::TypeAttr::get(ResultTs.front());
         NewStoreT = nbdl_spec::StoreType::get(Ctx, TA);
@@ -408,6 +552,8 @@ public:
     PS.add<InferVisitResultType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchEachArgType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchIfThenArgType>(Ctx);
+    PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
+                        mlir::PatternBenefit(100));
 
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS));
 

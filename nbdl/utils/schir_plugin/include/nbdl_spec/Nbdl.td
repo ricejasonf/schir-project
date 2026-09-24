@@ -11,6 +11,7 @@
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Nbdl_Dialect : Dialect {
   let name = "nbdl";
@@ -213,7 +214,7 @@ def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
   let results = (outs Nbdl_MemberName:$result);
 }
 
-def Nbdl_FuncNameOp : Nbdl_Op<"func_name", []> {
+def Nbdl_FuncNameOp : Nbdl_Op<"func_name", [Pure]> {
   let description = [{
     Lift the symbol name of a FuncOp to a store-like value.
   }];
@@ -359,10 +360,17 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     The Sfinae unit attribute indicates the call should
     be wrapped in a SFINAE check which only has meaning
     as the operand to a conditional.
+
+    If arguments are verified to be a valid mapping from
+    C++ types to MLIR types, then we set the ValidCppCrossMap
+    unit attribute. This means a C++ function will call, by its
+    C linkage name, a lowered FuncOp that will be injected
+    into the LLVM module.
   }];
   let arguments = (ins Nbdl_TypePlus:$fn,
                        Variadic<Nbdl_Type>:$args,
-                       UnitAttr:$sfinae);
+                       UnitAttr:$sfinae,
+                       UnitAttr:$validCppCrossMap);
   let results = (outs Nbdl_Type:$result);
 }
 
@@ -421,6 +429,16 @@ def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
   let arguments = (ins Nbdl_Type:$begin, Nbdl_Type:$end);
   let results = (outs);
   let regions = (region SizedRegion<1>:$body);
+}
+
+def Nbdl_UnwrapOp : Nbdl_Op<"unwrap"> {
+  let description = [{
+    Unwrap a value of store type to a value of the contained type.
+    This require the input to be a single alternative.
+  }];
+
+  let arguments = (ins Nbdl_Store:$value);
+  let results = (outs AnyType:$result);
 }
 
 #endif
