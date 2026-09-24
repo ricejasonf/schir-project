@@ -1982,8 +1982,35 @@ public:
   }
 
   void runOnOperation() override {
-    if (llvm::failed(run(getOperation())))
+    mlir::ModuleOp ModuleOp = getOperation();
+    if (funcName.empty()) {
+      if (llvm::failed(run(ModuleOp)))
+        signalPassFailure();
+      return;
+    }
+
+    auto FuncOp = ModuleOp.lookupSymbol<mlir::func::FuncOp>(funcName);
+    if (!FuncOp) {
+      ModuleOp->emitError("function not found: ") << funcName;
+      return signalPassFailure();
+    }
+    if (FuncOp.isExternal()) {
+      FuncOp->emitError("cannot expand external function");
+      return signalPassFailure();
+    }
+    if (llvm::failed(run(FuncOp)))
       signalPassFailure();
+  }
+
+  // Expand a single function updating its result type.
+  llvm::LogicalResult run(mlir::func::FuncOp FuncOp) {
+    mlir::OpPassManager PM(mlir::func::FuncOp::getOperationName());
+    PM.addPass(geomalg::createExpandFuncPass(ExpandPassOpts));
+
+    if (llvm::failed(runPipeline(PM, FuncOp)))
+      return llvm::failure();
+
+    return mlir::applyOpPatternsGreedily(FuncOp.getOperation(), Patterns);
   }
 
   llvm::LogicalResult run(mlir::ModuleOp ModuleOp) {

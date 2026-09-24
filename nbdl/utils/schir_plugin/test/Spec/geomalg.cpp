@@ -47,14 +47,24 @@ namespace foo {
   (export-c test_dot test_add)
   (export-cpp test_test_dot test_test_call)
 
-  ; // TODO Check the return type (via FileCheck)
-  ; //      (ie The define-geomalg-fn should
-  ; //       have expand pass run on it.)
+  ; // CHECK-LABEL: func.func @test_dot
+  ; // CHECK-SAME: -> !geomalg.blade<0>
+  ; // CHECK: "geomalg.dot"
   (define-geomalg-fn test_dot ((A : !vec3) (B : !vec3))
     (dot A B))
 
+  ; // CHECK-LABEL: func.func @test_add
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK: "geomalg.expand"
   (define-geomalg-fn test_add ((A : !vec3) (B : !vec3))
     (sum A B))
+
+  ; // CHECK-LABEL: func.func @test_reflect
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>, <7>>
+  ; // CHECK-NOT: "geomalg.vprod"
+  ; // CHECK: geomalg.return
+  (define-geomalg-fn test_reflect ((A : !vec3) (B : !vec3))
+    (vprod A B))
 
   ; // CHECK-LABEL: @"::foo::test_test_dot"
   ; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @test_dot}>
@@ -94,8 +104,6 @@ namespace foo {
       (visit test_dot X Y)))
 
   (write-nbdl-module)
-
-  (build-geomalg-exports)
 
 #| ; // FIXME c++ preprocessor directives unavailable here
 ; // TODO Check incorrect type mapping.

@@ -1,8 +1,7 @@
 (import (schir builtins))
 
 (define-library (nbdl spec geomalg)
-  (export define-geomalg-fn
-          build-geomalg-exports)
+  (export define-geomalg-fn)
   (import (schir base)
           (schir llvm pass)
           (schir mlir)
@@ -10,9 +9,6 @@
           (nbdl spec)
           (prefix (geomalg base) geomalg-))
   (begin
-    ;; Just force CGA metric for now since it is the only use case.
-    (geomalg-with-metric 'cga)
-
     ;; Create modules for llvm and spirv targets.
     ; TODO I think we want these in a helper library
     ;      and have export-c and export-shader copy
@@ -23,26 +19,30 @@
     (define spirv-module (create-top-module "nbdl_spec_geomalg_spirv_module"))
     (inject-module llvm-module)
 
-    ; TODO Use top-level-op.
+    ;; Define the func in the main module where it is expanded so
+    ;; visits are validated against it. A copy is lowered in the
+    ;; llvm-module which is injected into the translation unit.
     (define-syntax define-geomalg-fn
       (syntax-rules ()
         ((define-geomalg-fn Name ((ArgName : ArgType) ...) BodyI ... BodyN)
          (define Name
-           (let ((FuncOp (with-module-builder
-                           llvm-module
-                           (lambda ()
-                             (geomalg-define-func-aux
-                               Name ((ArgName : ArgType) ...)
-                               BodyI ...
-                               BodyN)))))
-             ; Run geomalg-lower pass.
-             (run-passes FuncOp
-                         "func.func(geomalg-expand-func{metric=cga})")
-             (make-named-fn 'Name (declare-func FuncOp)))))))
-
-    ; TODO Replace this with the export-c stuff.
-    ;      geomalg-to-llvm would need to be applicable to a monolithic module.
-    (define (build-geomalg-exports)
-      (run-passes llvm-module "geomalg-to-llvm"))
+           (let ((FuncOp (top-level-op 'Name
+                                       (lambda ()
+                                         (geomalg-define-func-aux
+                                           Name ((ArgName : ArgType) ...)
+                                           BodyI ...
+                                           BodyN)))))
+             ;; Just force CGA metric for now since it is the only use case.
+             (run-passes (parent-op FuncOp)
+                         (string-append
+                           "geomalg-expand{metric=cga func-name="
+                           'Name
+                           "}"))
+             (with-module-builder llvm-module
+                                  (lambda () (copy-op FuncOp)))
+             ; TODO geomalg-to-llvm is applied to the whole module
+             ;      which includes previously lowered functions.
+             (run-passes llvm-module "geomalg-to-llvm")
+             (make-named-fn 'Name FuncOp))))))
 
     ));

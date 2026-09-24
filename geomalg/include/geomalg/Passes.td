@@ -39,10 +39,14 @@ def ExpandPass : GeomalgPass<"geomalg-expand", "mlir::ModuleOp"> {
   let description = [{
     For a module, iterate ExpandFuncPass on functions and then update
     function types and call operation result types iteratively until nothing
-    changes.
+    changes. If func-name is specified then only that function is expanded.
   }];
 
-  let options =  [MetricOption] # RewritePassUtils.options;
+  let options =  [MetricOption,
+                  Option<"funcName", "func-name", "std::string",
+                         /*default=*/"",
+                         "The symbol name of a single function to expand.">
+                 ] # RewritePassUtils.options;
 }
 
 def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {

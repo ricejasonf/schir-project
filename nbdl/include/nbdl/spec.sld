@@ -26,10 +26,6 @@
       (load-builtin "nbdl_get_member_name"))
     (define nbdl_run_flatten_pass
       (load-builtin "nbdl_run_flatten_pass"))
-    ; TODO Improve (schir mlir) to not require nbdl_spec_declare_func
-    ;      to generate an external FuncOp.
-    (define %declare-func
-      (load-builtin "nbdl_spec_declare_func"))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
     (define main-module (create-top-module "nbdl_spec_module_cpp"))
@@ -1074,10 +1070,6 @@
       (flush-tokens)
       (newline))
 
-    ;; Create an external FuncOp (ie a forward declaration.)
-    (define (declare-func FuncOp)
-      (%declare-func FuncOp main-module))
-
     (define (dump-op name)
       (define Op
         (module-lookup main-module name))
@@ -1151,7 +1143,6 @@
     ;; Stuff that should be broken out as a common details lib
     top-level-op
     make-named-fn
-    declare-func
     write-cpp
     dump-op
     dump-nbdl-module
