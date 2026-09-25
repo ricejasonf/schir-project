@@ -606,6 +606,18 @@ schir::Value SchirClang::ExprEval(schir::SourceLocation Loc,
   return Result;
 }
 
+bool SchirClang::ExprEvalBool(schir::SourceLocation Loc,
+                              llvm::StringRef ExprStr) {
+  schir::Value V = ExprEval(Loc, ExprStr);
+  if (HasError())
+    return false;
+  if (!schir::isa_and_nonnull<schir::Bool>(V)) {
+    SetError("expecting boolean result");
+    return false;
+  }
+  return static_cast<bool>(schir::cast<schir::Bool>(V));
+}
+
 std::string SchirClang::ExprType(schir::SourceLocation Loc,
                                  llvm::StringRef ExprStr) {
   auto& [Parser, SchirScheme, LexerSpellings,

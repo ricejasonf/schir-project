@@ -3,6 +3,8 @@
 // RUN:   -fsyntax-only %s | FileCheck %s
 
 #include <nbdl/spec.hpp>
+#include <cstdint>
+#include <string>
 #include <vector>
 
 namespace {
@@ -27,6 +29,13 @@ public:
       std::forward<Fn>(fn)(std::forward<Self>(self).hidden_value);
     }
   };
+};
+
+struct holder {
+  not_a_store plain;
+  weak_wrapper weak;
+  std::string text;
+  int32_t count;
 };
 
 } // namespace foo
@@ -107,6 +116,117 @@ public:
     ('foo::not_a_store =>
      (lambda (NotAStore)
        (visit test_inline_callee NotAStore Fn)))))
+
+; // CHECK-LABEL: @"::test_inline_match"
+; // CHECK: "nbdl.match"
+; // CHECK-NEXT: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
+; // CHECK-NEXT: [[MEMB0:%[0-9]+]] = "nbdl.member_name"() <{name = "plain"}>
+; // CHECK-NEXT: [[GET0:%[0-9]+]] = "nbdl.get"([[HOLDER]], [[MEMB0]])
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::not_a_store">>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[GET0]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (match (get Holder '.plain)
+         ('int => noop)
+         ('foo::not_a_store => Fn)
+         (else => noop))))))
+
+; // CHECK-LABEL: @"::test_inline_match_else"
+; // CHECK: "nbdl.match"
+; // CHECK-NEXT: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
+; // CHECK: [[GET0:%[0-9]+]] = "nbdl.get"([[HOLDER]], {{%[0-9]+}})
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::not_a_store">>
+; // CHECK: [[GET1:%[0-9]+]] = "nbdl.get"([[GET0]], {{%[0-9]+}})
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[GET1]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_else (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (match (get Holder '.plain '.value)
+         ('float => noop)
+         (else => Fn))))))
+
+; // Matching weak_wrapper unwraps its value so it is not inlined.
+; // CHECK-LABEL: @"::test_no_inline_match_unit_impl"
+; // CHECK: [[GET0:%[0-9]+]] = "nbdl.get"
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::weak_wrapper">>
+; // CHECK-NEXT: "nbdl.match"([[GET0]])
+(define-match-fn test_no_inline_match_unit_impl (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (match (get Holder '.weak)
+         (else => Fn))))))
+
+; // Non-C++ types match themselves by default.
+; // CHECK-LABEL: @"::test_inline_match_non_cpp"
+; // CHECK: "nbdl.match"
+; // CHECK-NEXT: ^bb0([[X:%arg[0-9]+]]: !nbdl.store<i32>):
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[X]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_non_cpp (Store Fn)
+  (match Store
+    ((type "i32") =>
+     (lambda (X)
+       (match X
+         ((type "f32") => noop)
+         ((type "i32") => Fn)
+         (else => noop))))))
+
+; // Overload typenames are canonicalized.
+; // CHECK-LABEL: @"::test_inline_match_canonical"
+; // CHECK: [[TEXT:%[0-9]+]] = "nbdl.get"
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[TEXT]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_canonical (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (match (get Holder '.text)
+         ('std::string => Fn)
+         (else => noop))))))
+
+; // CHECK-LABEL: @"::test_inline_match_canonical_alias"
+; // CHECK: [[COUNT:%[0-9]+]] = "nbdl.get"
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[COUNT]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_canonical_alias (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (match (get Holder '.count)
+         ('int32_t => Fn)
+         (else => noop))))))
+
+; // Literal types should match corresponding c++ types of literals.
+; // CHECK-LABEL: @"::test_inline_match_literal"
+; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[LIT]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_literal (Fn)
+  (match 5
+    ('int32_t => Fn)
+    (else => noop)))
 
 (write-nbdl-module)
 

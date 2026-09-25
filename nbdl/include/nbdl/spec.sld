@@ -169,12 +169,15 @@
       (cond
         ((symbol? Arg)
           (build-constexpr Loc Arg))
+        ; TODO Map MLIR types to C++ types so literals can have
+        ;      MLIR types (e.g. i32) instead of being tied to C++.
+        ;      Until then, the C++ types must be canonicalized.
         ((number? Arg)
           (build-literal Loc (attr (number->string Arg) i32)
-                         (!nbdl.store "int32_t")))
+                         (!nbdl.store (parse-type "int32_t"))))
         ((string? Arg)
           (build-literal Loc (string-attr Arg)
-                         (!nbdl.store "std::string_view")))
+                         (!nbdl.store (parse-type "std::string_view"))))
         (else Arg)))
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
@@ -869,10 +872,13 @@
           (lambda (Store)
             (%top-level
               (lambda()
+                ; Canonicalize C++ typenames so types can be compared.
                 (define (GetArgType T)
-                  (if (eq? T "")
-                    (!nbdl.store)
-                    (!nbdl.store T)))
+                  (cond
+                    ((eq? T "") (!nbdl.store))
+                    ((or (symbol? T) (string? T))
+                     (!nbdl.store (parse-type T)))
+                    (else (!nbdl.store T))))
                 (close-previous-scope)
                 (create-op "nbdl.match"
                   (loc: (syntax-source-loc PathSpec))

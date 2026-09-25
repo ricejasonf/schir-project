@@ -36,6 +36,9 @@ public:
                      schir::SourceLocation Loc, llvm::StringRef TemplateName,
                      llvm::StringRef Expr);
   schir::Value ExprEval(schir::SourceLocation Loc, llvm::StringRef Expr);
+  // Evaluate a boolean constant expression.
+  // Returns false and sets an error if the result is not a boolean.
+  bool ExprEvalBool(schir::SourceLocation Loc, llvm::StringRef Expr);
   std::string ExprType(schir::SourceLocation Loc, llvm::StringRef Expr);
   std::string ParseType(schir::SourceLocation Loc, llvm::StringRef TypeStr);
   void WriteLexer(schir::SourceLocation Loc, llvm::StringRef Str);

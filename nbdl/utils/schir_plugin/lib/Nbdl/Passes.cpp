@@ -534,6 +534,70 @@ struct InferMatchEachArgType
   }
 };
 
+// Inline match that simplifies to the identity operation.
+struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
+    if (!Op.hasUnitKey())
+      return Rewriter.notifyMatchFailure(Op, "match has a key");
+
+    mlir::Value Store = Op.getStore();
+    mlir::Type StoreAltT = getSingleAlt(Store);
+    if (!StoreAltT)
+      return Rewriter.notifyMatchFailure(Op, "store is not single alt");
+
+    // Non-C++ types have no mechanism to implement match.
+    llvm::StringRef CppTypeStr = getSingleCppAlt(Store);
+    if (!CppTypeStr.empty()) {
+      bool IsIdentity = false;
+      schir::SourceLocation Loc(mlir::OpaqueLoc
+          ::getUnderlyingLocationOrNull<
+            schir::SourceLocationEncoding*>(Op.getLoc()));
+      auto [SCResult, ErrorMsg] = WithSchirClang(
+        [&](schir::SchirClang SchirClang) {
+          std::string Expr = ("!::nbdl::detail::HasMatchUnitImpl<" +
+                              CppTypeStr + ">").str();
+          IsIdentity = SchirClang.ExprEvalBool(Loc, Expr);
+        });
+      if (llvm::failed(SCResult))
+        return Rewriter.notifyMatchFailure(Op, "clang evaluation failed: " +
+                                               ErrorMsg);
+      if (!IsIdentity)
+        return Rewriter.notifyMatchFailure(Op, "store implements unit match");
+    }
+
+    mlir::Region* Selected = selectOverload(Op, StoreAltT);
+    if (!Selected)
+      return Rewriter.notifyMatchFailure(Op, "overload cannot be selected");
+
+    Rewriter.inlineBlockBefore(&Selected->front(), Op, Store);
+    Rewriter.eraseOp(Op);
+    return llvm::success();
+  }
+
+  // Select the first overload that matches StoreAltT checking linearly.
+  // Return nullptr if no overload matches.
+  static mlir::Region* selectOverload(nbdl_spec::MatchOp Op,
+                                      mlir::Type StoreAltT) {
+    for (mlir::Region& Overload : Op.getOverloads()) {
+      auto ST = dyn_cast<nbdl_spec::StoreType>(
+          Overload.getArgument(0).getType());
+      if (!ST)
+        return nullptr;
+      if (ST.getAlts().empty())
+        return &Overload;
+      for (mlir::TypeAttr TA : ST.getAlts()) {
+        mlir::Type AltT = TA.getValue();
+        if (AltT == StoreAltT)
+          return &Overload;
+      }
+    }
+    return nullptr;
+  }
+};
+
 class FlattenPass : public nbdl_spec::impl::FlattenPassBase<FlattenPass> {
   using Base = nbdl_spec::impl::FlattenPassBase<FlattenPass>;
   mlir::FrozenRewritePatternSet Patterns;
@@ -552,6 +616,7 @@ public:
     PS.add<InferVisitResultType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchEachArgType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchIfThenArgType>(Ctx);
+    PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
 
