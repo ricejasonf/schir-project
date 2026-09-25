@@ -9,7 +9,9 @@
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/Pass/PassManager.h>
+#include <llvm/Support/raw_ostream.h>
 #include <schir/Context.h>
+#include <schir/MappableToCpp.h>
 #include <schir/MlirHelper.h>
 #include <schir/Value.h>
 
@@ -38,6 +40,41 @@ void CreateMultivectorLikeType(schir::Context& C, schir::ValueRefs Args) {
   return C.Cont(AnyVal);
 }
 
+
+// Map geomalg types to the C++ types in geomalg/nbdl.hpp.
+struct GeomalgMappableToCpp : schir::MappableToCpp {
+  using MappableToCpp::MappableToCpp;
+
+  static void appendBlade(llvm::raw_ostream& OS, geomalg::BladeType BT) {
+    OS << "::geomalg::blade<" << BT.getTag() << '>';
+  }
+
+  static void appendMultivectorLike(llvm::raw_ostream& OS,
+                                    llvm::StringRef Name,
+                                    llvm::ArrayRef<geomalg::BladeType> Blades) {
+    OS << "::geomalg::" << Name << '<';
+    llvm::interleave(Blades, OS,
+                     [&](geomalg::BladeType BT) { appendBlade(OS, BT); },
+                     ", ");
+    OS << '>';
+  }
+
+  bool getCppTypename(mlir::Type T,
+                      llvm::SmallVectorImpl<char>& Result) const override {
+    llvm::raw_svector_ostream OS(Result);
+    if (isa<geomalg::ZeroType>(T))
+      OS << "::geomalg::zero";
+    else if (auto BT = dyn_cast<geomalg::BladeType>(T))
+      appendBlade(OS, BT);
+    else if (auto MT = dyn_cast<geomalg::MultivectorType>(T))
+      appendMultivectorLike(OS, "multivector", MT.getBlades());
+    else if (auto UT = dyn_cast<geomalg::UnitVectorType>(T))
+      appendMultivectorLike(OS, "unit_vector", UT.getBlades());
+    else
+      return false;
+    return true;
+  }
+};
 } // namespace
 
 extern "C" {
@@ -46,6 +83,10 @@ schir::ContextLocal geomalg_current_metric;
 
 void geomalg_init(schir::Context& C, schir::ValueRefs) {
   C.DialectRegistry->insert<geomalg::GeomalgDialect>();
+  C.DialectRegistry->addExtension(
+    +[](mlir::MLIRContext*, geomalg::GeomalgDialect* D) {
+      D->addInterfaces<GeomalgMappableToCpp>();
+    });
   C.DialectRegistry->insert<mlir::func::FuncDialect>();
   C.DialectRegistry->insert<mlir::spirv::SPIRVDialect>();
   C.DialectRegistry->insert<mlir::vector::VectorDialect>();

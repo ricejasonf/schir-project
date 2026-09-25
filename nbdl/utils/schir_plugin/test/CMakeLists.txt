@@ -9,6 +9,7 @@ add_lit_testsuite(check-nbdl "Running Nbdl tests"
   ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
   Nbdl
+  Geomalg
   schir-scheme
   schir
   SchirClang

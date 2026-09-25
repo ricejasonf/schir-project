@@ -3,10 +3,17 @@
 #include <nbdl_spec/NbdlDialect.h>
 #include <nbdl_spec/TranslateCpp.h>
 #include <schir/Context.h>
+#include <schir/MappableToCpp.h>
 #include <schir/Value.h>
 #include <schir/MlirHelper.h>
 #include <schir/SchirClang.h>
+#include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/Support/Casting.h>
+#include <llvm/Support/raw_ostream.h>
+#include <mlir/IR/BuiltinAttributes.h>
+#include <mlir/IR/BuiltinDialect.h>
+#include <mlir/IR/BuiltinTypes.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <memory>
 #include <optional>
@@ -22,6 +29,100 @@ using llvm::dyn_cast;
 using llvm::dyn_cast_or_null;
 using llvm::isa;
 using llvm::isa_and_nonnull;
+
+namespace {
+// Map nbdl types to C++ types.
+struct NbdlMappableToCpp : schir::MappableToCpp {
+  using MappableToCpp::MappableToCpp;
+
+  bool getCppTypename(mlir::Type T,
+                      llvm::SmallVectorImpl<char>& Result) const override {
+    llvm::raw_svector_ostream OS(Result);
+    if (auto CT = dyn_cast<nbdl_spec::CppType>(T))
+      OS << CT.getCppTypename();
+    else if (isa<nbdl_spec::StringType>(T))
+      OS << "::std::string_view";
+    else
+      return false;
+    return true;
+  }
+};
+
+// Map builtin types to the C++ types in nbdl/spec/mlir.hpp.
+struct BuiltinMappableToCpp : schir::MappableToCpp {
+  using MappableToCpp::MappableToCpp;
+
+  bool getCppTypename(mlir::Type T,
+                      llvm::SmallVectorImpl<char>& Result) const override {
+    llvm::raw_svector_ostream OS(Result);
+    if (T.isSignlessInteger(32))
+      OS << "::std::int32_t";
+    else if (T.isF32())
+      OS << "float";
+    else if (auto VT = dyn_cast<mlir::VectorType>(T))
+      return getVectorCppTypename(VT, Result);
+    else if (auto MT = dyn_cast<mlir::MemRefType>(T))
+      return getMemRefCppTypename(MT, Result);
+    else
+      return false;
+    return true;
+  }
+
+  static bool getVectorCppTypename(mlir::VectorType VT,
+                                   llvm::SmallVectorImpl<char>& Result) {
+    if (VT.getRank() != 1 || VT.isScalable())
+      return false;
+    llvm::StringRef Name;
+    mlir::Type ElT = VT.getElementType();
+    if (ElT.isF32())
+      Name = "vec_f32";
+    else if (ElT.isSignlessInteger(32))
+      Name = "vec_i32";
+    else
+      return false;
+    llvm::raw_svector_ostream(Result)
+      << "::nbdl::" << Name << '<' << VT.getDimSize(0) << '>';
+    return true;
+  }
+
+  // Only map fully dynamic memrefs since nbdl::memref
+  // has run-time sizes, strides, and offset.
+  // e.g. memref<?x?xi32, strided<[?, ?], offset: ?>>
+  static bool getMemRefCppTypename(mlir::MemRefType MT,
+                                   llvm::SmallVectorImpl<char>& Result) {
+    if (MT.getRank() == 0 || MT.getMemorySpace() ||
+        !llvm::all_of(MT.getShape(), mlir::ShapedType::isDynamic))
+      return false;
+    auto Layout = dyn_cast<mlir::StridedLayoutAttr>(MT.getLayout());
+    if (!Layout || !mlir::ShapedType::isDynamic(Layout.getOffset()) ||
+        !llvm::all_of(Layout.getStrides(), mlir::ShapedType::isDynamic))
+      return false;
+    llvm::SmallString<64> ElT;
+    if (!MappableToCpp::lookup(MT.getElementType(), ElT))
+      return false;
+    llvm::raw_svector_ostream(Result)
+      << "::nbdl::memref<" << ElT << ", " << MT.getRank() << '>';
+    return true;
+  }
+};
+
+// Create a !nbdl.cpp type with the typename canonicalized
+// by SchirClang or as is if Impl is nullptr.
+std::optional<nbdl_spec::CppType> createCppType(schir::Context& C,
+                                                schir::SchirClangImpl* Impl,
+                                                llvm::StringRef Typename) {
+  mlir::MLIRContext* Ctx = C.MLIRContext.get();
+  if (!Impl)
+    return nbdl_spec::CppType::get(Ctx, Typename);
+  schir::SchirClang SchirClang(Impl);
+  std::string Canonical = SchirClang.ParseType(C.getLoc(), Typename);
+  if (SchirClang.HasError()) {
+    C.RaiseError(SchirClang.ErrorMsg);
+    return std::nullopt;
+  }
+  return nbdl_spec::CppType::get(Ctx, Canonical);
+}
+} // namespace
 
 extern "C" {
 // Translate a nbdl dialect operation to C++.
@@ -108,25 +209,75 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
   if (Args.size() != 0)
     return C.RaiseError("invalid arity");
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
+  C.DialectRegistry->addExtension(
+    +[](mlir::MLIRContext*, nbdl_spec::NbdlDialect* D) {
+      D->addInterfaces<NbdlMappableToCpp>();
+    });
+  C.DialectRegistry->addExtension(
+    +[](mlir::MLIRContext*, mlir::BuiltinDialect* D) {
+      D->addInterfaces<BuiltinMappableToCpp>();
+    });
   C.Cont();
 }
 
-// Take an arbitrary set of string-like arguments that represent
-// C++ typenames to create a !nbdl.store<typenames...>.
+// Map a mlir.type to an equivalent !nbdl.cpp type
+// or #f if the type is not mappable to C++.
+// (type->cpp-type type schir-clang)
+void nbdl_spec_type_to_cpp_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  auto Type = schir::any_cast<mlir::Type>(Args[0]);
+  if (!Type)
+    return C.RaiseError("expecting mlir.type: {}", Args[0]);
+  auto* Impl = schir::any_cast<schir::SchirClangImpl*>(Args[1]);
+  if (!Impl)
+    return C.RaiseError("expecting SchirClang object");
+
+  llvm::SmallString<64> Typename;
+  if (!schir::MappableToCpp::lookup(Type, Typename))
+    return C.Cont(schir::Bool(false));
+
+  std::optional<nbdl_spec::CppType> Result = createCppType(C, Impl, Typename);
+  if (!Result)
+    return;
+  C.Cont(C.CreateAny<mlir::Type>(mlir::Type(*Result)));
+}
+
+// Create a !nbdl.cpp type from a string-like C++ typename.
+// Use an optional 'canonical tag to bypass canonicalizing
+// the type via Clang.
+// (cpp-type typename schir-clang ['canonical])
+void nbdl_spec_cpp_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 2 && Args.size() != 3)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef Typename = Args[0].getStringRef();
+  if (Typename.empty())
+    return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
+  auto* Impl = schir::any_cast<schir::SchirClangImpl*>(Args[1]);
+  if (!Impl)
+    return C.RaiseError("expecting SchirClang object");
+  if (Args.size() == 3) {
+    auto* Tag = dyn_cast<schir::Symbol>(Args[2]);
+    if (!Tag || !Tag->Equiv("canonical"))
+      return C.RaiseError("expecting tag 'canonical: {}", Args[2]);
+    // The typename is already canonical.
+    Impl = nullptr;
+  }
+
+  std::optional<nbdl_spec::CppType> Result = createCppType(C, Impl, Typename);
+  if (!Result)
+    return;
+  C.Cont(C.CreateAny<mlir::Type>(mlir::Type(*Result)));
+}
+
+// Create a !nbdl.store<alts...> from an arbitrary set of mlir.types.
 void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   mlir::MLIRContext* Ctx = C.MLIRContext.get();
   llvm::SmallVector<mlir::TypeAttr, 8> TypeAttrs;
   for (schir::Value Arg : Args) {
-    llvm::StringRef Str = Arg.getStringRef();
-    mlir::Type Type;
-    if (!Str.empty()) {
-      auto StringAttr = mlir::StringAttr::get(Ctx, Str);
-      Type = nbdl_spec::CppType::get(Ctx, Str);
-    } else if (auto T = schir::any_cast<mlir::Type>(Arg)) {
-      Type = T;
-    } else {
-      C.RaiseError("expecting a mlir.type or string-like: {}", Arg);
-    }
+    auto Type = schir::any_cast<mlir::Type>(Arg);
+    if (!Type)
+      return C.RaiseError("expecting a mlir.type: {}", Arg);
     TypeAttrs.push_back(mlir::TypeAttr::get(Type));
   }
 

@@ -100,6 +100,15 @@ def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
   }];
 }
 
+def Nbdl_String : TypeDef<Nbdl_Dialect, "String"> {
+  let mnemonic = "string";
+  let description = [{
+    Represent a string literal.
+
+    For C++ targets, this maps to std::string_view.
+  }];
+}
+
 def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
                            Nbdl_Unit,
                            Nbdl_Tag]>;

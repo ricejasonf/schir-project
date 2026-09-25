@@ -20,12 +20,35 @@
       (load-builtin "nbdl_spec_register_nbdl_dialect"))
     (define get-store-alts
       (load-builtin "nbdl_spec_get_store_alts"))
-    (define !nbdl.store
+    (define nbdl_spec_create_store_type
       (load-builtin "nbdl_spec_create_store_type"))
     (define get-member-name
       (load-builtin "nbdl_get_member_name"))
     (define nbdl_run_flatten_pass
       (load-builtin "nbdl_run_flatten_pass"))
+    (define nbdl_spec_type_to_cpp_type
+      (load-builtin "nbdl_spec_type_to_cpp_type"))
+    (define nbdl_spec_cpp_type
+      (load-builtin "nbdl_spec_cpp_type"))
+
+    ;; Create a !nbdl.cpp type with a canonical C++ typename.
+    ;; Provide the tag 'canonical if the typename is already
+    ;; canonical.
+    (define !cpp-type
+      (case-lambda
+        ((Typename)
+         (nbdl_spec_cpp_type Typename current-schir-clang))
+        ((Typename Tag)
+         (nbdl_spec_cpp_type Typename current-schir-clang Tag))))
+
+    ;; Create a !nbdl.store type where string-likes are lifted to C++ types.
+    (define (!nbdl.store . Alts)
+      (apply nbdl_spec_create_store_type
+             (map (lambda (Alt)
+                    (if (or (string? Alt) (symbol? Alt))
+                      (!cpp-type Alt)
+                      Alt))
+                  Alts)))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
     (define main-module (create-top-module "nbdl_spec_module_cpp"))
@@ -171,13 +194,12 @@
           (build-constexpr Loc Arg))
         ; TODO Map MLIR types to C++ types so literals can have
         ;      MLIR types (e.g. i32) instead of being tied to C++.
-        ;      Until then, the C++ types must be canonicalized.
         ((number? Arg)
           (build-literal Loc (attr (number->string Arg) i32)
-                         (!nbdl.store (parse-type "int32_t"))))
+                         (!nbdl.store 'int32_t)))
         ((string? Arg)
           (build-literal Loc (string-attr Arg)
-                         (!nbdl.store (parse-type "std::string_view"))))
+                         (!nbdl.store 'std::string_view)))
         (else Arg)))
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
@@ -244,7 +266,7 @@
 
     (define (build-constexpr Loc ExprStr)
       (define StoreT
-        (!nbdl.store (expr->type ExprStr)))
+        (!nbdl.store (!cpp-type (expr->type ExprStr) 'canonical)))
       (when (member-name-literal? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
@@ -292,7 +314,7 @@
           (operands: InitArgs)
           ; TODO Mangle Typename
           (attributes: ("name" (flat-symbolref-attr Typename)))
-          (result-types: (!nbdl.store (parse-type Typename)))
+          (result-types: (!nbdl.store Typename))
           )))
 
     (define (store-aux Loc Typename InitArgExprs)
@@ -575,7 +597,9 @@
              (apply append (map ReflectAlts StoreAlts))))
            (else '())))
       (define StoreT
-        (apply !nbdl.store MatchedAlts))
+        (apply !nbdl.store
+               (map (lambda (Alt) (!cpp-type Alt 'canonical))
+                    MatchedAlts)))
       (create-op "nbdl.match"
         (loc: Loc)
         (operands: Store Key)
@@ -646,7 +670,7 @@
              (expr->type Expr)))
       (define ResultType
         (if ExprT
-          (!nbdl.store (expr->type Expr))
+          (!nbdl.store (!cpp-type ExprT 'canonical))
           (!nbdl.store)))
       (define Op
         (create-op "nbdl.get"
@@ -877,7 +901,7 @@
                   (cond
                     ((eq? T "") (!nbdl.store))
                     ((or (symbol? T) (string? T))
-                     (!nbdl.store (parse-type T)))
+                     (!nbdl.store T))
                     (else (!nbdl.store T))))
                 (close-previous-scope)
                 (create-op "nbdl.match"
@@ -1076,6 +1100,11 @@
       (flush-tokens)
       (newline))
 
+    ;; Map a mlir.type to a !nbdl.cpp type with a canonical
+    ;; C++ typename or #f if the type is not mappable to C++.
+    (define (type->cpp T)
+      (nbdl_spec_type_to_cpp_type T current-schir-clang))
+
     (define (dump-op name)
       (define Op
         (module-lookup main-module name))
@@ -1144,6 +1173,8 @@
     quasiquote
     source-loc
     type
+    type->cpp
+    !cpp-type
     dump
 
     ;; Stuff that should be broken out as a common details lib

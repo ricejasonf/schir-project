@@ -12,6 +12,7 @@
 
 #include <schir/Context.h>
 #include <schir/Dialect.h>
+#include <schir/MappableToCpp.h>
 #include <schir/Mlir.h>
 #include <schir/MlirHelper.h>
 #include <schir/OpGen.h>
@@ -22,6 +23,8 @@
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/Support/Casting.h>
 #include <memory>
+
+MLIR_DEFINE_EXPLICIT_TYPE_ID(schir::MappableToCpp)
 
 #define SCHIR_MLIR_VAR(NAME) ::schir::mlir_bind_var::NAME
 

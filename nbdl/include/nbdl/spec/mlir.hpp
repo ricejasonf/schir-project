@@ -7,6 +7,7 @@
 #ifndef NBDL_SPEC_MLIR_HPP
 #define NBDL_SPEC_MLIR_HPP
 
+#include <nbdl/memref.hpp>
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -19,6 +20,8 @@ namespace nbdl {
 // Only support Clang.
 template <unsigned n>
 using vec_f32 = float __attribute__((ext_vector_type(n)));
+template <unsigned n>
+using vec_i32 = int32_t __attribute__((ext_vector_type(n)));
 
 // Create an injective map from a c++ type
 // to a MLIR type via its string representation
@@ -56,14 +59,54 @@ struct get_mlir_type<float> {
   }
 };
 
+template <>
+struct get_mlir_type<std::string_view> {
+  static constexpr std::string apply() {
+    return "!nbdl.string";
+  }
+};
+
+namespace detail {
+constexpr std::string mlir_vector_type(unsigned n, std::string_view elem) {
+  std::string result = "vector<";
+  char buf[16]{};
+  auto [end, _] = std::to_chars(buf, buf + sizeof(buf), n);
+  result.append(buf, end);
+  result.push_back('x');
+  result.append(elem);
+  result.push_back('>');
+  return result;
+}
+} // namespace detail
+
 template <unsigned n>
 struct get_mlir_type<vec_f32<n>> {
   static constexpr std::string apply() {
-    std::string result = "vector<";
-    char buf[16]{};
-    auto [end, _] = std::to_chars(buf, buf + sizeof(buf), n);
-    result.append(buf, end);
-    result.append("xf32>");
+    return detail::mlir_vector_type(n, "f32");
+  }
+};
+
+template <unsigned n>
+struct get_mlir_type<vec_i32<n>> {
+  static constexpr std::string apply() {
+    return detail::mlir_vector_type(n, "i32");
+  }
+};
+
+// nbdl::memref has dynamic sizes, strides, and offset.
+// e.g. memref<?x?xi32, strided<[?, ?], offset: ?>>
+template <typename T, std::size_t rank>
+  requires (rank > 0)
+struct get_mlir_type<memref<T, rank>> {
+  static constexpr std::string apply() {
+    std::string result = "memref<";
+    for (std::size_t i = 0; i < rank; ++i)
+      result.append("?x");
+    result.append(get_mlir_type<T>::apply());
+    result.append(", strided<[?");
+    for (std::size_t i = 1; i < rank; ++i)
+      result.append(", ?");
+    result.append("], offset: ?>>");
     return result;
   }
 };
