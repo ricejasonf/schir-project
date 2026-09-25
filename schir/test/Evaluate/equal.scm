@@ -36,3 +36,10 @@
 (assert (not (equal? (list "abc" 1) (list "abc" 2))))
 ; TODO (assert (not (equal? (vector "abc" 1) (vector "abc" 2))))
 (assert (not (equal? not eqv?))) ;; comparing procedures
+
+; Any values compare their stored object.
+(import (schir mlir))
+(assert (eqv? (type "i32") (type "i32")))
+(assert (equal? (type "i32") (type "i32")))
+(assert (not (eqv? (type "i32") (type "f32"))))
+(assert (not (equal? (type "i32") (type "f32"))))

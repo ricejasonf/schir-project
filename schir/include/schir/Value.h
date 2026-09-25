@@ -1404,7 +1404,7 @@ public:
   void* getOpaquePtr() { return getTrailingObjects(); }
 
   llvm::StringRef getObjData() {
-    return llvm::StringRef(static_cast<char*>(getOpaquePtr()), getObjectSize());
+    return llvm::StringRef(static_cast<char*>(getOpaquePtr()), StorageLen);
   };
 
   bool equal(Any* Other) {
