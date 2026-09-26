@@ -115,6 +115,8 @@ schir::ExternFunction is_char;
 schir::ExternFunction is_eof_object;
 schir::ExternFunction is_null;
 schir::ExternFunction is_number;
+schir::ExternFunction is_exact_integer;
+schir::ExternFunction is_flonum;
 schir::ExternFunction is_pair;
 schir::ExternFunction is_port;
 schir::ExternFunction is_procedure;
@@ -1259,6 +1261,16 @@ void is_number(Context& C, ValueRefs Args) {
     return C.RaiseError("invalid arity");
   C.Cont(Bool(isa<schir::Int, schir::Float>(Args[0])));
 }
+void is_exact_integer(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  C.Cont(Bool(isa<schir::Int>(Args[0])));
+}
+void is_flonum(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  C.Cont(Bool(isa<schir::Float>(Args[0])));
+}
 void is_pair(Context& C, ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
@@ -1458,6 +1470,8 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(is_eof_object) = schir::builtins::is_eof_object;
   SCHIR_BASE_VAR(is_null) = schir::builtins::is_null;
   SCHIR_BASE_VAR(is_number) = schir::builtins::is_number;
+  SCHIR_BASE_VAR(is_exact_integer) = schir::builtins::is_exact_integer;
+  SCHIR_BASE_VAR(is_flonum) = schir::builtins::is_flonum;
   SCHIR_BASE_VAR(is_pair) = schir::builtins::is_pair;
   SCHIR_BASE_VAR(is_port) = schir::builtins::is_port;
   SCHIR_BASE_VAR(is_procedure) = schir::builtins::is_procedure;
@@ -1564,6 +1578,8 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"eof-object?", SCHIR_BASE_VAR(is_eof_object)},
     {"null?", SCHIR_BASE_VAR(is_null)},
     {"number?", SCHIR_BASE_VAR(is_number)},
+    {"exact-integer?", SCHIR_BASE_VAR(is_exact_integer)},
+    {"flonum?", SCHIR_BASE_VAR(is_flonum)},
     {"pair?", SCHIR_BASE_VAR(is_pair)},
     {"port?", SCHIR_BASE_VAR(is_port)},
     {"procedure?", SCHIR_BASE_VAR(is_procedure)},

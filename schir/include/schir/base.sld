@@ -163,6 +163,8 @@
     eof-object?
     null?
     number?
+    exact-integer?
+    flonum?
     pair?
     port?
     procedure?
