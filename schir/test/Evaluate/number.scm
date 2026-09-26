@@ -40,3 +40,21 @@
              (flonum? #\3)
              (flonum? ())))
 (newline)
+
+; // Integral flonums are distinct from exact integers.
+; CHECK-NEXT: (#t #f #t #f #t #f)
+(write (list (exact-integer? 1)
+             (exact-integer? 1.0)
+             (flonum? 1.0)
+             (flonum? 1)
+             (flonum? -2.0)
+             (exact-integer? -2.0)))
+(newline)
+
+; CHECK-NEXT: (1 1.0 -2.0 0.0 1000.0 3.0)
+(write (list 1 1.0 -2.0 0.0 1e3 (+ 1 2.0)))
+(newline)
+
+; CHECK-NEXT: ("1" "1.0")
+(write (list (number->string 1) (number->string 1.0)))
+(newline)

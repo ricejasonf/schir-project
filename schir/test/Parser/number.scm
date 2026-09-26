@@ -3,7 +3,7 @@
 0
 ; CHECK:0
 0.0
-; CHECK:0
+; CHECK:0.0
 
 1 2 3 10 19 1025
 ; CHECK:1
@@ -69,14 +69,18 @@
 
 ; Support exactness prefix
 #e0 #i0
-; CHECK-COUNT-2:0
+; CHECK:0
+; CHECK:0.0
 
 ; Support exactness/radix prefix
 #e#b0 #e#o0 #e#d0 #e#x0
 #i#b0 #i#o0 #i#d0 #i#x0
 #b#e0 #o#e0 #d#e0 #x#e0
 #b#i0 #o#i0 #d#i0 #x#i0
-; CHECK-COUNT-16:0
+; CHECK-COUNT-4:0
+; CHECK-COUNT-4:0.0
+; CHECK-COUNT-4:0
+; CHECK-COUNT-4:0.0
 
 #b1001
 ; CHECK:9
@@ -93,10 +97,10 @@
 ; CHECK:255
 
 #i5
-; CHECK:5
+; CHECK:5.0
 
 #i5.0
-; CHECK:5
+; CHECK:5.0
 
 ; Note we do not actually check that these are numbers here.
 +inf.0 -inf.0 +nan.0 -nan.0

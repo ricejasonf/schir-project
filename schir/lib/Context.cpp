@@ -433,6 +433,9 @@ private:
     if (!Val.isInfinity() && !Val.isNaN()) {
       Val.toString(Buffer);
       llvm::transform(Buffer, Buffer.begin(), llvm::toLower);
+      // Distinguish from exact integers so it reads back as inexact.
+      if (!llvm::is_contained(Buffer, '.') && !llvm::is_contained(Buffer, 'e'))
+        llvm::append_range(Buffer, llvm::StringRef(".0"));
       OS << Buffer;
     } else if (Val.isInfinity() && !Val.isNegative()) {
       OS << "+inf.0";
