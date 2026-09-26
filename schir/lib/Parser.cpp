@@ -177,15 +177,12 @@ ValueResult Parser::ParseExpr(schir::Token const& StartTok) {
   case tok::unquote_splicing:
     return ParseExprAbbrev(StartTok, "unquote-splicing");
   case tok::r_paren: {
-    CheckTerminator();
     return SetError(Tok, "extraneous closing paren (')')");
   }
   case tok::r_square: {
-    CheckTerminator();
     return SetError(Tok, "extraneous closing bracket (']')");
   }
   case tok::r_brace: {
-    CheckTerminator();
     // extraneous brace should end parsing
     return SetError(Tok, "extraneous closing brace ('}')");
   }
@@ -194,7 +191,7 @@ ValueResult Parser::ParseExpr(schir::Token const& StartTok) {
     // #; token is discarded (commented)
     ConsumeToken();
     ParseExpr(StartTok);
-    if (Tok.getKind() == tok::eof)
+    if (Tok.is(tok::eof) || Tok.is(Terminator))
       return ValueEmpty();
     return ParseExpr(StartTok);
   }
@@ -202,7 +199,6 @@ ValueResult Parser::ParseExpr(schir::Token const& StartTok) {
     // TODO Track the start token of the current
     //      list being parsed if any and note it
     //      in the diagnostic output
-    IsFinished = true;
     return SetError(StartTok, "unexpected end of file (missing closing parentheses)");
   }
   case tok::string_literal_eof: {
@@ -225,7 +221,10 @@ ValueResult Parser::ParseExprAbbrev(Token const& StartTok, char const* Name) {
   Token Abbrev = Tok;
   ConsumeToken();
   ValueResult Result = ParseExpr(StartTok);
-  if (!Result.isUsable()) return Result;
+  if (!Result.isUsable() && !HasError())
+    return SetError(Abbrev, "expected expression");
+  if (!Result.isUsable())
+    return Result;
 
   schir::SourceLocation Loc = Abbrev.getLocation();
   Value S = Context.CreateSymbol(Name, Loc);

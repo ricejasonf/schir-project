@@ -39,7 +39,6 @@ namespace foo {
        (match-each Memref
         (lambda (El)
          (memref-copy Memref Dest)))))))
-  'end
 } // schir_scheme
 } // namespace foo
 } // namespace

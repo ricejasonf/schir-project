@@ -77,11 +77,17 @@ class Parser {
   ValueResult ParseDottedCdr(Token const& StartTok);
   ValueResult ParseSpecialEscapeSequence();
 
-  ValueResult SetError(Token const& Tok, StringRef Msg) {
-    ErrTok = Tok;
+  ValueResult SetError(Token const& ErrorTok, StringRef Msg) {
+    ErrTok = ErrorTok;
     ErrorMsg = Msg;
+    // Clean up if the end is near.
+    if (Tok.is(tok::eof))
+      IsFinished = true;
+    else
+      CheckTerminator();
     // Prevent infinite loops in the absence of error checks.
-    ConsumeToken();
+    if (!IsFinished)
+      ConsumeToken();
     return ValueError();
   }
 
