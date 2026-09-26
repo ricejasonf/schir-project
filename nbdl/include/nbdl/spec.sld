@@ -192,11 +192,12 @@
       (cond
         ((symbol? Arg)
           (build-constexpr Loc Arg))
-        ; TODO Map MLIR types to C++ types so literals can have
-        ;      MLIR types (e.g. i32) instead of being tied to C++.
-        ((number? Arg)
+        ((exact-integer? Arg)
           (build-literal Loc (attr (number->string Arg) i32)
-                         (!nbdl.store 'int32_t)))
+                         (!nbdl.store i32)))
+        ((flonum? Arg)
+          (build-literal Loc (attr (number->string Arg) f32)
+                         (!nbdl.store f32)))
         ((string? Arg)
           (build-literal Loc (string-attr Arg)
                          (!nbdl.store 'std::string_view)))

@@ -129,14 +129,12 @@ class Nbdl_Op<string mnemonic, list<Trait> traits = []> :
 
 def Nbdl_LiteralOp : Nbdl_Op<"literal", []> {
   let description = [{
-    Represent a literal such as an int or a string
+    Represent a literal such as an int, float, or string
     that is liftable to some compile-time object
-    possibly in C++. Only integers and strings are supported.
-
-    TODO Support Floats.
+    possibly in C++. Only i32, f32, and strings are supported.
   }];
 
-  let arguments = (ins AnyAttrOf<[I32Attr, StrAttr]>:$value);
+  let arguments = (ins AnyAttrOf<[I32Attr, F32Attr, StrAttr]>:$value);
   let results   = (outs Nbdl_Type:$result);
 }
 

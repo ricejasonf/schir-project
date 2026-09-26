@@ -1,5 +1,6 @@
 #include <nbdl_spec/NbdlDialect.h>
 #include <nbdl_spec/TranslateCpp.h>
+#include <schir/MappableToCpp.h>
 #include <schir/SchirClang.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallString.h>
@@ -14,6 +15,7 @@
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 // Generated stuff
@@ -579,8 +581,11 @@ struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
 
   // Select the first overload that matches StoreAltT checking linearly.
   // Return nullptr if no overload matches.
-  static mlir::Region* selectOverload(nbdl_spec::MatchOp Op,
-                                      mlir::Type StoreAltT) {
+  mlir::Region* selectOverload(nbdl_spec::MatchOp Op,
+                               mlir::Type StoreAltT) const {
+    // The canonical C++ typename of a literal type (e.g. i32)
+    // computed lazily when compared to a C++ type.
+    std::optional<std::string> LiteralCppTypename;
     for (mlir::Region& Overload : Op.getOverloads()) {
       auto ST = dyn_cast<nbdl_spec::StoreType>(
           Overload.getArgument(0).getType());
@@ -590,11 +595,45 @@ struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
         return &Overload;
       for (mlir::TypeAttr TA : ST.getAlts()) {
         mlir::Type AltT = TA.getValue();
-        if (AltT == StoreAltT)
+        if (AltT == StoreAltT) {
           return &Overload;
+        } else if (auto CT = dyn_cast<nbdl_spec::CppType>(AltT);
+                   CT && isLiteralType(StoreAltT)) {
+          // Match types of literals to corresponding c++ types.
+          if (!LiteralCppTypename)
+            LiteralCppTypename = getCanonicalCppTypename(Op, StoreAltT);
+          if (!LiteralCppTypename->empty() &&
+              CT.getCppTypename() == *LiteralCppTypename)
+            return &Overload;
+        }
       }
     }
     return nullptr;
+  }
+
+  // Literal types that may match their corresponding C++ types.
+  static bool isLiteralType(mlir::Type T) {
+    return T.isSignlessInteger(32) || T.isF32();
+  }
+
+  // Get the canonical C++ typename that T maps to
+  // or an empty string if it cannot be determined.
+  std::string getCanonicalCppTypename(mlir::Operation* Op,
+                                      mlir::Type T) const {
+    llvm::SmallString<32> Typename;
+    if (!schir::MappableToCpp::lookup(T, Typename))
+      return {};
+    std::string Canonical;
+    schir::SourceLocation Loc(mlir::OpaqueLoc
+        ::getUnderlyingLocationOrNull<
+          schir::SourceLocationEncoding*>(Op->getLoc()));
+    auto [SCResult, ErrorMsg] = WithSchirClang(
+      [&](schir::SchirClang SchirClang) {
+        Canonical = SchirClang.ParseType(Loc, Typename);
+      });
+    if (llvm::failed(SCResult))
+      return {};
+    return Canonical;
   }
 };
 

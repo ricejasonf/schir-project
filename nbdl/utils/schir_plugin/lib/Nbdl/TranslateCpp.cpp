@@ -9,8 +9,10 @@
 #include <nbdl_spec/TranslateCpp.h>
 #include <schir/Source.h>
 #include <schir/Value.h>
+#include <llvm/ADT/APFloat.h>
 #include <llvm/ADT/ScopedHashTable.h>
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
@@ -271,11 +273,27 @@ public:
         IA &&
         (IA.getType().isIndex() || IA.getType().isSignlessInteger())) {
       OS << IA.getInt();
+    } else if (auto FA = dyn_cast<mlir::FloatAttr>(Attr);
+               FA && FA.getType().isF32()) {
+      WriteFloatLiteral(Op, FA.getValue());
     } else if (auto SA = dyn_cast<mlir::StringAttr>(Attr)) {
       OS << '"' << llvm::StringRef(SA) << '"';
     } else {
       SetError("unknown literal type", Op);
     }
+  }
+
+  // Write a float literal that round trips to the same value.
+  void WriteFloatLiteral(LiteralOp Op, llvm::APFloat const& Val) {
+    if (!Val.isFinite()) {
+      SetError("float literal is not finite", Op);
+      return;
+    }
+    llvm::SmallString<32> Str;
+    Val.toString(Str);
+    if (llvm::StringRef(Str).find_first_of(".eE") == llvm::StringRef::npos)
+      Str += ".0";
+    OS << Str << 'f';
   }
 
   void WriteExpr(ConstOp Op) {

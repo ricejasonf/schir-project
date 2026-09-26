@@ -218,7 +218,7 @@ struct holder {
 ; // Literal types should match corresponding c++ types of literals.
 ; // CHECK-LABEL: @"::test_inline_match_literal"
 ; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
-; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
+; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NOT: "nbdl.match"
 ; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[LIT]])
 ; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
@@ -226,6 +226,19 @@ struct holder {
 (define-match-fn test_inline_match_literal (Fn)
   (match 5
     ('int32_t => Fn)
+    (else => noop)))
+
+; // CHECK-LABEL: @"::test_inline_match_literal_float"
+; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
+; // CHECK-SAME: -> !nbdl.store<f32>
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[LIT]])
+; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
+; // CHECK-NEXT: }
+(define-match-fn test_inline_match_literal_float (Fn)
+  (match 3.14
+    ('int32_t => noop)
+    ('float => Fn)
     (else => noop)))
 
 (write-nbdl-module)
