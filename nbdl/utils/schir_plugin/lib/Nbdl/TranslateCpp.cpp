@@ -7,6 +7,7 @@
 
 #include <nbdl_spec/NbdlDialect.h>
 #include <nbdl_spec/TranslateCpp.h>
+#include <schir/MappableToCpp.h>
 #include <schir/Source.h>
 #include <schir/Value.h>
 #include <llvm/ADT/APFloat.h>
@@ -214,6 +215,12 @@ public:
    *********** Expr Printing **********
    ************************************/
 
+  // Return true if T is a !nbdl.store with no resolved alternatives.
+  static bool needsResolveT(mlir::Type T) {
+    auto ST = dyn_cast<nbdl_spec::StoreType>(T);
+    return ST && ST.getAlts().empty();
+  }
+
   // Indicate if the value is printed directly or bound to variable.
   static constexpr
   auto  IsConstantLike = [](mlir::Value V) -> bool {
@@ -394,8 +401,24 @@ public:
     }
     llvm::StringRef TypeStr = llvm::StringRef(CppType.getCppTypename());
     assert(!TypeStr.empty() && "!nbdl.cpptype should not contain empty string");
+    PrintSameAsConstraint(Arg, TypeStr);
+  }
+
+  void PrintSameAsConstraint(mlir::Value Arg, llvm::StringRef TypeStr) {
     llvm::StringRef ArgStr = GetLocalVal(Arg);
     OS << "::nbdl::SameAs<decltype(" << ArgStr << "), " << TypeStr << "> ";
+  }
+
+  // Get the C++ typename of the single alternative of a store type.
+  // Return false if there is not exactly one alternative
+  // or it is not mappable to C++.
+  static bool GetSingleAltCppTypename(mlir::Type T,
+                                      llvm::SmallVectorImpl<char>& Result) {
+    auto ST = dyn_cast<nbdl_spec::StoreType>(T);
+    if (!ST || ST.getAlts().size() != 1)
+      return false;
+    return schir::MappableToCpp::lookup(ST.getAlts().front().getValue(),
+                                        Result);
   }
 };
 
@@ -418,6 +441,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<MatchIfOp>(Op))      return Visit(cast<MatchIfOp>(Op));
     else if (isa<MatchEachOp>(Op))    return Visit(cast<MatchEachOp>(Op));
     else if (isa<FuncOp>(Op))         return Visit(cast<FuncOp>(Op));
+    else if (isa<ReturnOp>(Op))       return Visit(cast<ReturnOp>(Op));
     else if (isa<CallOp>(Op))         return Visit(cast<CallOp>(Op));
     else if (isa<UnwrapOp>(Op))       return Visit(cast<UnwrapOp>(Op));
     else if (isa<StoreComposeOp>(Op)) return Visit(cast<StoreComposeOp>(Op));
@@ -445,6 +469,9 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     llvm::StringRef Name = Op.getSymName();
     Name = DropNamespacePrefix(Name);
 
+    if (FT.getNumResults() > 1)
+      return SetError("multiple return types are not supported in C++", Op);
+
     // Write the lambda variable declaration.
     OS << "[[maybe_unused]] inline constexpr auto " << Name << " = []";
 
@@ -462,16 +489,44 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ')';
 
     // Write the return type.
-    if (FT.getNumResults() > 1)
-      return SetError("Function should have less than 2 results.", Op);
-    if (FT.getNumResults() == 0)
+    if (FT.getNumResults() == 0) {
       OS << " -> void ";
-    else
+    } else if (needsResolveT(FT.getResult(0))) {
       OS << " -> decltype(auto) ";
+    } else {
+      llvm::SmallString<64> ResultTypename;
+      if (!GetSingleAltCppTypename(FT.getResult(0), ResultTypename))
+        return SetError("result type is not mappable to C++", Op);
+      OS << " -> " << ResultTypename << ' ';
+    }
+
+    // Constrain parameters with concrete types.
+    bool IsFirstConstraint = true;
+    for (mlir::BlockArgument Arg : Body.getArguments()) {
+      if (needsResolveT(Arg.getType()))
+        continue;
+      llvm::SmallString<64> ArgTypename;
+      if (!GetSingleAltCppTypename(Arg.getType(), ArgTypename))
+        return SetError("parameter type is not mappable to C++", Op);
+      OS << (IsFirstConstraint ? "\nrequires " : "&& ");
+      PrintSameAsConstraint(Arg, ArgTypename);
+      IsFirstConstraint = false;
+    }
 
     OS << "{\n";
     VisitRegion(Body);
     OS << "};";
+  }
+
+  void Visit(ReturnOp Op) {
+    if (Op.getNumOperands() > 1)
+      return SetError("multiple return values are not supported in C++", Op);
+    OS << "return";
+    if (Op.getNumOperands() == 1) {
+      OS << ' ';
+      WriteNameExpr(Op.getOperand(0));
+    }
+    OS << ";\n";
   }
 
   void Visit(GetOp Op) {

@@ -397,8 +397,13 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       if (F)
         ResultTs = F.getResultTypes();
       if (ResultTs.size() == 1) {
-        auto TA = mlir::TypeAttr::get(ResultTs.front());
-        NewStoreT = nbdl_spec::StoreType::get(Ctx, TA);
+        // Idempotently lift a known return type to a store.
+        auto ST = dyn_cast<nbdl_spec::StoreType>(ResultTs.front());
+        if (ST && !needsResolveT(ST))
+          NewStoreT = ST;
+        else if (!ST)
+          NewStoreT = nbdl_spec::StoreType::get(Ctx,
+              mlir::TypeAttr::get(ResultTs.front()));
       }
     } else if (llvm::all_of(Op.getArgs(), isCppWriteable)) {
       // All arguments are writeable as C++.

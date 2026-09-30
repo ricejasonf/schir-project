@@ -57,3 +57,22 @@ void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
                               std::unique_ptr<::mlir::Region>&& body) {
   odsState.addRegion(std::move(body));
 }
+
+llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
+  auto FuncOp = llvm::cast<mlir::func::FuncOp>((*this)->getParentOp());
+  llvm::ArrayRef<mlir::Type> ResultTs = FuncOp.getResultTypes();
+  if (getNumOperands() != ResultTs.size())
+    return emitOpError("has ") << getNumOperands()
+      << " operands, but enclosing function returns " << ResultTs.size();
+
+  for (auto [I, Operand, ResultT] : llvm::enumerate(getOperands(), ResultTs)) {
+    mlir::Type OperandT = Operand.getType();
+    // Allow unresolved stores which are inferred later.
+    auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(OperandT);
+    if (OperandT != ResultT && !(ST && ST.getAlts().empty()))
+      return emitOpError("type of return operand ") << I << " ("
+        << OperandT << ") does not match function result type ("
+        << ResultT << ")";
+  }
+  return llvm::success();
+}

@@ -36,8 +36,9 @@ struct my_struct {
   (member: '.foo 'int (init-args: arg1))
   (member: '.bar 'int (init-args: arg2)))
 
-(define-match-fn scale_foo (context (Factor : 'int) fn)
-  (visit fn (visit '|std::multiplies<int>{}| (get context '.foo) Factor)))
+(define-match-fn scale_foo (context factor fn)
+  (match-params ((Factor : 'int factor))
+    (visit fn (visit '|std::multiplies<int>{}| (get context '.foo) Factor))))
 
 (define-match-fn sum_foo_bar (context fn)
   (match-params ((A (get context '.foo))
@@ -45,25 +46,19 @@ struct my_struct {
     (visit fn (visit '|std::plus<int>{}| A B))))
 
 (export-cpp match_int
-            match_my_struct
-            match_with_match_params)
+            match_my_struct)
 
 ; // CHECK-LABEL: @"::foo::match_int"
 ; // CHECK: "nbdl.match"(%arg{{[0-9]+}})
 ; // CHECK-NEXT: ({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
-(define-match-fn match_int ((V : 'int) fn)
-  (visit fn V))
+(define-match-fn match_int (Store fn)
+  (match-params ((V : 'int Store))
+    (visit fn V)))
 
 ; // CHECK-LABEL: @"::foo::match_my_struct"
 ; // CHECK: "nbdl.match"(%arg{{[0-9]+}})
 ; // CHECK-NEXT: ({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"foo::my_struct">>):
-(define-match-fn match_my_struct ((V : 'foo::my_struct) fn)
-  (visit fn V))
-
-; // CHECK-LABEL: @"::foo::match_with_match_params"
-; // CHECK: "nbdl.match"(%arg{{[0-9]+}})
-; // CHECK-NEXT: ({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"foo::my_struct">>):
-(define-match-fn match_with_match_params (Store fn)
+(define-match-fn match_my_struct (Store fn)
   (match-params ((V : 'foo::my_struct Store))
     (visit fn V)))
 

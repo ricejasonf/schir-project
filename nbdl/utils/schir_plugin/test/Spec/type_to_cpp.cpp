@@ -23,7 +23,7 @@ struct bar { };
 ; // Check type->cpp maps MlirStr to CppStr (canonicalized).
 (define (check-type->cpp MlirStr CppStr)
   (define Result (type->cpp (type MlirStr)))
-  (if (not (equal? Result (!cpp-type CppStr)))
+  (if (not (equal? Result (!cpp CppStr)))
     (error "type->cpp mismatch" MlirStr Result))
   (write Result)
   (newline))

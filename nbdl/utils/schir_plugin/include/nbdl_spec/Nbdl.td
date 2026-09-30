@@ -356,6 +356,25 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
   let results   = (outs);
 }
 
+// Note that ReturnLike is not specified since func.func would
+// verify the operand types strictly.
+def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
+                                       HasParent<"mlir::func::FuncOp">]> {
+  let description = [{
+    Return results from a FuncOp with concrete result types.
+
+    Unlike func.return, an operand may be an unresolved store
+    (e.g. the result of nbdl.visit) since its type is inferred
+    later via the nbdl-flatten pass. Otherwise, the type of each
+    operand must be the same as the corresponding result type
+    of the parent FuncOp.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let results = (outs);
+  let hasVerifier = 1;
+}
+
 def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let description = [{
     Call a function with resolved stores as arguments

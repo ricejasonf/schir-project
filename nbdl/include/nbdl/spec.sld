@@ -34,7 +34,7 @@
     ;; Create a !nbdl.cpp type with a canonical C++ typename.
     ;; Provide the tag 'canonical if the typename is already
     ;; canonical.
-    (define !cpp-type
+    (define !cpp
       (case-lambda
         ((Typename)
          (nbdl_spec_cpp_type Typename current-schir-clang))
@@ -46,7 +46,7 @@
       (apply nbdl_spec_create_store_type
              (map (lambda (Alt)
                     (if (or (string? Alt) (symbol? Alt))
-                      (!cpp-type Alt)
+                      (!cpp Alt)
                       Alt))
                   Alts)))
 
@@ -267,7 +267,7 @@
 
     (define (build-constexpr Loc ExprStr)
       (define StoreT
-        (!nbdl.store (!cpp-type (expr->type ExprStr) 'canonical)))
+        (!nbdl.store (!cpp (expr->type ExprStr) 'canonical)))
       (when (member-name-literal? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
@@ -599,7 +599,7 @@
            (else '())))
       (define StoreT
         (apply !nbdl.store
-               (map (lambda (Alt) (!cpp-type Alt 'canonical))
+               (map (lambda (Alt) (!cpp Alt 'canonical))
                     MatchedAlts)))
       (create-op "nbdl.match"
         (loc: Loc)
@@ -671,7 +671,7 @@
              (expr->type Expr)))
       (define ResultType
         (if ExprT
-          (!nbdl.store (!cpp-type ExprT 'canonical))
+          (!nbdl.store (!cpp ExprT 'canonical))
           (!nbdl.store)))
       (define Op
         (create-op "nbdl.get"
@@ -1021,23 +1021,12 @@
            (begin result1 result2 ...)
            (match-cond clause1 clause2 ...)))))
 
-    (define-syntax %match-fn-body
-      (syntax-rules (:)
-        ((%match-fn-body () Body ...)
-         (begin Body ...))
-        ((%match-fn-body ((X : T) Rest ...) Body ...)
-         (match X
-           (T => (lambda (X) (%match-fn-body (Rest ...) Body ...)))))
-        ((%match-fn-body (X Rest ...) Body ...)
-         (%match-fn-body (Rest ...) Body ...))))
-
-    (define-syntax %define-match-fn-aux
-      (syntax-rules (:)
-        ((%define-match-fn-aux Name ((X : T) Rest ...) (Acc ...) AllFormals Body ...)
-         (%define-match-fn-aux Name (Rest ...) (Acc ... X) AllFormals Body ...))
-        ((%define-match-fn-aux Name (X Rest ...) (Acc ...) AllFormals Body ...)
-         (%define-match-fn-aux Name (Rest ...) (Acc ... X) AllFormals Body ...))
-        ((%define-match-fn-aux Name () (Names ...) AllFormals Body ...)
+    ;; Define a generic function to receive a matched set of parameters.
+    ;; All parameters are unresolved stores which may be matched within
+    ;; the body (e.g. via match-params.)
+    (define-syntax define-match-fn
+      (syntax-rules ()
+        ((define-match-fn Name (Arg ...) Body ...)
          (define Name
            (let ((QualName (namespace-prefix 'Name)))
              (make-named-fn
@@ -1055,21 +1044,61 @@
                         (type-attr
                           (%function-type
                             (make-vector
-                              (length '(Names ...))
+                              (length '(Arg ...))
                               (!nbdl.store))
                             #()))))
                      (result-types:)
-                     (region: "body" ((Names : (!nbdl.store)) ...)
-                              (%match-fn-body AllFormals Body ...)))))))))))
+                     (region: "body" ((Arg : (!nbdl.store)) ...)
+                              Body ...))))))))))
 
-    ;; Define a function to receive a matched set of parameters.
-    ;; An Arg may be and identifier or specify a type via `(Arg : ArgT)`.
-    ;; A specified type is implicitly lifted to a Store type and is implicitly
-    ;; matched (via the match syntax.)
-    (define-syntax define-match-fn
+    ;; Define a concrete function for use with Nbdl operations whose parameter
+    ;; and result types are implicitly lifted to store types.
+    (define-syntax define-fn
+      (syntax-rules (: ->)
+        ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...) Body1 BodyN ...)
+         (define Name
+           (let ((QualName (namespace-prefix 'Name)))
+             (make-named-fn
+               QualName
+               (top-level-op
+                 QualName
+                 (lambda ()
+                   (create-op
+                     "func.func"
+                     (loc: (syntax-source-loc Name))
+                     (operands:)
+                     (attributes:
+                       ("sym_name" (string-attr QualName))
+                       ("function_type"
+                        (type-attr
+                          (%function-type
+                            (vector (!nbdl.store ArgT) ...)
+                            (vector (!nbdl.store RetT) ...)))))
+                     (result-types:)
+                     (region: "body" ((Arg : (!nbdl.store ArgT))
+                                      ...)
+                              Body1 BodyN ...))))))))))
+
+    (define (return-aux Loc Exprs)
+      (close-previous-scope)
+      (%match-results
+        Exprs
+        (lambda (Results)
+          (create-op "nbdl.return"
+                     (loc: Loc)
+                     (operands: Results)
+                     (attributes:)
+                     (result-types:))))
+      (if #f #f)) ; return undefined
+
+    ;; Return results from a function defined with define-fn.
+    (define-syntax return
       (syntax-rules ()
-        ((define-match-fn Name (Arg ... Fn) Body ...)
-         (%define-match-fn-aux Name (Arg ... Fn) () (Arg ... Fn) Body ...))))
+        ((return)
+         (return-aux (current-source-loc) '()))
+        ((return Expr1 ExprN ...)
+         (return-aux (syntax-source-loc Expr1)
+                     (list (%single-expr Expr1) (%single-expr ExprN) ...)))))
 
     ;; Match stores via a let* like syntax.
     ;; Optionally, append a type constraint via `:` indentifier.
@@ -1155,6 +1184,8 @@
     match-each
     match-if
     define-match-fn
+    define-fn
+    return
     match-params
     visit
     sfinae-visit
@@ -1175,7 +1206,7 @@
     source-loc
     type
     type->cpp
-    !cpp-type
+    !cpp
     dump
 
     ;; Stuff that should be broken out as a common details lib
