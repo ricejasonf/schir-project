@@ -14,6 +14,7 @@
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinDialect.h>
 #include <mlir/IR/BuiltinTypes.h>
+#include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <memory>
 #include <optional>
@@ -209,6 +210,8 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
   if (Args.size() != 0)
     return C.RaiseError("invalid arity");
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
+  // Functions exported via export-c may use arith operations.
+  C.DialectRegistry->insert<mlir::arith::ArithDialect>();
   C.DialectRegistry->addExtension(
     +[](mlir::MLIRContext*, nbdl_spec::NbdlDialect* D) {
       D->addInterfaces<NbdlMappableToCpp>();
@@ -217,6 +220,7 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
     +[](mlir::MLIRContext*, mlir::BuiltinDialect* D) {
       D->addInterfaces<BuiltinMappableToCpp>();
     });
+  nbdl_spec::registerPasses();
   C.Cont();
 }
 

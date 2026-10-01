@@ -684,6 +684,16 @@ public:
 } // namespace
 
 namespace nbdl_spec {
+#define GEN_PASS_DECL_LOWERPASS
+#define GEN_PASS_DECL_LOWERTOLLVMPASS
+#define GEN_PASS_REGISTRATION_LOWERPASS
+#define GEN_PASS_REGISTRATION_LOWERTOLLVMPASS
+#include "nbdl_spec/NbdlPasses.h.inc"
+
+void registerPasses() {
+  registerLowerPass();
+  registerLowerToLLVMPass();
+}
 
 llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
                             schir::SchirClangImpl* SchirClangImpl) {

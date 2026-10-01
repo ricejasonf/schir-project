@@ -49,7 +49,7 @@ struct holder {
   (match (get Store '.value)
     (else => Fn)))
 
-; // CHECK-LABEL: @"::test_infer_visit_result"
+; // CHECK-LABEL: @test_infer_visit_result(
 ; // CHECK: [[MEMBER:%[0-9]+]] = "nbdl.member_name"() <{name = "get_float"}>
 ; // CHECK: "nbdl.visit"([[MEMBER]],
 ; // CHECK-SAME: : (!nbdl.member_name, !nbdl.store<!nbdl.cpp<"foo::not_a_store">>)
@@ -60,7 +60,7 @@ struct holder {
      (lambda (NotAStore)
        (visit Fn (visit '.get_float NotAStore))))))
 
-; // CHECK-LABEL: @"::test_infer_match_if_then_arg"
+; // CHECK-LABEL: @test_infer_match_if_then_arg(
 ; // CHECK: [[MEMB0:%[0-9]+]] = "nbdl.member_name"() <{name = "value"}>
 ; // CHECK: [[GET0:%[0-9]+]] = "nbdl.get"(%arg{{[0-9]+}}, [[MEMB0]])
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
@@ -75,7 +75,7 @@ struct holder {
          (else (visit Fn "nope"))
          )))))
 
-; // CHECK-LABEL: @"::test_infer_match_if_then_arg_sfinae"
+; // CHECK-LABEL: @test_infer_match_if_then_arg_sfinae(
 ; // CHECK: [[MEMB0:%[0-9]+]] = "nbdl.member_name"() <{name = "get_float"}>
 ; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"([[MEMB0]], %arg{{[0-9]+}})
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"nbdl::detail::sfinae_result<float>">>
@@ -90,7 +90,7 @@ struct holder {
          (else (visit Fn "nope"))
          )))))
 
-; // CHECK-LABEL: @"::test_infer_match_each_element"
+; // CHECK-LABEL: @test_infer_match_each_element(
 ; // CHECK: "nbdl.match_each"({{[^)]+}})
 ; // CHECK-NEXT: ([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"float">>)
 (define-match-fn test_infer_match_each_element (Store Dest Fn)
@@ -105,7 +105,7 @@ struct holder {
 (define-match-fn test_inline_callee (X Fn)
   (visit Fn X))
 
-; // CHECK-LABEL: @"::test_inline_visit"
+; // CHECK-LABEL: @test_inline_visit
 ; // CHECK-SAME: ([[STORE:%arg[0-9]+]]: !nbdl.store, [[FN:%arg[0-9]+]]: !nbdl.store)
 ; // CHECK: "nbdl.match"([[STORE]])
 ; // CHECK-NEXT: ^bb0([[ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::not_a_store">>):
@@ -117,7 +117,7 @@ struct holder {
      (lambda (NotAStore)
        (visit test_inline_callee NotAStore Fn)))))
 
-; // CHECK-LABEL: @"::test_inline_match"
+; // CHECK-LABEL: @test_inline_match(
 ; // CHECK: "nbdl.match"
 ; // CHECK-NEXT: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
 ; // CHECK-NEXT: [[MEMB0:%[0-9]+]] = "nbdl.member_name"() <{name = "plain"}>
@@ -136,7 +136,7 @@ struct holder {
          ('foo::not_a_store => Fn)
          (else => noop))))))
 
-; // CHECK-LABEL: @"::test_inline_match_else"
+; // CHECK-LABEL: @test_inline_match_else(
 ; // CHECK: "nbdl.match"
 ; // CHECK-NEXT: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
 ; // CHECK: [[GET0:%[0-9]+]] = "nbdl.get"([[HOLDER]], {{%[0-9]+}})
@@ -156,7 +156,7 @@ struct holder {
          (else => Fn))))))
 
 ; // Matching weak_wrapper unwraps its value so it is not inlined.
-; // CHECK-LABEL: @"::test_no_inline_match_unit_impl"
+; // CHECK-LABEL: @test_no_inline_match_unit_impl(
 ; // CHECK: [[GET0:%[0-9]+]] = "nbdl.get"
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::weak_wrapper">>
 ; // CHECK-NEXT: "nbdl.match"([[GET0]])
@@ -168,7 +168,7 @@ struct holder {
          (else => Fn))))))
 
 ; // Non-C++ types match themselves by default.
-; // CHECK-LABEL: @"::test_inline_match_non_cpp"
+; // CHECK-LABEL: @test_inline_match_non_cpp(
 ; // CHECK: "nbdl.match"
 ; // CHECK-NEXT: ^bb0([[X:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK-NOT: "nbdl.match"
@@ -185,7 +185,7 @@ struct holder {
          (else => noop))))))
 
 ; // Overload typenames are canonicalized.
-; // CHECK-LABEL: @"::test_inline_match_canonical"
+; // CHECK-LABEL: @test_inline_match_canonical(
 ; // CHECK: [[TEXT:%[0-9]+]] = "nbdl.get"
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">>
 ; // CHECK-NOT: "nbdl.match"
@@ -200,7 +200,7 @@ struct holder {
          ('std::string => Fn)
          (else => noop))))))
 
-; // CHECK-LABEL: @"::test_inline_match_canonical_alias"
+; // CHECK-LABEL: @test_inline_match_canonical_alias(
 ; // CHECK: [[COUNT:%[0-9]+]] = "nbdl.get"
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
 ; // CHECK-NOT: "nbdl.match"
@@ -216,7 +216,7 @@ struct holder {
          (else => noop))))))
 
 ; // Literal types should match corresponding c++ types of literals.
-; // CHECK-LABEL: @"::test_inline_match_literal"
+; // CHECK-LABEL: @test_inline_match_literal(
 ; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
 ; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NOT: "nbdl.match"
@@ -228,7 +228,7 @@ struct holder {
     ('int32_t => Fn)
     (else => noop)))
 
-; // CHECK-LABEL: @"::test_inline_match_literal_float"
+; // CHECK-LABEL: @test_inline_match_literal_float(
 ; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
 ; // CHECK-SAME: -> !nbdl.store<f32>
 ; // CHECK-NOT: "nbdl.match"

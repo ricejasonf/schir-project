@@ -89,7 +89,7 @@ namespace foo {
                    (B : 'geomalg::vec3 (get Store '.b)))
       (visit test_dot (visit test_add A B) (visit test_add B A))))
 
-  ; // CHECK-LABEL: @"::foo::test_call_dot"
+  ; // CHECK-LABEL: @test_call_dot(
   ; // CHECK: ^bb0([[A:%arg[0-9]+]]: !nbdl.store<!geomalg.multivector<<1>, <2>, <4>>>):
   ; // CHECK: ^bb0([[B:%arg[0-9]+]]: !nbdl.store<!geomalg.multivector<<1>, <2>, <4>>>):
   ; // CHECK: [[UA:%[0-9]+]] = "nbdl.unwrap"([[A]])

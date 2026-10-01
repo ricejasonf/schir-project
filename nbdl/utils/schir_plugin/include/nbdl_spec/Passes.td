@@ -24,4 +24,27 @@ def FlattenPass : NbdlPass<"nbdl-flatten"> {
   }];
 }
 
+def LowerPass : NbdlPass<"nbdl-lower", "mlir::ModuleOp"> {
+  let summary = "lower nbdl to mid level dialects";
+  let description = [{
+    Lower Nbdl operations to dialects that can be lowered
+    to LLVM or SPIRV.
+
+    Operations that require C++ cannot be lowered.
+  }];
+  let dependentDialects = ["nbdl_spec::NbdlDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::func::FuncDialect",
+                           "mlir::scf::SCFDialect"];
+}
+
+def LowerToLLVMPass : NbdlPass<"nbdl-to-llvm", "mlir::ModuleOp"> {
+  let summary = "lower the dialects produced by nbdl-lower to LLVM";
+  let description = [{
+    Lower output dialects of nbdl-lower to the LLVM dialect.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 #endif // NBDL_DIALECT_PASSES_TD

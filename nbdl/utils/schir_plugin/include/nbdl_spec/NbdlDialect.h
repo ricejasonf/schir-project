@@ -19,6 +19,9 @@ using mlir::StringAttr;
 
 llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
         schir::SchirClangImpl* SchirClangImpl = nullptr);
+
+// Register passes that can be run via a pass pipeline string.
+void registerPasses();
 }
 
 // Include the generated header files

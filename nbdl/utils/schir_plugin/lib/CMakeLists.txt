@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.13.4)
 add_library(Nbdl MODULE Nbdl.cpp
                         Nbdl/TranslateCpp.cpp
                         Nbdl/Dialect.cpp
-                        Nbdl/Passes.cpp)
+                        Nbdl/Passes.cpp
+                        Nbdl/Lower.cpp)
 target_compile_options(Nbdl PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Nbdl NbdlOpsIncGen NbdlPassesIncGen)
 install(TARGETS Nbdl

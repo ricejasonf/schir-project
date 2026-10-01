@@ -69,7 +69,12 @@ llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
     mlir::Type OperandT = Operand.getType();
     // Allow unresolved stores which are inferred later.
     auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(OperandT);
-    if (OperandT != ResultT && !(ST && ST.getAlts().empty()))
+    bool IsUnresolved = ST && ST.getAlts().empty();
+    // Allow the contained type of a store with a single alternative.
+    auto ResultST = llvm::dyn_cast<nbdl_spec::StoreType>(ResultT);
+    bool IsLifted = ResultST && ResultST.getAlts().size() == 1 &&
+                    ResultST.getAlts().front().getValue() == OperandT;
+    if (OperandT != ResultT && !IsUnresolved && !IsLifted)
       return emitOpError("type of return operand ") << I << " ("
         << OperandT << ") does not match function result type ("
         << ResultT << ")";

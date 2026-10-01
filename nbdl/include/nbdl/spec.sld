@@ -4,6 +4,7 @@
   (import (schir base)
           (schir mlir)
           (schir mlir all-passes)
+          (schir llvm pass)
           (schir clang))
   (begin
     ;; Note that the %match functions in this implementation
@@ -57,17 +58,39 @@
     (load-dialect "func")
     (load-dialect "schir")
     (load-dialect "nbdl")
+    (load-dialect "arith")
 
-    ;; Thunk should return a new top level operation using the provided
-    ;; module builder. The new operation is immediately translated to to C++
-    ;; when its name is in the list of export-cpp names.
-    ;; This is done immediately to make the C++ type available for
-    ;; introspection when making subsequent operations.
+    ;; Create the symbol name for a top level op.
+    (define (top-level-name Name)
+      (if (memq Name export-cpp-names)
+        (namespace-prefix Name)
+        Name))
+
+    (define llvm-module #f)
+
+    ;; Copy a FuncOp into the llvm-module.
+    (define (lower-to-llvm FuncOp)
+      (unless llvm-module
+        (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
+      (with-module-builder llvm-module
+                           (lambda () (copy-op FuncOp))))
+
+    ;; Finish the module which lowers backend modules.
+    (define (finalize-module)
+      (when llvm-module
+        (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm")
+        (inject-module llvm-module)))
+
+    ;; Thunk receives the symbol name and should return
+    ;; a new top level operation using the current module builder.
     (define (top-level-op Name Thunk)
+      (when (and (memq Name export-cpp-names)
+                 (memq Name export-c-names))
+        (error "name cannot be exported to both C++ and C: {}" Name))
       (with-module-builder
         main-module
         (lambda ()
-          (define TopLevelOp (Thunk))
+          (define TopLevelOp (Thunk (top-level-name Name)))
           (define Loc (source-loc TopLevelOp))
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
@@ -432,16 +455,17 @@
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
          (begin
            (define Name
-             (let ((QualName (namespace-prefix 'Name)))
+             (let ((SymName #f))
                (top-level-op
-                 QualName
-                 (lambda ()
+                 'Name
+                 (lambda (SymName_)
                    (define Loc (syntax-source-loc Name))
+                   (set! SymName SymName_)
                    (create-op
                      "nbdl.define_store"
                      (loc: Loc)
                      (operands:)
-                     (attributes: ("sym_name" (string-attr QualName)))
+                     (attributes: ("sym_name" (string-attr SymName)))
                      (result-types:)
                      (region: "body" ((InitParams : (!nbdl.store)) ...)
                               (define-store-aux
@@ -450,7 +474,7 @@
                                   ;; Ensure nonempty lambda.
                                   (ProcessBody StoreFunctionalN) ... #t)
                                 )))))
-               QualName))))))
+               SymName))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -1028,28 +1052,28 @@
       (syntax-rules ()
         ((define-match-fn Name (Arg ...) Body ...)
          (define Name
-           (let ((QualName (namespace-prefix 'Name)))
-             (make-named-fn
-               QualName
-               (top-level-op
-                 QualName
-                 (lambda ()
-                   (create-op
-                     "func.func"
-                     (loc: (syntax-source-loc Name))
-                     (operands:)
-                     (attributes:
-                       ("sym_name" (string-attr QualName))
-                       ("function_type"
-                        (type-attr
-                          (%function-type
-                            (make-vector
-                              (length '(Arg ...))
-                              (!nbdl.store))
-                            #()))))
-                     (result-types:)
-                     (region: "body" ((Arg : (!nbdl.store)) ...)
-                              Body ...))))))))))
+           (let ((SymName #f))
+            (let ((FuncOp (top-level-op
+                           'Name
+                           (lambda (SymName_)
+                             (set! SymName SymName_)
+                             (create-op
+                               "func.func"
+                               (loc: (syntax-source-loc Name))
+                               (operands:)
+                               (attributes:
+                                 ("sym_name" (string-attr SymName))
+                                 ("function_type"
+                                  (type-attr
+                                    (%function-type
+                                      (make-vector
+                                        (length '(Arg ...))
+                                        (!nbdl.store))
+                                      #()))))
+                               (result-types:)
+                               (region: "body" ((Arg : (!nbdl.store)) ...)
+                                        Body ...))))))
+             (make-named-fn SymName FuncOp)))))))
 
     ;; Define a concrete function for use with Nbdl operations whose parameter
     ;; and result types are implicitly lifted to store types.
@@ -1057,27 +1081,30 @@
       (syntax-rules (: ->)
         ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...) Body1 BodyN ...)
          (define Name
-           (let ((QualName (namespace-prefix 'Name)))
-             (make-named-fn
-               QualName
-               (top-level-op
-                 QualName
-                 (lambda ()
-                   (create-op
-                     "func.func"
-                     (loc: (syntax-source-loc Name))
-                     (operands:)
-                     (attributes:
-                       ("sym_name" (string-attr QualName))
-                       ("function_type"
-                        (type-attr
-                          (%function-type
-                            (vector (!nbdl.store ArgT) ...)
-                            (vector (!nbdl.store RetT) ...)))))
-                     (result-types:)
-                     (region: "body" ((Arg : (!nbdl.store ArgT))
-                                      ...)
-                              Body1 BodyN ...))))))))))
+           (let ((SymName #f))
+            (let ((FuncOp
+                   (top-level-op
+                     'Name
+                     (lambda (SymName_)
+                       (set! SymName SymName_)
+                       (create-op
+                         "func.func"
+                         (loc: (syntax-source-loc Name))
+                         (operands:)
+                         (attributes:
+                           ("sym_name" (string-attr SymName))
+                           ("function_type"
+                            (type-attr
+                              (%function-type
+                                (vector (!nbdl.store ArgT) ...)
+                                (vector (!nbdl.store RetT) ...)))))
+                         (result-types:)
+                         (region: "body" ((Arg : (!nbdl.store ArgT))
+                                          ...)
+                                  Body1 BodyN ...))))))
+             (when (memq 'Name export-c-names)
+               (lower-to-llvm FuncOp))
+             (make-named-fn SymName FuncOp)))))))
 
     (define (return-aux Loc Exprs)
       (close-previous-scope)
@@ -1156,7 +1183,7 @@
         ((export-cpp Name ...)
          (set! export-cpp-names
            (append
-             (list (namespace-prefix 'Name) ...)
+             (list 'Name ...)
              export-cpp-names)))))
 
     (define-syntax export-c
@@ -1192,6 +1219,7 @@
     noop
     export-cpp
     export-c
+    finalize-module
 
     ;; Reexport some base stuff
     define

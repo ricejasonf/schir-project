@@ -4,11 +4,17 @@
 
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
+// RUN:   -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -o %t
 // RUN: %t
 
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
+#include <cstdint>
+
+// Defined via define-fn with export-c.
+extern "C" std::int32_t add_i32(std::int32_t, std::int32_t);
+extern "C" std::int32_t add_one_i32(std::int32_t);
 
 namespace {
 namespace foo {
@@ -28,13 +34,14 @@ struct int_sink {
 
 #pragma schir_scheme
 {
-(import (nbdl spec))
+(import (nbdl spec)
+        (only (schir mlir) create-op result))
 
+(export-c add_i32 add_one_i32)
 (export-cpp context
             add_ints
             get_value
             add_value
-            add_i32
             sum_foo_bar_i32
             store_sum)
 
@@ -71,17 +78,42 @@ struct int_sink {
 (define-fn add_value ((S : 'foo::my_struct) (X : 'int)) -> ('int)
   (return (visit add_ints (get S '.value) X)))
 
-; // MLIR types are mapped to their C++ equivalents.
-; // CHECK-LABEL: func.func @"::foo::add_i32"
+; // Functions exported via export-c have the unqualified symbol name
+; // and are lowered to LLVM with the contained types of the stores.
+; // CHECK-LABEL: func.func @add_i32
 ; // CHECK-SAME: (%arg0: !nbdl.store<i32>, %arg1: !nbdl.store<i32>)
 ; // CHECK-SAME: -> !nbdl.store<i32>
+; // CHECK: [[A:%[0-9]+]] = "nbdl.unwrap"(%arg0)
+; // CHECK-NEXT: [[B:%[0-9]+]] = "nbdl.unwrap"(%arg1)
+; // CHECK-NEXT: [[SUM:%[0-9]+]] = arith.addi [[A]], [[B]] : i32
+; // CHECK-NEXT: "nbdl.return"([[SUM]]) : (i32) -> ()
 (define i32 (type "i32"))
+(define (unwrap-i32 Store)
+  (result (create-op "nbdl.unwrap"
+                     (loc: Store)
+                     (operands: Store)
+                     (attributes:)
+                     (result-types: i32))))
 (define-fn add_i32 ((A : i32) (B : i32)) -> (i32)
-  (return (visit '|std::plus<>{}| A B)))
+  (return (result (create-op "arith.addi"
+                             (loc: 0)
+                             (operands: (unwrap-i32 A) (unwrap-i32 B))
+                             (attributes:)
+                             (result-types: i32)))))
+
+; // Visit an export-c function from an export-c function.
+; // CHECK-LABEL: func.func @add_one_i32
+; // CHECK-SAME: (%arg0: !nbdl.store<i32>) -> !nbdl.store<i32>
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @add_i32}>
+; // CHECK: [[RESULT:%[0-9]+]] = "nbdl.visit"([[FN]], %arg0,
+; // CHECK-SAME: -> !nbdl.store<i32>
+; // CHECK-NEXT: "nbdl.return"([[RESULT]])
+(define-fn add_one_i32 ((A : i32)) -> (i32)
+  (return (visit add_i32 A 1)))
 
 ; // Visit a define-fn within a match-fn.
 ; // This is not exported since it is only inlined via store_sum.
-; // CHECK-LABEL: func.func @"::foo::sum_foo_bar"
+; // CHECK-LABEL: func.func @sum_foo_bar(
 ; // CHECK: "nbdl.visit"
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
 (define-match-fn sum_foo_bar (Ctx Fn)
@@ -91,7 +123,8 @@ struct int_sink {
 
 ; // Visit a define-fn with MLIR types within a match-fn.
 ; // CHECK-LABEL: func.func @"::foo::sum_foo_bar_i32"
-; // CHECK: "nbdl.visit"
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @add_i32}>
+; // CHECK: "nbdl.visit"([[FN]],
 ; // CHECK-SAME: <{validCppCrossMap}>
 (define-match-fn sum_foo_bar_i32 (Ctx Fn)
   (match-params ((Foo : 'int (get Ctx '.foo))
@@ -104,7 +137,7 @@ struct int_sink {
 ; // CHECK-LABEL: func.func @"::foo::store_sum"
 ; // CHECK-SAME: (%arg0: !nbdl.store<!nbdl.cpp<"foo::context">>,
 ; // CHECK-SAME: %arg1: !nbdl.store<!nbdl.cpp<"foo::int_sink">>) {
-; // CHECK-NOT: "nbdl.func_name"() <{name = @"::foo::sum_foo_bar"}>
+; // CHECK-NOT: "nbdl.func_name"() <{name = @sum_foo_bar}>
 ; // CHECK: "nbdl.match"
 ; // CHECK: "nbdl.match"
 ; // CHECK: "nbdl.return"() : () -> ()
@@ -112,6 +145,7 @@ struct int_sink {
   (visit sum_foo_bar Ctx Sink)
   (return))
 
+(finalize-module)
 (write-nbdl-module)
 
 }
@@ -122,7 +156,9 @@ int main() {
   SCHIR_ASSERT(foo::add_ints(3, 4) == 7);
   SCHIR_ASSERT(foo::get_value(foo::my_struct{42}) == 42);
   SCHIR_ASSERT(foo::add_value(foo::my_struct{42}, 8) == 50);
-  SCHIR_ASSERT(foo::add_i32(std::int32_t{5}, std::int32_t{6}) == 11);
+  SCHIR_ASSERT(add_i32(5, 6) == 11);
+  SCHIR_ASSERT(add_i32(-5, 3) == -2);
+  SCHIR_ASSERT(add_one_i32(41) == 42);
 
   // Concrete parameter types are constrained.
   static_assert(std::invocable<decltype(foo::add_ints), int, int>);

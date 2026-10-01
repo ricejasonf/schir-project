@@ -27,7 +27,7 @@
         ((define-geomalg-fn Name ((ArgName : ArgType) ...) BodyI ... BodyN)
          (define Name
            (let ((FuncOp (top-level-op 'Name
-                                       (lambda ()
+                                       (lambda (SymName)
                                          (geomalg-define-func-aux
                                            Name ((ArgName : ArgType) ...)
                                            BodyI ...
