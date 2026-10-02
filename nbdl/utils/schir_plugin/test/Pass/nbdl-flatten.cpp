@@ -31,6 +31,8 @@ public:
   };
 };
 
+using int_or_text = nbdl::variant<int, std::string, float>;
+
 struct holder {
   not_a_store plain;
   weak_wrapper weak;
@@ -38,12 +40,69 @@ struct holder {
   int32_t count;
 };
 
+// A store with a non member name key.
+struct key_t { };
+struct keyed {
+  holder value;
+};
+
 } // namespace foo
 } // namespace
 
+template <>
+struct nbdl::get_impl<foo::keyed> {
+  template <typename Store>
+  static constexpr decltype(auto) apply(Store&& s) {
+    return std::forward<Store>(s);
+  }
+
+  template <typename Store>
+  static constexpr decltype(auto) apply(Store&& s, foo::key_t) {
+    return (std::forward<Store>(s).value);
+  }
+};
+
 #pragma schir_scheme
 {
-(import (nbdl spec))
+(import (nbdl spec)
+        (only (schir mlir) create-op result))
+
+; // Get with a key that is not a member name uses nbdl::get.
+; // CHECK-LABEL: @test_infer_get_key(
+; // CHECK: ^bb0([[KEYED:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::keyed">>):
+; // CHECK: ^bb0([[KEY:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::key_t">>):
+; // CHECK: "nbdl.get"([[KEYED]], [[KEY]])
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::holder">>
+(define-match-fn test_infer_get_key (Store Key Fn)
+  (match (get Store)
+    ('foo::keyed =>
+     (lambda (Keyed)
+       (match (get Key)
+         ('foo::key_t =>
+          (lambda (K)
+            (visit Fn (result (create-op "nbdl.get"
+                                         (loc: 0)
+                                         (operands: Keyed K)
+                                         (attributes:)
+                                         (result-types: (type "!nbdl.store")))))))
+         (else => noop))))
+    (else => noop)))
+
+; // Get with no key uses nbdl::get.
+; // CHECK-LABEL: @test_infer_get_unit_key(
+; // CHECK: ^bb0([[KEYED:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::keyed">>):
+; // CHECK: "nbdl.get"([[KEYED]])
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::keyed">>
+(define-match-fn test_infer_get_unit_key (Store Fn)
+  (match (get Store)
+    ('foo::keyed =>
+     (lambda (Keyed)
+       (visit Fn (result (create-op "nbdl.get"
+                                    (loc: 0)
+                                    (operands: Keyed)
+                                    (attributes:)
+                                    (result-types: (type "!nbdl.store")))))))
+    (else => noop)))
 
 (define-match-fn test_unit_match (Store Fn)
   (match (get Store '.value)
@@ -245,6 +304,42 @@ struct holder {
     ('int32_t => noop)
     ('float => Fn)
     (else => noop)))
+
+; // The catch all overload of a match on a resolved store receives
+; // every alternative probed from the C++ implementation of match.
+; // CHECK-LABEL: @test_infer_match_single_else_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"nbdl::detail::variant<
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">,
+; // CHECK-SAME: !nbdl.cpp<"int">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">,
+; // CHECK-SAME: !nbdl.cpp<"float">>):
+(define-match-fn test_infer_match_single_else_alts (Store Fn)
+  (match (get Store)
+    ('foo::int_or_text =>
+     (lambda (Variant)
+       (match Variant
+         (else => Fn))))))
+
+; // The catch all overload excludes the alternatives
+; // handled by the previous overloads.
+; // CHECK-LABEL: @test_infer_match_else_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"nbdl::detail::variant<
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
+; // CHECK: }, {
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">,
+; // CHECK-SAME: !nbdl.cpp<"float">>):
+(define-match-fn test_infer_match_else_alts (Store Fn)
+  (match (get Store)
+    ('foo::int_or_text =>
+     (lambda (Variant)
+       (match Variant
+         ('int => noop)
+         (else => Fn))))))
+
+(finalize-module)
 
 (write-nbdl-module)
 

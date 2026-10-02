@@ -32,6 +32,8 @@ namespace foo {
      (init-args: arg1))
     (member: '.boo 'std::string
      (init-args: arg2)))
+
+  (finalize-module)
 }
 }  // namespace foo
 }  // namespace

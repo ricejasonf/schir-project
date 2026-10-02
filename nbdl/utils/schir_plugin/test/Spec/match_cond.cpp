@@ -74,6 +74,8 @@ namespace foo {
 
   ;; // See sfinae_visit.cpp for more tests on =>.
 
+  (finalize-module)
+
 }
 }  // namespace foo
 }  // namespace

@@ -59,7 +59,9 @@ void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
 }
 
 llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
-  auto FuncOp = llvm::cast<mlir::func::FuncOp>((*this)->getParentOp());
+  auto FuncOp = (*this)->getParentOfType<mlir::func::FuncOp>();
+  if (!FuncOp)
+    return emitOpError("expects to be nested in 'func.func'");
   llvm::ArrayRef<mlir::Type> ResultTs = FuncOp.getResultTypes();
   if (getNumOperands() != ResultTs.size())
     return emitOpError("has ") << getNumOperands()
@@ -67,8 +69,10 @@ llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
 
   for (auto [I, Operand, ResultT] : llvm::enumerate(getOperands(), ResultTs)) {
     mlir::Type OperandT = Operand.getType();
-    // Allow unknown values which are inferred later.
-    bool IsUnknown = llvm::isa<nbdl_spec::UnknownType>(OperandT);
+    // Allow unknown values and C++ 'aliases' which are inferred later.
+    bool IsUnknown = llvm::isa<nbdl_spec::UnknownType>(OperandT) ||
+                     llvm::isa<nbdl_spec::CppAliasType>(OperandT) ||
+                     llvm::isa<nbdl_spec::CppAliasType>(ResultT);
     if (OperandT != ResultT && !IsUnknown)
       return emitOpError("type of return operand ") << I << " ("
         << OperandT << ") does not match function result type ("

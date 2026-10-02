@@ -28,13 +28,6 @@
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
 
-// TODO It would be nice to generate these declarations.
-//      This would require a map from mlir to cpp types.
-static_assert(sizeof(geomalg::scalar) == sizeof(float));
-static_assert(sizeof(geomalg::vec3) == sizeof(nbdl::vec_f32<3>));
-extern "C" geomalg::scalar test_dot(geomalg::vec3, geomalg::vec3);
-extern "C" geomalg::vec3 test_add(geomalg::vec3, geomalg::vec3);
-
 namespace {
 namespace foo {
 
@@ -104,6 +97,8 @@ namespace foo {
                    (Y : !vec3 B))
       (visit test_dot X Y)))
 
+  (finalize-module)
+
   (write-nbdl-module)
 
 #| ; // FIXME c++ preprocessor directives unavailable here
@@ -132,12 +127,12 @@ bool vec_equal(geomalg::vec3 A, geomalg::vec3 B) {
 
 int main() {
   // Call the injected geomalg functions directly.
-  SCHIR_ASSERT(test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
-  SCHIR_ASSERT(test_dot({{1, 0, 0}}, {{0, 1, 0}}).value == 0);
-  SCHIR_ASSERT(test_dot({{-1, 2, 0.5}}, {{2, 3, 4}}).value == 6);
-  SCHIR_ASSERT(vec_equal(test_add({{3, 2, 4}}, {{4, 2, 1}}), {{7, 4, 5}}));
-  SCHIR_ASSERT(vec_equal(test_add({{1, 0, 0}}, {{0, 1, 0}}), {{1, 1, 0}}));
-  SCHIR_ASSERT(vec_equal(test_add({{-1, 2, 0.5}}, {{1, -2, -0.5}}),
+  SCHIR_ASSERT(foo::test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
+  SCHIR_ASSERT(foo::test_dot({{1, 0, 0}}, {{0, 1, 0}}).value == 0);
+  SCHIR_ASSERT(foo::test_dot({{-1, 2, 0.5}}, {{2, 3, 4}}).value == 6);
+  SCHIR_ASSERT(vec_equal(foo::test_add({{3, 2, 4}}, {{4, 2, 1}}), {{7, 4, 5}}));
+  SCHIR_ASSERT(vec_equal(foo::test_add({{1, 0, 0}}, {{0, 1, 0}}), {{1, 1, 0}}));
+  SCHIR_ASSERT(vec_equal(foo::test_add({{-1, 2, 0.5}}, {{1, -2, -0.5}}),
                          {{0, 0, 0}}));
 
   vec3_pair Store{{{3, 2, 4}}, {{4, 2, 1}}};

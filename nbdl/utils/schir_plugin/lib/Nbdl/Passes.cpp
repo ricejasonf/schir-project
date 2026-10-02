@@ -7,6 +7,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/Twine.h>
 #include <mlir/AsmParser/AsmParser.h>
+#include <mlir/IR/AttrTypeSubElements.h>
 #include <mlir/IR/IRMapping.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
@@ -560,6 +561,197 @@ struct InferLiftStoreType : mlir::OpRewritePattern<nbdl_spec::LiftStoreOp> {
   }
 };
 
+// Infer the result of getting a member from a store.
+// Any other key (or no key) uses `nbdl::get` as in the C++ translation.
+struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::GetOp Op, mlir::PatternRewriter& Rewriter) const override {
+    if (!needsResolve(Op.getResult()))
+      return Rewriter.notifyMatchFailure(Op, "type already resolved");
+    llvm::StringRef StoreTypeStr = getCppTypename(Op.getState());
+    if (StoreTypeStr.empty())
+      return Rewriter.notifyMatchFailure(Op, "store is not a single C++ alt");
+
+    std::string StoreExpr = ("::nbdl::detail::declval<" +
+                             StoreTypeStr + ">()").str();
+    std::string Expr;
+    if (Op.hasUnitKey()) {
+      Expr = "::nbdl::get(" + StoreExpr + ")";
+    } else if (auto MemberName =
+                   Op.getKey().getDefiningOp<nbdl_spec::MemberNameOp>()) {
+      Expr = (llvm::Twine(StoreExpr) + "." + MemberName.getName()).str();
+    } else {
+      llvm::StringRef KeyTypeStr = getCppTypename(Op.getKey());
+      if (KeyTypeStr.empty())
+        return Rewriter.notifyMatchFailure(Op, "key is not a single C++ alt");
+      Expr = ("::nbdl::get(" + llvm::Twine(StoreExpr) +
+              ", ::nbdl::detail::declval<" + KeyTypeStr + ">())").str();
+    }
+
+    std::string Typename;
+    schir::SourceLocation Loc(mlir::OpaqueLoc
+        ::getUnderlyingLocationOrNull<
+          schir::SourceLocationEncoding*>(Op.getLoc()));
+    auto [SCResult, ErrorMsg] = WithSchirClang(
+      [&](schir::SchirClang SchirClang) {
+        Typename = SchirClang.ExprType(Loc, Expr);
+      });
+    if (llvm::failed(SCResult)) {
+      Op.emitError("clang expr type introspection failed");
+      return llvm::failure();
+    } else if (Typename.empty()) {
+      Op.emitError("clang expr type yielded empty string");
+      return llvm::failure();
+    }
+
+    mlir::MLIRContext* Ctx = Op.getContext();
+    auto NewStoreT = nbdl_spec::StoreType::get(Ctx,
+        mlir::TypeAttr::get(nbdl_spec::CppType::get(Ctx, Typename)));
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
+    return llvm::success();
+  }
+};
+
+// Infer the type of the block argument of the last overload of a match
+// when it is the only unresolved overload (ie the catch all overload.)
+struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
+  using Base::Base;
+
+  // Each probe requires a unique template name.
+  static inline unsigned ProbeId = 0;
+
+  // Get the C++ typenames of every alternative of a store
+  // returning false if any are not C++ types.
+  static bool getCppAlts(mlir::Value V,
+                         llvm::SmallVectorImpl<llvm::StringRef>& Results) {
+    auto ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
+    if (!ST || ST.getAlts().empty())
+      return false;
+    for (mlir::TypeAttr TA : ST.getAlts()) {
+      auto CT = dyn_cast<nbdl_spec::CppType>(TA.getValue());
+      if (!CT)
+        return false;
+      Results.push_back(CT.getCppTypename());
+    }
+    return true;
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
+    mlir::MutableArrayRef<mlir::Region> Overloads = Op.getOverloads();
+    if (Overloads.empty())
+      return Rewriter.notifyMatchFailure(Op, "match has no overloads");
+    mlir::Region& Overload = Overloads.back();
+    if (Overload.empty() || Overload.getNumArguments() != 1)
+      return Rewriter.notifyMatchFailure(Op, "expecting a unary overload");
+    mlir::BlockArgument Arg = Overload.getArgument(0);
+    if (!needsResolve(Arg))
+      return Rewriter.notifyMatchFailure(Op, "type already resolved");
+
+    // The alternatives handled by the previous overloads
+    // which must all be resolved C++ types.
+    llvm::SmallVector<llvm::StringRef, 4> HandledAlts;
+    for (mlir::Region& Prev : Overloads.drop_back()) {
+      if (Prev.empty() || Prev.getNumArguments() != 1 ||
+          !getCppAlts(Prev.getArgument(0), HandledAlts))
+        return Rewriter.notifyMatchFailure(Op,
+            "previous overloads are not resolved C++ types");
+    }
+
+    llvm::SmallVector<llvm::StringRef, 4> StoreAlts;
+    if (!getCppAlts(Op.getStore(), StoreAlts))
+      return Rewriter.notifyMatchFailure(Op, "store alts not resolved");
+    // An empty key string denotes the unit key.
+    llvm::SmallVector<llvm::StringRef, 4> KeyAlts;
+    if (Op.hasUnitKey())
+      KeyAlts.push_back({});
+    else if (!getCppAlts(Op.getKey(), KeyAlts))
+      return Rewriter.notifyMatchFailure(Op, "key alts not resolved");
+
+    schir::SourceLocation Loc(mlir::OpaqueLoc
+        ::getUnderlyingLocationOrNull<
+          schir::SourceLocationEncoding*>(Op.getLoc()));
+    llvm::SmallVector<std::string, 4> Alts;
+    auto [SCResult, ErrorMsg] = WithSchirClang(
+      [&](schir::SchirClang SchirClang) {
+        for (llvm::StringRef StoreAlt : StoreAlts) {
+          for (llvm::StringRef KeyAlt : KeyAlts) {
+            std::string ProbeName = ("::nbdl::detail::probe<" +
+                                     llvm::Twine(++ProbeId) +
+                                     ">::apply").str();
+            std::string Expr;
+            llvm::raw_string_ostream OS(Expr);
+            OS << "::nbdl::match(::nbdl::detail::declval<" << StoreAlt
+               << ">(), ";
+            if (!KeyAlt.empty())
+              OS << "::nbdl::detail::declval<" << KeyAlt << ">(), ";
+            OS << "[](auto&& ... args) -> void { (void)" << ProbeName
+               << "<std::remove_cvref_t<decltype(args)>...>(); })";
+            llvm::SmallVector<std::vector<std::string>, 4> Results;
+            SchirClang.TemplateProbe(Results, Loc, ProbeName, Expr);
+            if (SchirClang.HasError())
+              return;
+            for (std::vector<std::string>& Result : Results)
+              for (std::string& Alt : Result)
+                if (!llvm::is_contained(Alts, Alt) &&
+                    !llvm::is_contained(HandledAlts, Alt))
+                  Alts.push_back(std::move(Alt));
+          }
+        }
+      });
+    if (llvm::failed(SCResult)) {
+      Op.emitError("clang match probe failed: " + ErrorMsg);
+      return llvm::failure();
+    }
+    // Leave an unreachable overload unresolved.
+    if (Alts.empty())
+      return Rewriter.notifyMatchFailure(Op, "no alternatives remain");
+
+    mlir::MLIRContext* Ctx = Op.getContext();
+    llvm::SmallVector<mlir::TypeAttr, 4> AltAttrs;
+    for (llvm::StringRef Alt : Alts)
+      AltAttrs.push_back(mlir::TypeAttr::get(
+            nbdl_spec::CppType::get(Ctx, Alt)));
+    auto NewStoreT = nbdl_spec::StoreType::get(Ctx, AltAttrs);
+    Rewriter.modifyOpInPlace(Op, [&] { Arg.setType(NewStoreT); });
+    return llvm::success();
+  }
+};
+
+// Infer the C++ type of the result of a constant expression.
+struct InferConstexprType : OpRewriteSchirClang<nbdl_spec::ConstexprOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::ConstexprOp Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    if (!isa<nbdl_spec::UnknownType>(Op.getType()))
+      return Rewriter.notifyMatchFailure(Op, "type already resolved");
+
+    std::string Typename;
+    schir::SourceLocation Loc(mlir::OpaqueLoc
+        ::getUnderlyingLocationOrNull<
+          schir::SourceLocationEncoding*>(Op.getLoc()));
+    auto [SCResult, ErrorMsg] = WithSchirClang(
+      [&](schir::SchirClang SchirClang) {
+        Typename = SchirClang.ExprType(Loc, Op.getExpr());
+      });
+    if (llvm::failed(SCResult)) {
+      Op.emitError("clang expr type introspection failed");
+      return llvm::failure();
+    } else if (Typename.empty()) {
+      Op.emitError("clang expr type yielded empty string");
+      return llvm::failure();
+    }
+
+    auto NewT = nbdl_spec::CppType::get(Op.getContext(), Typename);
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewT); });
+    return llvm::success();
+  }
+};
+
 // Inline match that simplifies to the identity operation.
 struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
   using Base::Base;
@@ -661,6 +853,42 @@ struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
   }
 };
 
+// Replace every !nbdl.cpp_alias (including nested types and attributes)
+// with the !nbdl.cpp type of its canonical typename. The flatten pass
+// does this before the patterns are applied so they may compare C++ types.
+llvm::LogicalResult canonicalizeCppAliases(mlir::Operation* Root,
+                                           SchirClangMutex& SCM) {
+  // The operation being updated for diagnostics.
+  mlir::Operation* CurOp = nullptr;
+  bool HasError = false;
+  mlir::AttrTypeReplacer Replacer;
+  Replacer.addReplacement(
+    [&](nbdl_spec::CppAliasType T) -> std::optional<mlir::Type> {
+      schir::SourceLocation Loc(mlir::OpaqueLoc
+          ::getUnderlyingLocationOrNull<
+            schir::SourceLocationEncoding*>(CurOp->getLoc()));
+      auto& [Mutex, Impl] = SCM;
+      std::lock_guard LG(Mutex);
+      schir::SchirClang SchirClang(Impl);
+      std::string Canonical = SchirClang.ParseType(Loc, T.getCppTypename());
+      if (SchirClang.HasError() || Canonical.empty()) {
+        CurOp->emitError("clang type parsing failed for C++ typename: ")
+          << T.getCppTypename();
+        HasError = true;
+        return std::nullopt;
+      }
+      return nbdl_spec::CppType::get(T.getContext(), Canonical);
+    });
+
+  Root->walk([&](mlir::Operation* Op) {
+    CurOp = Op;
+    Replacer.replaceElementsIn(Op, /*replaceAttrs=*/true,
+                               /*replaceLocs=*/false,
+                               /*replaceTypes=*/true);
+  });
+  return llvm::failure(HasError);
+}
+
 class FlattenPass : public nbdl_spec::impl::FlattenPassBase<FlattenPass> {
   using Base = nbdl_spec::impl::FlattenPassBase<FlattenPass>;
   mlir::FrozenRewritePatternSet Patterns;
@@ -680,6 +908,9 @@ public:
     PS.add<InferMatchEachArgType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchIfThenArgType>(Ctx);
     PS.add<InferLiftStoreType>(Ctx);
+    PS.add<InferGetType>(SchirClangOpt.get(), Ctx);
+    PS.add<InferConstexprType>(SchirClangOpt.get(), Ctx);
+    PS.add<InferMatchOverloadType>(SchirClangOpt.get(), Ctx);
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
@@ -695,10 +926,14 @@ public:
   }
 
   llvm::LogicalResult run(mlir::Operation* Op) {
+    if (SchirClangOpt &&
+        llvm::failed(canonicalizeCppAliases(Op, *SchirClangOpt)))
+      return llvm::failure();
     if (llvm::failed(mlir::applyPatternsGreedily(Op, Patterns)))
       return llvm::failure();
     return llvm::success();
   }
+
 };
 
 } // namespace
@@ -713,6 +948,12 @@ namespace nbdl_spec {
 void registerPasses() {
   registerLowerPass();
   registerLowerToLLVMPass();
+}
+
+llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,
+                            schir::SchirClangImpl* SchirClangImpl) {
+  SchirClangMutex SCM(SchirClangImpl);
+  return canonicalizeCppAliases(Op, SCM);
 }
 
 llvm::LogicalResult runFlattenPass(mlir::Operation* Op,

@@ -94,14 +94,14 @@ namespace nbdl {
       using has = decltype(hana::is_just(type_id_from_type<T>()));
 
       template <typename... Fns>
-      void match(Fns&&... fns) const
+      constexpr void match(Fns&&... fns) const
       {
         std::visit(hana::overload_linearly(std::forward<Fns>(fns)...),
                    value_);
       }
 
       template <typename... Fns>
-      void match(Fns&&... fns)
+      constexpr void match(Fns&&... fns)
       {
         std::visit(hana::overload_linearly(std::forward<Fns>(fns)...),
                    value_);

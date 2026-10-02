@@ -89,6 +89,8 @@ namespace foo {
            'foo::some_event_handler
            Fn))
 
+  (finalize-module)
+
 }
 }  // namespace foo
 }  // namespace

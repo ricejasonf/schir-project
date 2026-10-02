@@ -20,10 +20,11 @@ struct bar { };
         (nbdl spec)
         (nbdl spec geomalg))
 
-; // Check type->cpp maps MlirStr to CppStr (canonicalized).
-(define (check-type->cpp MlirStr CppStr)
+; // Check type->cpp maps MlirStr to a C++ type.
+; // (The canonicalized C++ type is checked by FileCheck.)
+(define (check-type->cpp MlirStr)
   (define Result (type->cpp (type MlirStr)))
-  (if (not (equal? Result (!cpp CppStr)))
+  (if (not Result)
     (error "type->cpp mismatch" MlirStr Result))
   (write Result)
   (newline))
@@ -37,7 +38,7 @@ struct bar { };
                            CppStr ">()"))))
   (if (not (equal? Result (type MlirStr)))
     (error "nbdl::get_mlir_type mismatch" CppStr Result))
-  (check-type->cpp MlirStr CppStr))
+  (check-type->cpp MlirStr))
 
 (define (check-unsupported MlirStr)
   (define Result (type->cpp (type MlirStr)))
@@ -46,7 +47,7 @@ struct bar { };
 
 ; // Nbdl
 ; // CHECK: !nbdl.cpp<"foo::bar<int>">
-(check-type->cpp "!nbdl.cpp<\"::foo::bar<int>\">" "::foo::bar<int>")
+(check-type->cpp "!nbdl.cpp<\"::foo::bar<int>\">")
 ; // CHECK-NEXT: !nbdl.cpp<"std::basic_string_view<char, std::char_traits<char> >">
 (check-bijective "!nbdl.string" "::std::string_view")
 

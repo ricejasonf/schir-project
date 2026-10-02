@@ -15,40 +15,42 @@
     (load-plugin "libNbdl.so")
     (define translate-cpp
       (load-builtin "nbdl_spec_translate_cpp"))
+    (define declare-cpp
+      (load-builtin "nbdl_spec_declare_cpp"))
+    (define declare-extern-c
+      (load-builtin "nbdl_spec_declare_extern_c"))
     (define close-previous-scope
       (load-builtin "nbdl_spec_close_previous_scope"))
     (define register-nbdl-dialect
       (load-builtin "nbdl_spec_register_nbdl_dialect"))
-    (define get-store-alts
-      (load-builtin "nbdl_spec_get_store_alts"))
     (define store-value?
       (load-builtin "nbdl_spec_is_store"))
     (define nbdl_spec_create_store_type
       (load-builtin "nbdl_spec_create_store_type"))
-    (define get-member-name
-      (load-builtin "nbdl_get_member_name"))
     (define nbdl_run_flatten_pass
       (load-builtin "nbdl_run_flatten_pass"))
+    (define nbdl_canonicalize_cpp_types
+      (load-builtin "nbdl_canonicalize_cpp_types"))
+    (define define-store-op?
+      (load-builtin "nbdl_spec_is_define_store"))
     (define nbdl_spec_type_to_cpp_type
       (load-builtin "nbdl_spec_type_to_cpp_type"))
-    (define nbdl_spec_cpp_type
-      (load-builtin "nbdl_spec_cpp_type"))
+    (define nbdl_spec_cpp_alias_type
+      (load-builtin "nbdl_spec_cpp_alias_type"))
 
-    ;; Create a !nbdl.cpp type with a canonical C++ typename.
-    ;; Provide the tag 'canonical if the typename is already
-    ;; canonical.
-    (define !cpp
-      (case-lambda
-        ((Typename)
-         (nbdl_spec_cpp_type Typename current-schir-clang))
-        ((Typename Tag)
-         (nbdl_spec_cpp_type Typename current-schir-clang Tag))))
+    ;; Create a !nbdl.cpp_alias type with a C++ typename as written.
+    ;; The flatten pass replaces it with a !nbdl.cpp type
+    ;; with the canonical typename.
+    (define (!cpp Typename)
+      (nbdl_spec_cpp_alias_type Typename))
 
-    ;; Lift a string-like to a C++ type or return the mlir type as is.
+    ;; Lift a string-like or named-store to a C++ type
+    ;; or return the mlir type as is.
     (define (%cpp-or-type T)
-      (if (or (string? T) (symbol? T))
-        (!cpp T)
-        T))
+      (cond
+        ((or (string? T) (symbol? T)) (!cpp T))
+        ((named-store? T) (named-store->cpp T))
+        (else T)))
 
     ;; Create a !nbdl.store type where string-likes are lifted to C++ types.
     (define (!nbdl.store . Alts)
@@ -66,7 +68,7 @@
 
     ;; Create the symbol name for a top level op.
     (define (top-level-name Name)
-      (if (memq Name export-cpp-names)
+      (if (assq Name export-cpp-names)
         (namespace-prefix Name)
         Name))
 
@@ -79,33 +81,94 @@
       (with-module-builder llvm-module
                            (lambda () (copy-op FuncOp))))
 
-    ;; Finish the module which lowers backend modules.
+    ;; Get the Op of an element (Name Op) in Exports or #f.
+    (define (%export-op Exports Name)
+      (define Entry (assq Name Exports))
+      (and Entry (cadr Entry)))
+
+    ;; Set the Op of the element (Name Op) in Exports moving it to
+    ;; the end so defined elements are in order of definition.
+    (define (%set-export-op Exports Name Op)
+      (let loop ((Rest Exports)
+                 (Result '()))
+        (cond
+          ((null? Rest)
+           (reverse (cons (list Name Op) Result)))
+          ((eq? (car (car Rest)) Name)
+           (loop (cdr Rest) Result))
+          (else
+           (loop (cdr Rest) (cons (car Rest) Result))))))
+
+    ;; Call Fn with each defined Op in Exports (in order of definition)
+    ;; that satisfies Pred.
+    (define (%finalize-exports Exports Pred Fn)
+      (let loop ((Rest Exports))
+        (unless (null? Rest)
+          (let ((Op (cadr (car Rest))))
+            (when (and Op (Pred Op))
+              (Fn Op)))
+          (loop (cdr Rest)))))
+
+    ;; Functions exported via export-c that are lowered
+    ;; to LLVM by finalize-module (ie by define-fn.)
+    (define %lower-to-llvm-ops '())
+
+    ;; Return a procedure that emits C++ for an Op via Translate.
+    (define (%emit-cpp Translate)
+      (lambda (Op)
+        (with-module-builder
+          main-module
+          (lambda ()
+            (Translate Op lexer-writer)
+            (flush-tokens)))))
+
+    (define (%function-op? Op)
+      (not (define-store-op? Op)))
+
+    ;; Finish the module by writing c++ translations, forward declarations,
+    ;; and lowering and injecting backend modules.
     (define (finalize-module)
+      (%finalize-exports export-cpp-names define-store-op?
+                         (%emit-cpp translate-cpp))
+      ;; Declarations are written with canonical C++ types
+      ;; to match the definitions.
+      (nbdl_canonicalize_cpp_types main-module current-schir-clang)
+      (%finalize-exports export-cpp-names %function-op?
+                         (%emit-cpp declare-cpp))
+      (%finalize-exports export-c-names %function-op?
+                         (%emit-cpp declare-extern-c))
+      ;; Infer types and simplify operations.
+      (run-pass-nbdl-flatten)
+      (%finalize-exports export-cpp-names %function-op?
+                         (%emit-cpp translate-cpp))
+      (%finalize-exports export-c-names
+                         (lambda (Op) (memq Op %lower-to-llvm-ops))
+                         lower-to-llvm)
       (when llvm-module
         (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm")
-        (inject-module llvm-module)))
+        (inject-module llvm-module)
+        (set! llvm-module #f)))
 
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
+    ;; Initial passes and C++ translation are deferred to finalize-module.
     (define (top-level-op Name Thunk)
-      (when (and (memq Name export-cpp-names)
-                 (memq Name export-c-names))
+      (when (and (assq Name export-cpp-names)
+                 (assq Name export-c-names))
         (error "name cannot be exported to both C++ and C: {}" Name))
       (with-module-builder
         main-module
         (lambda ()
           (define TopLevelOp (Thunk (top-level-name Name)))
-          (define Loc (source-loc TopLevelOp))
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
-          ;; Infer types and simplify operations.
-          (nbdl_run_flatten_pass TopLevelOp
-                                 current-schir-clang)
-          ;; Emit c++ when exported.
-          (when (memq Name export-cpp-names)
-            (begin
-              (translate-cpp TopLevelOp lexer-writer)
-              (flush-tokens)))
+          (cond
+            ((assq Name export-cpp-names)
+             (set! export-cpp-names
+               (%set-export-op export-cpp-names Name TopLevelOp)))
+            ((assq Name export-c-names)
+             (set! export-c-names
+               (%set-export-op export-c-names Name TopLevelOp))))
           TopLevelOp)))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
@@ -118,47 +181,6 @@
     ;; Not used types
     ; (define !nbdl.tag (type "!nbdl.tag")) ; Not used.
     ; (define !nbdl.empty (type "!nbdl.empty"))
-
-    (define %probe-id 0)
-    (define (make-probe-name)
-      (set! %probe-id (+ 1 %probe-id))
-      (string-append
-        "nbdl::detail::probe<"
-        (number->string %probe-id)
-        ">::apply"))
-
-    ; Return a list of c++ types representing the
-    ; alternatives of a store when calling match
-    ; with a key. Use '() for the "unit" key.
-    (define (reflect-match Loc StoreTypename KeyTypename)
-      ;(define StoreTypename "int")
-      (define ProbeName (make-probe-name))
-      (define KeyArgClause
-        (if (null? KeyTypename)
-          ""
-          (string-append "nbdl::detail::declval<" KeyTypename ">(), ")))
-      (define FullExpr
-        (string-append
-          "nbdl::match(nbdl::detail::declval<" StoreTypename ">(), "
-          KeyArgClause
-          "[](auto&& ... args) -> void { (void)"
-          ProbeName "<std::remove_cvref_t<decltype(args)>...>(); })"))
-      (define Result
-        (template-probe
-          Loc
-          ProbeName
-          FullExpr))
-      ; Unnest the alternatives.
-      (apply append Result)
-      )
-
-    ;; Return single alternative of a store value
-    ;; or false if there is not exacly one.
-    (define (get-single-alternative Value)
-      (define Alts (get-store-alts Value))
-      (if (and (pair? Alts) (eq? (cdr Alts) '()))
-        (car Alts)
-        #f))
 
     (define %nbdl-expr '%nbdl-expr)
     ;; Create a thunk that should receive a location and callback
@@ -291,10 +313,7 @@
           (attributes: ("value" Arg))
           (result-types: T))))
 
-    ;; The result is not a store.
     (define (build-constexpr Loc ExprStr)
-      (define T
-        (!cpp (expr->type ExprStr) 'canonical))
       (when (member-name-literal? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
@@ -302,7 +321,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("expr" (string-attr ExprStr)))
-          (result-types: T))))
+          (result-types: !nbdl.unknown))))
 
     ; Build a key for store-compose.
     (define (build-store-key Loc Key)
@@ -335,13 +354,17 @@
         ))
 
     (define (build-store Loc Typename InitArgs)
+      (define Name
+        (if (named-store? Typename)
+          (named-store-sym-name Typename)
+          Typename))
       (result
         (create-op
           "nbdl.store"
           (loc: Loc)
           (operands: InitArgs)
           ; TODO Mangle Typename
-          (attributes: ("name" (flat-symbolref-attr Typename)))
+          (attributes: ("name" (flat-symbolref-attr Name)))
           (result-types: (!nbdl.store Typename))
           )))
 
@@ -457,28 +480,28 @@
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
-         (begin
-           (define Name
-             (let ((SymName #f))
-               (top-level-op
-                 'Name
-                 (lambda (SymName_)
-                   (define Loc (syntax-source-loc Name))
-                   (set! SymName SymName_)
-                   (create-op
-                     "nbdl.define_store"
-                     (loc: Loc)
-                     (operands:)
-                     (attributes: ("sym_name" (string-attr SymName)))
-                     (result-types:)
-                     (region: "body" ((InitParams : (!nbdl.store)) ...)
-                              (define-store-aux
-                                Loc
-                                (lambda (ProcessBody)
-                                  ;; Ensure nonempty lambda.
-                                  (ProcessBody StoreFunctionalN) ... #t)
-                                )))))
-               SymName))))))
+         (define Name
+           (let ((SymName #f))
+            (let ((DefineStoreOp
+                   (top-level-op
+                     'Name
+                     (lambda (SymName_)
+                       (define Loc (syntax-source-loc Name))
+                       (set! SymName SymName_)
+                       (create-op
+                         "nbdl.define_store"
+                         (loc: Loc)
+                         (operands:)
+                         (attributes: ("sym_name" (string-attr SymName)))
+                         (result-types:)
+                         (region: "body" ((InitParams : (!nbdl.store)) ...)
+                                  (define-store-aux
+                                    Loc
+                                    (lambda (ProcessBody)
+                                      ;; Ensure nonempty lambda.
+                                      (ProcessBody StoreFunctionalN) ... #t)
+                                    )))))))
+             (make-named-store SymName DefineStoreOp)))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -493,6 +516,24 @@
            (store-compose KeyN (store TypenameN (init-args: InitArgsNN ...)))
            ...
            ))))
+
+    (define %named-store '%named-store)
+
+    ;; Denote the name of a store defined as top level operation
+    ;; in the module.
+    (define (make-named-store SymbolName DefineStoreOp)
+      (list %named-store SymbolName DefineStoreOp))
+
+    (define (named-store? Value)
+      (and (pair? Value)
+           (eq? %named-store (car Value))))
+
+    (define (named-store-sym-name NamedStore)
+      (cadr NamedStore))
+
+    ;; Convert a named-store to a c++ type.
+    (define (named-store->cpp NamedStore)
+      (!cpp (named-store-sym-name NamedStore)))
 
     (define %named-fn '%named-fn)
 
@@ -587,58 +628,18 @@
             (else (error "expecting proper list"))))
         (%match-path-node CurStore Loc PathNode NextFn)))
 
-    ;; Detect if match is the identity operation for a store
-    ;; so we can not generate a match operation for it.
-    ;; It is a single known type with no match_impl.
-    (define (%match-is-identity? Loc Store)
-      (define StoreAlts (get-store-alts Store))
-      (cond
-        ((and (pair? StoreAlts) (null? (cdr StoreAlts)))
-          (let ()
-            (define StoreT (car StoreAlts))
-            (define Expr
-              (string-append "nbdl::Store<" StoreT ">"))
-            (define Storex
-              (expr-eval Loc Expr))
-            (not Storex)))
-        (else #f)))
-
-    ;; Match a store with unit-key unless
-    ;; it would be the identity operation.
+    ;; Match a store with unit-key.
     (define (%match-unit Loc Store Fn)
-      (if (%match-is-identity? Loc Store)
-        (Fn Store)
-        (%match-key Loc Store '() Fn)))
+      (%match-key Loc Store '() Fn))
 
     ;; We have mlir.values for both Store and Key
     (define (%match-key Loc Store Key Fn)
-      ; "Alt" here means a c++ type written as symbol.
-      (define StoreAlts (get-store-alts Store))
-      (define KeyAlts (get-store-alts Key))
-      (define MatchedAlts
-        (cond
-          ((and StoreAlts KeyAlts)
-           (let ()
-             (define (ReflectAlts StoreAlt)
-               (lambda (KeyAlt)
-                 (reflect-match Loc StoreAlt KeyAlt)))
-             (apply append (map apply (map ReflectAlts StoreAlts) KeyAlts))))
-          ((and StoreAlts (null? Key))
-           (let ()
-             (define (ReflectAlts StoreAlt)
-                 (reflect-match Loc StoreAlt '()))
-             (apply append (map ReflectAlts StoreAlts))))
-           (else '())))
-      (define StoreT
-        (apply !nbdl.store
-               (map (lambda (Alt) (!cpp Alt 'canonical))
-                    MatchedAlts)))
       (create-op "nbdl.match"
         (loc: Loc)
         (operands: Store Key)
         (attributes:)
         (result-types:)
-        (region: "overloads" ((ResolvedStore : StoreT))
+        (region: "overloads" ((ResolvedStore : (!nbdl.store)))
           (Fn ResolvedStore))))
 
     (define (member-name-literal? PathNode)
@@ -678,40 +679,12 @@
           )))
 
     (define (build-node-get Store Loc KeyVal)
-      ;; Infer type for single alternatives only.
-      (define StoreT (get-single-alternative Store))
-      (define KeyT (get-single-alternative KeyVal))
-      (define KeyValMemberName
-        (if (value? !nbdl.member_name KeyVal)
-          (get-member-name KeyVal)
-          #f))
-      ;; Try to get the alternative from the C++ expr type.
-      (define Expr
-        (cond
-          ((and StoreT KeyValMemberName)
-           (string-append
-             "nbdl::detail::declval<" StoreT ">()."
-             KeyValMemberName))
-          ((and StoreT KeyT)
-            (string-append
-              "nbdl::get(nbdl::detail::declval<" StoreT ">,"
-              "          nbdl::detail::declval<" KeyVal ">"))
-
-          (else #f)))
-      (define ExprT
-        (and (string? Expr)
-             (expr->type Expr)))
-      (define ResultType
-        (if ExprT
-          (!nbdl.store (!cpp ExprT 'canonical))
-          (!nbdl.store)))
-      (define Op
+      (result
         (create-op "nbdl.get"
           (loc: Loc)
           (operands: Store KeyVal)
           (attributes:)
-          (result-types: ResultType)))
-      (result Op))
+          (result-types: (!nbdl.store)))))
 
     (define (build-resolve-params Loc FnVal ParamVals)
       (unless (or (pair? ParamVals)
@@ -1118,8 +1091,10 @@
                          (region: "body" ((Arg : (%cpp-or-type ArgT))
                                           ...)
                                   Body1 BodyN ...))))))
-             (when (memq 'Name export-c-names)
-               (lower-to-llvm FuncOp))
+             ;; Process exports if any.
+             (when (assq 'Name export-c-names)
+               (set! %lower-to-llvm-ops
+                 (cons FuncOp %lower-to-llvm-ops)))
              (make-named-fn SymName FuncOp)))))))
 
     (define (build-lift-store Loc Arg)
@@ -1195,6 +1170,7 @@
          (match Expr
            (else => (lambda (V) (match-params (Rest ...) Body ...)))))))
 
+    ;; Write operations translated c++ to stdout.
     (define (write-cpp Name)
       (define Op
         (cond
@@ -1203,9 +1179,13 @@
               (define-values (_ _ FuncOp)
                 (apply values Name))
               FuncOp))
+          ((named-store? Name)
+            (let ()
+              (define-values (_ _ DefineStoreOp)
+                (apply values Name))
+              DefineStoreOp))
          (else (module-lookup main-module Name))))
       (translate-cpp Op)
-      (flush-tokens)
       (newline))
 
     ;; Map a mlir.type to a !nbdl.cpp type with a canonical
@@ -1226,6 +1206,9 @@
       (write main-module)
       (newline))
 
+    ;; Exported names as elements (Name Op) where Op is #f
+    ;; until it is defined. Names exported via export-c are
+    ;; also declared in C++ with C linkage.
     (define export-cpp-names '())
     (define export-c-names '())
 
@@ -1234,16 +1217,16 @@
         ((export-cpp Name ...)
          (set! export-cpp-names
            (append
-             (list 'Name ...)
-             export-cpp-names)))))
+             export-cpp-names
+             (list (list 'Name #f) ...))))))
 
     (define-syntax export-c
       (syntax-rules ()
         ((export-c Name ...)
          (set! export-c-names
            (append
-             (list 'Name ...)
-             export-c-names)))))
+             export-c-names
+             (list (list 'Name #f) ...))))))
 
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass

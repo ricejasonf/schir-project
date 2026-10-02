@@ -16,6 +16,8 @@
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/LLVMIR/LLVMDialect.h>
+#include <mlir/Dialect/LLVMIR/LLVMTypes.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <memory>
 #include <optional>
@@ -46,6 +48,19 @@ struct NbdlMappableToCpp : schir::MappableToCpp {
       OS << "::std::string_view";
     else
       return false;
+    return true;
+  }
+};
+
+// Map LLVM types to C++ types.
+struct LLVMMappableToCpp : schir::MappableToCpp {
+  using MappableToCpp::MappableToCpp;
+
+  bool getCppTypename(mlir::Type T,
+                      llvm::SmallVectorImpl<char>& Result) const override {
+    if (!isa<mlir::LLVM::LLVMPointerType>(T))
+      return false;
+    llvm::raw_svector_ostream(Result) << "void*";
     return true;
   }
 };
@@ -108,14 +123,11 @@ struct BuiltinMappableToCpp : schir::MappableToCpp {
   }
 };
 
-// Create a !nbdl.cpp type with the typename canonicalized
-// by SchirClang or as is if Impl is nullptr.
+// Create a !nbdl.cpp type with the typename canonicalized by SchirClang.
 std::optional<nbdl_spec::CppType> createCppType(schir::Context& C,
                                                 schir::SchirClangImpl* Impl,
                                                 llvm::StringRef Typename) {
   mlir::MLIRContext* Ctx = C.MLIRContext.get();
-  if (!Impl)
-    return nbdl_spec::CppType::get(Ctx, Typename);
   schir::SchirClang SchirClang(Impl);
   std::string Canonical = SchirClang.ParseType(C.getLoc(), Typename);
   if (SchirClang.HasError()) {
@@ -124,15 +136,11 @@ std::optional<nbdl_spec::CppType> createCppType(schir::Context& C,
   }
   return nbdl_spec::CppType::get(Ctx, Canonical);
 }
-} // namespace
 
-extern "C" {
-// Translate a nbdl dialect operation to C++.
-// (translate-cpp op port)
-// The parameter `op` may be an mlir::Operation* or a StringLike
-// which will be used to look up the name in the module.
-// Currently the "port" has to be a tagged llvm::raw_ostream.
-void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
+// (translate-cpp op [port])
+// Currently the "port" has to be a tagged llvm::raw_ostream
+// or a schir::LexerWriterFnRef.
+void translateCpp(Context& C, ValueRefs Args, nbdl_spec::TranslateMode Mode) {
   if (Args.size() != 2 && Args.size() != 1)
     return C.RaiseError("invalid arity");
   auto* Op = dyn_cast<mlir::Operation>(Args[0]);
@@ -150,7 +158,7 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
   // Do not capture the emphemeral Any object.
   if (Args.size() == 2) {
     if (auto LWF = schir::any_cast<schir::LexerWriterFnRef>(Args[1])) {
-      Result = nbdl_spec::translate_cpp(LWF, Op);
+      Result = nbdl_spec::translate_cpp(LWF, Op, Mode);
     } else if (auto* Raw = schir::any_cast<::llvm::raw_ostream>(&Args[1])) {
       OS = Raw;
     } else {
@@ -164,7 +172,7 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
     auto LexerWriter = [&OS](schir::SourceLocation, llvm::StringRef Buffer) {
       *OS << Buffer;
     };
-    Result = nbdl_spec::translate_cpp(LexerWriter, Op);
+    Result = nbdl_spec::translate_cpp(LexerWriter, Op, Mode);
   }
 
   auto& [ErrMsg, ErrLoc, Irritant] = Result;
@@ -175,6 +183,26 @@ void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
     return C.Raise(Err);
   }
   C.Cont();
+}
+} // namespace
+
+extern "C" {
+// Translate a nbdl dialect operation to C++.
+// (translate-cpp op [port])
+void nbdl_spec_translate_cpp(Context& C, ValueRefs Args) {
+  translateCpp(C, Args, nbdl_spec::TranslateMode::Definition);
+}
+
+// Declare a function (FuncOp) in C++ so it may be referenced by name.
+// (declare-cpp op [port])
+void nbdl_spec_declare_cpp(Context& C, ValueRefs Args) {
+  translateCpp(C, Args, nbdl_spec::TranslateMode::Declaration);
+}
+
+// Declare a function (FuncOp) in C++ with C language linkage.
+// (declare-extern-c op [port])
+void nbdl_spec_declare_extern_c(Context& C, ValueRefs Args) {
+  translateCpp(C, Args, nbdl_spec::TranslateMode::ExternCDeclaration);
 }
 
 // If the current block has a terminator, wrap the
@@ -222,6 +250,10 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
     +[](mlir::MLIRContext*, mlir::BuiltinDialect* D) {
       D->addInterfaces<BuiltinMappableToCpp>();
     });
+  C.DialectRegistry->addExtension(
+    +[](mlir::MLIRContext*, mlir::LLVM::LLVMDialect* D) {
+      D->addInterfaces<LLVMMappableToCpp>();
+    });
   nbdl_spec::registerPasses();
   C.Cont();
 }
@@ -249,31 +281,18 @@ void nbdl_spec_type_to_cpp_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(C.CreateAny<mlir::Type>(mlir::Type(*Result)));
 }
 
-// Create a !nbdl.cpp type from a string-like C++ typename.
-// Use an optional 'canonical tag to bypass canonicalizing
-// the type via Clang.
-// (cpp-type typename schir-clang ['canonical])
-void nbdl_spec_cpp_type(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 2 && Args.size() != 3)
+// Create a !nbdl.cpp_alias type from a string-like C++ typename.
+// Its typename is canonicalized to a !nbdl.cpp type by the flatten pass.
+// (cpp-alias-type typename)
+void nbdl_spec_cpp_alias_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
     return C.RaiseError("invalid arity");
   llvm::StringRef Typename = Args[0].getStringRef();
   if (Typename.empty())
     return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
-  auto* Impl = schir::any_cast<schir::SchirClangImpl*>(Args[1]);
-  if (!Impl)
-    return C.RaiseError("expecting SchirClang object");
-  if (Args.size() == 3) {
-    auto* Tag = dyn_cast<schir::Symbol>(Args[2]);
-    if (!Tag || !Tag->Equiv("canonical"))
-      return C.RaiseError("expecting tag 'canonical: {}", Args[2]);
-    // The typename is already canonical.
-    Impl = nullptr;
-  }
-
-  std::optional<nbdl_spec::CppType> Result = createCppType(C, Impl, Typename);
-  if (!Result)
-    return;
-  C.Cont(C.CreateAny<mlir::Type>(mlir::Type(*Result)));
+  mlir::Type Result = nbdl_spec::CppAliasType::get(C.MLIRContext.get(),
+                                                   Typename);
+  C.Cont(C.CreateAny<mlir::Type>(Result));
 }
 
 // Create a !nbdl.store<alts...> from an arbitrary set of mlir.types.
@@ -292,45 +311,6 @@ void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(Result);
 }
 
-// Get the !nbdl.store typenames as a list of symbols
-// or #f if the list is empty or mlir.value is not a !nbdl.store.
-// We also accept '() since it is often used as a placeholder for the
-// unit type.
-void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 1)
-    return C.RaiseError("invalid arity");
-  schir::Value Arg = Args.front();
-
-  if (isa<schir::Empty>(Arg))
-    return C.Cont(schir::Bool(false));
-
-  mlir::Value V = schir::any_cast<mlir::Value>(Arg);
-  if (!V)
-    return C.RaiseError("expecting mlir.value or '()", Arg);
-
-  nbdl_spec::StoreType ST = dyn_cast<nbdl_spec::StoreType>(V.getType());
-  if (!ST)
-    return C.Cont(schir::Bool(false));
-
-  llvm::SmallVector<schir::Value, 8> Results;
-  for (mlir::TypeAttr SA : ST.getAlts()) {
-    mlir::Type Type = SA.getValue();
-    if (auto CppType = dyn_cast<nbdl_spec::CppType>(Type)) {
-      // Map CppType back to Symbol.
-      // TODO Maybe we do not do this.
-      llvm::StringRef Name = CppType.getCppTypename();
-      Results.push_back(C.CreateSymbol(Name));
-    } else {
-      Results.push_back(C.CreateAny<mlir::Type>(Type));
-    }
-  }
-
-  if (Results.empty())
-    return C.Cont(schir::Bool(false));
-
-  C.Cont(C.CreateList(Results));
-}
-
 // Return true if the mlir.value is a !nbdl.store.
 void nbdl_spec_is_store(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
@@ -339,24 +319,36 @@ void nbdl_spec_is_store(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(schir::Bool(V && isa<nbdl_spec::StoreType>(V.getType())));
 }
 
-// Get the name of a mlir.value of type !nbdl.member_name by
-// visiting its defining operation (which we expect should exist).
-void nbdl_get_member_name(schir::Context& C, schir::ValueRefs Args) {
+// Return true if the mlir.operation is a nbdl.define_store.
+void nbdl_spec_is_define_store(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
-
-  mlir::Value V = schir::any_cast<mlir::Value>(Args.front());
-  if (!V || !isa<nbdl_spec::MemberNameType>(V.getType()))
-    return C.RaiseError("expecting mlir.value of type !nbdl.member_name: {}",
-                        Args.front());
-
-  auto Op = V.getDefiningOp<nbdl_spec::MemberNameOp>();
+  auto* Op = dyn_cast<mlir::Operation>(Args.front());
   if (!Op)
-    return C.RaiseError("mlir.value of type !nbdl.member_name"
-                        "should be defined by nbdl_spec::MemberNameOp");
+    return C.RaiseError("expecting mlir.operation: {}", Args.front());
+  C.Cont(schir::Bool(isa<nbdl_spec::DefineStoreOp>(Op)));
+}
 
-  llvm::StringRef Name = Op.getName();
-  return C.Cont(C.CreateSymbol(Name));
+// Replace each !nbdl.cpp_alias in an operation with the
+// !nbdl.cpp type of its canonical typename.
+// (canonicalize-cpp-types op schir-clang)
+void nbdl_canonicalize_cpp_types(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args[0]);
+  if (!Op)
+    return C.RaiseError("expecting mlir.operation");
+  auto* Impl = schir::any_cast<schir::SchirClangImpl*>(Args[1]);
+  if (!Impl)
+    return C.RaiseError("expecting SchirClang object");
+
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, C.getLoc(),
+    [&] { return nbdl_spec::canonicalizeCppTypes(Op, Impl); },
+    "nbdl canonicalize C++ types failed");
+  if (llvm::failed(Result))
+    return;
+  C.Cont();
 }
 
 void nbdl_run_flatten_pass(schir::Context& C, schir::ValueRefs Args) {

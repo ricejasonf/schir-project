@@ -19,6 +19,8 @@
   (match-if 'true
    (visit fn 42)))
 
+(finalize-module)
+
 } // schir_scheme
 
 int main() {

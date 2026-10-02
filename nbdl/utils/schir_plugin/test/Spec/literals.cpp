@@ -43,6 +43,8 @@
     ('float => fn)
     (else => (lambda (x) (visit fn 2)))))
 
+(finalize-module)
+
 } // schir_scheme
 
 int main() {

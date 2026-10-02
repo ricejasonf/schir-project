@@ -12,8 +12,17 @@
 
 namespace nbdl_spec {
 
+enum class TranslateMode {
+  Definition,
+  // Declare a function so it may be referenced by C++ name.
+  Declaration,
+  // Declare a function with C language linkage.
+  ExternCDeclaration,
+};
+
 std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
-translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op);
+translate_cpp(schir::LexerWriterFnRef FnRef, mlir::Operation* Op,
+              TranslateMode Mode = TranslateMode::Definition);
 
 // Provide customization point for writing subexpressions
 using WriteExprFn = llvm::function_ref<void(mlir::Value)>;

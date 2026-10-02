@@ -12,12 +12,6 @@
 #include <schir/SCHIR_ASSERT.h>
 #include <cstdint>
 
-// Defined via define-fn with export-c.
-extern "C" std::int32_t add_i32(std::int32_t, std::int32_t);
-extern "C" std::int32_t add_one_i32(std::int32_t);
-extern "C" void write_i32(std::int32_t, std::int32_t*);
-extern "C" void sum_to_ptr(std::int32_t, std::int32_t, std::int32_t*);
-
 namespace {
 namespace foo {
 
@@ -147,6 +141,7 @@ struct int_sink {
 ; // Visit a match-fn (which matches stuff within its body)
 ; // from a define-fn with no results.
 ; // The match-fn is inlined lifting the arguments to stores.
+; // The results of get are then inferred so the matches are inlined.
 ; // CHECK-LABEL: func.func @"::foo::store_sum"
 ; // CHECK-SAME: (%arg0: !nbdl.cpp<"foo::context">,
 ; // CHECK-SAME: %arg1: !nbdl.cpp<"foo::int_sink">) {
@@ -156,7 +151,8 @@ struct int_sink {
 ; // CHECK-NEXT: [[SINK:%[0-9]+]] = "nbdl.lift_store"(%arg1)
 ; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"foo::int_sink">>
 ; // CHECK: "nbdl.get"([[CTX]],
-; // CHECK: "nbdl.match"
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"int">>
+; // CHECK-NOT: "nbdl.match"
 ; // CHECK: "nbdl.visit"([[SINK]],
 ; // CHECK: "nbdl.return"() : () -> ()
 (define-fn store_sum ((Ctx : 'foo::context) (Sink : 'foo::int_sink)) -> ()
@@ -169,6 +165,7 @@ struct int_sink {
   (return))
 
 ; // Visit a match-fn with a func_name as the continuation.
+; // The parameter type is the store defined by define-context.
 ; // The func_name is lifted to a store when the match-fn is inlined,
 ; // but the callee is still visible through the store so the visit
 ; // of the continuation is lowered to a call.
@@ -180,7 +177,7 @@ struct int_sink {
 ; // CHECK-NEXT: func.call @"::foo::set_result"([[SUM]])
 ; // CHECK-SAME: (!nbdl.cpp<"int">) -> ()
 ; // CHECK: "nbdl.return"() : () -> ()
-(define-fn store_sum_func_name ((Ctx : 'foo::context)) -> ()
+(define-fn store_sum_func_name ((Ctx : context)) -> ()
   (visit sum_foo_bar Ctx set_result)
   (return))
 
@@ -230,14 +227,15 @@ int main() {
     SCHIR_ASSERT(value == 42);
   }
   SCHIR_ASSERT(foo::add_value(foo::my_struct{42}, 8) == 50);
-  SCHIR_ASSERT(add_i32(5, 6) == 11);
-  SCHIR_ASSERT(add_i32(-5, 3) == -2);
-  SCHIR_ASSERT(add_one_i32(41) == 42);
+  // Functions exported via export-c are declared extern "C".
+  SCHIR_ASSERT(foo::add_i32(5, 6) == 11);
+  SCHIR_ASSERT(foo::add_i32(-5, 3) == -2);
+  SCHIR_ASSERT(foo::add_one_i32(41) == 42);
   {
     std::int32_t dest = 0;
-    write_i32(7, &dest);
+    foo::write_i32(7, &dest);
     SCHIR_ASSERT(dest == 7);
-    sum_to_ptr(20, 22, &dest);
+    foo::sum_to_ptr(20, 22, &dest);
     SCHIR_ASSERT(dest == 42);
   }
 

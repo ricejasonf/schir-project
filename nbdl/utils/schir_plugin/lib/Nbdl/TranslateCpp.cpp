@@ -14,6 +14,7 @@
 #include <llvm/ADT/ScopedHashTable.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallString.h>
+#include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/Twine.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/Casting.h>
@@ -87,8 +88,8 @@ public:
     }
 
     ~LocRAII() {
-      NW.CurLoc = PrevLoc;
       NW.Flush();
+      NW.CurLoc = PrevLoc;
     }
   };
 
@@ -438,6 +439,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   public:
   using NbdlSpecWriter<FuncWriter>::NbdlSpecWriter;
 
+  // Write C++ forward declarations.
+  bool IsDeclaration = false;
+  // Write the declaration with C linkage.
+  bool IsExternC = false;
+
   void Visit(mlir::Operation* Op) {
     Flush();
     if (CheckError()) return;
@@ -477,6 +483,16 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       Visit(&Op);
   }
 
+  // A FuncOp with store type parameters is written as an invocable object.
+  // Otherwise it is a normal function.
+  //  // Forward declaration
+  //  struct name_fn {
+  //    constexpr auto operator()(auto&& arg_0) const -> R requires ...;
+  //  };
+  //  [[maybe_unused]] inline constexpr name_fn name{};
+  //  // Definition
+  //  constexpr auto name_fn::operator()(auto&& arg_0) const -> R
+  //  requires ... { ... }
   void Visit(FuncOp Op) {
     mlir::FunctionType FT = Op.getFunctionType();
     llvm::StringRef Name = Op.getSymName();
@@ -485,37 +501,56 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     if (FT.getNumResults() > 1)
       return SetError("multiple return types are not supported in C++", Op);
 
-    auto IsStoreT = [](mlir::Type T) { return isa<StoreType>(T); };
-    if (llvm::none_of(FT.getInputs(), IsStoreT) &&
-        llvm::none_of(FT.getResults(), IsStoreT))
-      return VisitNormalFunc(Op, Name);
-
-    // Write the lambda variable declaration.
-    OS << "[[maybe_unused]] inline constexpr auto " << Name << " = []";
-
     mlir::Region& Body = Op.getBody();
     if (Body.empty())
       return SetError("empty function body", Op);
 
+    auto IsStoreT = [](mlir::Type T) { return isa<StoreType>(T); };
+    if (IsExternC || (llvm::none_of(FT.getInputs(), IsStoreT) &&
+                      llvm::none_of(FT.getResults(), IsStoreT)))
+      return VisitNormalFunc(Op, Name);
+
+    std::string ClassName = (Name + "_fn").str();
     ValueMapScope Scope(ValueMap);
+    if (IsDeclaration) {
+      OS << "struct " << ClassName << " {\n";
+      WriteCallOperatorSignature(Op, "operator()");
+      OS << ";\n};\n";
+      OS << "[[maybe_unused]] inline constexpr " << ClassName << ' '
+         << Name << "{};";
+      return;
+    }
+
+    WriteCallOperatorSignature(Op, ClassName + "::operator()");
+    OS << " {\n";
+    VisitRegion(Body);
+    OS << "}";
+  }
+
+  // Write the signature of the member function template operator()
+  // where FuncName may be qualified for an out of line definition.
+  void WriteCallOperatorSignature(FuncOp Op, llvm::StringRef FuncName) {
+    mlir::FunctionType FT = Op.getFunctionType();
+    mlir::Region& Body = Op.getBody();
+
     // Write parameters.
-    OS << '(';
+    OS << "constexpr auto " << FuncName << '(';
     llvm::interleaveComma(Body.getArguments(), OS,
         [&](mlir::BlockArgument const& Arg) {
           OS << "auto&& " << SetLocalVarName(Arg, "arg_");
         });
-    OS << ')';
+    OS << ") const";
 
     // Write the return type.
     if (FT.getNumResults() == 0) {
-      OS << " -> void ";
+      OS << " -> void";
     } else if (needsResolveT(FT.getResult(0))) {
-      OS << " -> decltype(auto) ";
+      OS << " -> decltype(auto)";
     } else {
       llvm::SmallString<64> ResultTypename;
       if (!GetSingleAltCppTypename(FT.getResult(0), ResultTypename))
         return SetError("result type is not mappable to C++", Op);
-      OS << " -> " << ResultTypename << ' ';
+      OS << " -> " << ResultTypename;
     }
 
     // Constrain parameters with concrete types.
@@ -530,19 +565,15 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       PrintSameAsConstraint(Arg, ArgTypename);
       IsFirstConstraint = false;
     }
-
-    OS << "{\n";
-    VisitRegion(Body);
-    OS << "};";
   }
 
-  // Write a normal function declaration for a FuncOp
+  // Write a normal function for a FuncOp
   // whose types are all mappable to C++.
   void VisitNormalFunc(FuncOp Op, llvm::StringRef Name) {
+    if (IsDeclaration)
+      return WriteNormalFuncDecl(Op, Name);
     mlir::FunctionType FT = Op.getFunctionType();
     mlir::Region& Body = Op.getBody();
-    if (Body.empty())
-      return SetError("empty function body", Op);
 
     // Write the return type.
     OS << "inline ";
@@ -572,7 +603,51 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << "}";
   }
 
+  // Declare a normal function.
+  //  inline R name(T...);
+  // With C language linkage, memref arguments are expanded into the
+  // elements of their descriptor (ie allocated, aligned, offset,
+  // sizes..., strides...) which is how nbdl::memref is destructured
+  // by nbdl::detail::cross_call.
+  //  extern "C" R name(T*, T*, std::intptr_t, ...);
+  void WriteNormalFuncDecl(FuncOp Op, llvm::StringRef Name) {
+    mlir::FunctionType FT = Op.getFunctionType();
+    OS << (IsExternC ? "extern \"C\" " : "inline ");
+    if (FT.getNumResults() == 0) {
+      OS << "void";
+    } else {
+      llvm::SmallString<64> ResultTypename;
+      if (!schir::MappableToCpp::lookup(FT.getResult(0), ResultTypename))
+        return SetError("result type is not mappable to C++", Op);
+      OS << ResultTypename;
+    }
+    OS << ' ' << Name << '(';
+
+    llvm::ListSeparator Sep;
+    for (mlir::Type T : FT.getInputs()) {
+      llvm::SmallString<64> Typename;
+      auto MT = dyn_cast<mlir::MemRefType>(T);
+      if (IsExternC && MT) {
+        if (!MT.hasRank() || MT.getRank() == 0 ||
+            !schir::MappableToCpp::lookup(MT.getElementType(), Typename))
+          return SetError("memref parameter is not mappable to C++", Op);
+        OS << Sep << Typename << '*' << Sep << Typename << '*'
+           << Sep << "::std::intptr_t";
+        for (int64_t I = 0; I < 2 * MT.getRank(); ++I)
+          OS << Sep << "::std::intptr_t";
+        continue;
+      }
+      if (!schir::MappableToCpp::lookup(T, Typename))
+        return SetError("parameter type is not mappable to C++", Op);
+      OS << Sep << Typename;
+    }
+    OS << ");";
+  }
+
   void Visit(ReturnOp Op) {
+    if (!isa<mlir::func::FuncOp>(Op->getParentOp()))
+      return SetError("nbdl.return is nested in an operation"
+                      " that was not inlined", Op);
     if (Op.getNumOperands() > 1)
       return SetError("multiple return values are not supported in C++", Op);
     OS << "return";
@@ -1140,12 +1215,18 @@ public:
 namespace nbdl_spec {
 // Return [ErrorMessage, SourceLoc, IrritantOp]
 std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>
-translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op) {
+translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
+              TranslateMode Mode) {
   if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op)) {
     FuncWriter Writer(LexerWriter);
+    Writer.IsDeclaration = Mode != TranslateMode::Definition;
+    Writer.IsExternC = Mode == TranslateMode::ExternCDeclaration;
     Writer.Visit(Op);
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);
+  } else if (Mode != TranslateMode::Definition) {
+    return std::make_tuple(std::string("only functions may be declared"),
+                static_cast<schir::SourceLocationEncoding*>(nullptr), Op);
   } else if (auto DefineStoreOp = dyn_cast<nbdl_spec::DefineStoreOp>(Op)) {
     DefineStoreWriter Writer(LexerWriter);
     Writer.VisitDefineStore(DefineStoreOp);

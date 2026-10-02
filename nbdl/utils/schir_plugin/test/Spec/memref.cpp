@@ -16,19 +16,6 @@
 #include <mdspan>
 #include <vector>
 
-// Defined via define-fn with export-c.
-// A memref argument is passed as its destructured elements.
-// (ie allocated, aligned, offset, sizes..., strides...)
-extern "C" void sum_i32(std::int32_t*, std::int32_t*, std::intptr_t,
-                        std::intptr_t, std::intptr_t,
-                        std::int32_t*, std::int32_t*, std::intptr_t,
-                        std::intptr_t, std::intptr_t);
-extern "C" void sum_i32_2d(std::int32_t*, std::int32_t*, std::intptr_t,
-                           std::intptr_t, std::intptr_t,
-                           std::intptr_t, std::intptr_t,
-                           std::int32_t*, std::int32_t*, std::intptr_t,
-                           std::intptr_t, std::intptr_t);
-
 namespace {
 namespace foo {
 #pragma schir_scheme
@@ -132,7 +119,7 @@ int main() {
 
   // Call the lowered function directly.
   dest[0] = 0;
-  nbdl::detail::cross_call(sum_i32, nbdl::bind_memref(src),
+  nbdl::detail::cross_call(foo::sum_i32, nbdl::bind_memref(src),
                            nbdl::bind_memref(dest));
   SCHIR_ASSERT(dest[0] == 15);
 
@@ -143,7 +130,7 @@ int main() {
                                         std::array<std::intptr_t, 1>{2});
     std::mdspan strided(src.data(), mapping);
     dest[0] = 0;
-    nbdl::detail::cross_call(sum_i32, nbdl::bind_memref(strided),
+    nbdl::detail::cross_call(foo::sum_i32, nbdl::bind_memref(strided),
                              nbdl::bind_memref(dest));
     SCHIR_ASSERT(dest[0] == 1 + 3 + 5);
   }
@@ -153,7 +140,7 @@ int main() {
     std::array<std::int32_t, 6> data{1, 2, 3, 4, 5, 6};
     std::mdspan matrix(data.data(), std::dextents<std::intptr_t, 2>(2, 3));
     dest[0] = 0;
-    nbdl::detail::cross_call(sum_i32_2d, nbdl::bind_memref(matrix),
+    nbdl::detail::cross_call(foo::sum_i32_2d, nbdl::bind_memref(matrix),
                              nbdl::bind_memref(dest));
     SCHIR_ASSERT(dest[0] == 21);
   }

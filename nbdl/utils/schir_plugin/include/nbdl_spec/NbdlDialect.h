@@ -20,6 +20,11 @@ using mlir::StringAttr;
 llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
         schir::SchirClangImpl* SchirClangImpl = nullptr);
 
+// Replace each !nbdl.cpp_alias with the !nbdl.cpp type
+// of its canonical typename. (The flatten pass also does this.)
+llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,
+        schir::SchirClangImpl* SchirClangImpl);
+
 // Register passes that can be run via a pass pipeline string.
 void registerPasses();
 }

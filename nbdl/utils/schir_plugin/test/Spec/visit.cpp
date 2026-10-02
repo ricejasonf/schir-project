@@ -94,14 +94,16 @@ using fav_games = std::unordered_map<std::string, std::string>;
     ; // Note that message here might not be a variant
       // depending on how apply_message is called.
     (match message
-      ('my::message_1 => receive-message-1)
-      ('my::message_2 => insert-fav-game)
-      ('my::message_3 => erase-fav-game)
-      ('my::message_4 => receive-message-4))
+      (message_1 => receive-message-1)
+      (message_2 => insert-fav-game)
+      (message_3 => erase-fav-game)
+      (message_4 => receive-message-4))
     (visit 'nbdl::assign
            (get context '.last_message)
            message)
     (visit fn (get context '.last_message)))
+
+  (finalize-module)
 
 }
 }  // namespace my

@@ -111,6 +111,8 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
           (get store '.my_var '|nbdl::variant_index_t{}|))
         (visit fn my-var-index)))))
 
+  (finalize-module)
+
 }
 }  // namespace foo
 }  // namespace

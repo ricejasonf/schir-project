@@ -55,6 +55,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
           (match-each (lift-store (visit '.at (get Context '.lol) 1))
                       Fn)))))
 
+  (finalize-module)
   ;(dump-op flatten)
 } // schir_scheme
 } // namespace foo

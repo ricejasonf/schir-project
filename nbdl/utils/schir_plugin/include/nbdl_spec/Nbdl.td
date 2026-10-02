@@ -57,6 +57,17 @@ def Nbdl_Cpp : TypeDef<Nbdl_Dialect, "Cpp", []> {
   let assemblyFormat = "`<` $cpp_typename `>`";
 }
 
+def Nbdl_CppAlias : TypeDef<Nbdl_Dialect, "CppAlias", []> {
+  let mnemonic = "cpp_alias";
+  let description = [{
+    Represent a C++ typename as it is written which is not necessarily
+    canonical (or even valid.) The flatten pass replaces it with the
+    !nbdl.cpp type of the canonical typename.
+  }];
+  let parameters = (ins StringRefParameter<>:$cpp_typename);
+  let assemblyFormat = "`<` $cpp_typename `>`";
+}
+
 def Nbdl_Store : TypeDef<Nbdl_Dialect, "Store", []> {
   let mnemonic = "store";
   let description = [{
@@ -208,6 +219,7 @@ def Nbdl_MatchIfOp : Nbdl_Op<"match_if", [Terminator]> {
 def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
   let description = [{
     The result of a constant expression in C++.
+    The result type is !nbdl.unknown until it is inferred.
   }];
   let arguments = (ins StrAttr:$expr);
   let results = (outs AnyType:$result);
@@ -357,11 +369,12 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
   let results   = (outs);
 }
 
-def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
-                                       HasParent<"mlir::func::FuncOp">]> {
+def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator]> {
   let description = [{
     Return results from a FuncOp. Each operand must be of the
     corresponding result type or !nbdl.unknown until it is inferred.
+    It may be nested in operations (e.g. an identity nbdl.match)
+    until they are inlined by the flatten pass.
   }];
 
   let arguments = (ins Variadic<AnyType>:$operands);

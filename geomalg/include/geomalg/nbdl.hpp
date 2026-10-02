@@ -54,6 +54,20 @@ using vec2 = multivector<e1, e2>;
 using vec3 = multivector<e1, e2, e3>;
 using vec4 = multivector<e1, e2, e3, no>;
 using vec5 = multivector<e1, e2, e3, no, ni>;
+
+// Instantiate the common types for use with c linkage declarations,
+// and perform some sanity checks on their byte sizes.
+static_assert(sizeof(float) == 4); // Expect 32-bit floats.
+static_assert(sizeof(scalar) == sizeof(float));
+static_assert(sizeof(e1) == sizeof(float));
+static_assert(sizeof(e2) == sizeof(float));
+static_assert(sizeof(e3) == sizeof(float));
+static_assert(sizeof(no) == sizeof(float));
+static_assert(sizeof(ni) == sizeof(float));
+static_assert(sizeof(vec2) == 8);
+static_assert(sizeof(vec3) == 16);
+static_assert(sizeof(vec4) == 16);
+static_assert(sizeof(vec5) == 32);
 } // namespace geomalg
 
 namespace nbdl {

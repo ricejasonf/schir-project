@@ -62,6 +62,8 @@ struct my_struct {
   (match-params ((V : 'foo::my_struct Store))
     (visit fn V)))
 
+(finalize-module)
+
 (write-nbdl-module)
 
 }

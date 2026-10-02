@@ -102,6 +102,8 @@ int sum(int a, int b) {
      (else (visit fn 4))))
    (else (visit fn (visit 'my::sum x 100)))))
 
+(finalize-module)
+
 } // namespace my
 } // namespace
 
