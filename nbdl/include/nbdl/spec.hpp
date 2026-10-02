@@ -22,6 +22,7 @@
 #include <boost/hana/functional/overload.hpp>
 #include <algorithm>
 #include <concepts>
+#include <ranges>
 #include <type_traits>
 #include <utility>
 

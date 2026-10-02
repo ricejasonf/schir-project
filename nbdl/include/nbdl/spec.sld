@@ -895,31 +895,32 @@
         (lambda (Arg)
           (visit Store Arg))))
 
-    (define (match-each-aux Begin End Fn)
-      (define ParamsSpec (list Begin End))
-      (%match-results ParamsSpec
-        (lambda (ParamVals)
+    (define (match-each-aux Loc RangeExpr Fn)
+      (close-previous-scope)
+      (%match-results (list RangeExpr)
+        (lambda (Results)
+          (define Range (car Results))
+          (unless (store-value? Range)
+            (error-with-loc Loc
+                            "expecting a store to match-each (see lift-store)"))
           (%top-level
             (lambda ()
               (create-op "nbdl.match_each"
-                         (loc: 0)
-                         (operands: ParamVals)
+                         (loc: Loc)
+                         (operands: Range)
                          (attributes:)
                          (result-types:)
                          (region: "body" ((Element : (!nbdl.store)))
-                                  (Fn Element))))))))
-                          ;; TODO support (visit Fn ...)
+                                  ((make-visit-proc Fn) Element))))))))
 
-    ;; Match each element of a range. (side effects only)
+    ;; Match each element of a store wrapping a range-like object
+    ;; (e.g. a C++ range or a memref.) (side effects only)
+    ;; Fn is a unary procedure or a store to visit with each element.
     (define-syntax match-each
       (syntax-rules ()
         ((match-each Range Fn)
-         (match-each (visit '.begin Range)
-                     (visit '.end Range)
-                     Fn))
-        ((match-each Begin End Fn)
-         (match-each-aux (%single-expr Begin)
-                         (%single-expr End)
+         (match-each-aux (syntax-source-loc Range)
+                         (%single-expr Range)
                          Fn))))
 
     (define-syntax match-aux

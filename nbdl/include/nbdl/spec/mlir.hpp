@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
+#include <utility>
 
 namespace nbdl {
 // Only support Clang.
@@ -110,6 +113,34 @@ struct get_mlir_type<memref<T, rank>> {
     return result;
   }
 };
+
+namespace detail {
+template <typename T>
+constexpr bool is_memref = false;
+
+template <typename T, std::size_t rank, typename IndexType>
+constexpr bool is_memref<memref<T, rank, IndexType>> = true;
+
+// Expand an argument to a function lowered from MLIR
+// into the tuple of arguments of its lowered prototype.
+template <typename Arg>
+constexpr auto cross_args(Arg&& arg) {
+  if constexpr (is_memref<std::remove_cvref_t<Arg>>) {
+    auto [...elements] = arg;
+    return std::tuple(elements...);
+  } else {
+    return std::tuple<Arg&&>(std::forward<Arg>(arg));
+  }
+}
+
+// Call a function lowered from MLIR (e.g. via export-c)
+// with arguments of C++ types that map to its MLIR parameter types.
+template <typename Fn, typename ...Args>
+constexpr decltype(auto) cross_call(Fn&& fn, Args&& ...args) {
+  return std::apply(std::forward<Fn>(fn),
+                    std::tuple_cat(cross_args(std::forward<Args>(args))...));
+}
+} // namespace detail
 } // namespace nbdl
 
 #endif // NBDL_SPEC_MLIR_HPP

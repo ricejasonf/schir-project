@@ -665,6 +665,19 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   void WriteVisitExprBare(VisitOp Op) {
     mlir::Value Fn = Op.getFn();
     mlir::OperandRange Args = Op.getArgs();
+    if (Op.getValidCppCrossMap()) {
+      // Call a lowered function by its C linkage name with
+      // arguments expanded to match its lowered prototype.
+      // (e.g. a memref is passed as its destructured elements.)
+      OS << "::nbdl::detail::cross_call(";
+      WriteExpr(Fn);
+      for (mlir::Value V : Args) {
+        OS << ", ";
+        WriteExpr(V);
+      }
+      OS << ")";
+      return;
+    }
     if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
       assert(!Args.empty() && "member call should have at least one argument");
       WriteExpr(Args.front());
@@ -857,13 +870,16 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   void Visit(MatchEachOp Op) {
     mlir::Region& Body = Op.getBody();
     mlir::BlockArgument& Arg = Body.getArguments().front();
-    mlir::Value Begin = Op.getBegin();
-    mlir::Value End = Op.getEnd();
+    mlir::Value Range = Op.getRange();
+    llvm::ArrayRef<mlir::TypeAttr> RangeAlts =
+      cast<StoreType>(Range.getType()).getAlts();
+    if (RangeAlts.size() == 1 &&
+        isa<mlir::MemRefType>(RangeAlts.front().getValue()))
+      return SetError("match_each on a memref is not supported in C++ "
+                      "(see export-c)", Op);
 
-    OS << "std::ranges::for_each(";
-    WriteExpr(Begin);
-    OS << ", ";
-    WriteExpr(End);
+    OS << "::std::ranges::for_each(";
+    WriteExpr(Range);
 
     ValueMapScope Scope(ValueMap);
     OS << ", [&]([[maybe_unused]] auto&& "

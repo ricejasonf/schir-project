@@ -22,7 +22,8 @@ using arr_vec = std::array<std::vector<int>, 3>;
 
   (export-cpp
     context
-    flatten)
+    flatten
+    each_of_second)
 
   (define-store context (Lol MessageReceiver)
     (store-compose '.lol
@@ -45,6 +46,15 @@ using arr_vec = std::array<std::vector<int>, 3>;
                          X)
                   (visit Fn 42)))))))))
 
+  ; // The range may be the result of a visit lifted to a store,
+  ; // and each element may be visited by a store.
+  (define-match-fn each_of_second (Context Fn)
+    (match Context
+      ('::foo::context =>
+        (lambda (Context)
+          (match-each (lift-store (visit '.at (get Context '.lol) 1))
+                      Fn)))))
+
   ;(dump-op flatten)
 } // schir_scheme
 } // namespace foo
@@ -60,4 +70,8 @@ int main() {
 
   foo::flatten(context, nbdl::noop);
   SCHIR_ASSERT(receiver == (std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 9}));
+
+  std::vector<int> second;
+  foo::each_of_second(context, [&](int x) { second.push_back(x); });
+  SCHIR_ASSERT(second == (std::vector<int>{4, 5, 6}));
 }

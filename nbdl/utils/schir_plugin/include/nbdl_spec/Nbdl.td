@@ -451,11 +451,15 @@ def Nbdl_ScopeOp : Nbdl_Op<"scope", []> {
 
 def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
   let description = [{
-    Match each element in a Range. The body is invoked for each element
-    in the Range.
+    Match each element in a store that wraps a range-like object.
+    The body is invoked for each element in the range with the
+    element as a store.
+
+    A C++ range is iterated in C++. A memref is iterated
+    by lowering (with nbdl-lower) in row-major order.
   }];
 
-  let arguments = (ins AnyType:$begin, AnyType:$end);
+  let arguments = (ins Nbdl_Store:$range);
   let results = (outs);
   let regions = (region SizedRegion<1>:$body);
 }

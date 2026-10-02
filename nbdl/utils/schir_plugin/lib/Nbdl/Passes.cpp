@@ -483,6 +483,10 @@ struct InferMatchIfThenArgType
   }
 };
 
+// Infer the type of the match_each element block argument
+// from the range which is a store with a single alternative.
+//  store<cpp<"R">> -> store<cpp<{range element type of R}>>
+//  store<memref<...xT>> -> store<T>
 struct InferMatchEachArgType
     : OpRewriteSchirClang<nbdl_spec::MatchEachOp> {
   using Base::Base;
@@ -493,18 +497,22 @@ struct InferMatchEachArgType
     if (!needsResolve(ElementArg))
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
 
-    mlir::Value BeginArg = Op.getBegin();
-    if (needsResolve(BeginArg))
+    mlir::Value Range = Op.getRange();
+    if (needsResolve(Range))
       return Rewriter.notifyMatchFailure(Op, "input not resolved");
 
-    nbdl_spec::StoreType NewStoreT;
+    mlir::Type RangeT = getSingleAlt(Range);
+    if (!RangeT)
+      return Rewriter.notifyMatchFailure(Op, "range is not single alt");
 
-    // Handle cpp type.
-    llvm::StringRef BeginTypeStr = getCppTypename(BeginArg);
-    if (!BeginTypeStr.empty()) {
+    mlir::Type ElementT;
+    if (auto MRT = dyn_cast<mlir::MemRefType>(RangeT)) {
+      ElementT = MRT.getElementType();
+    } else if (llvm::StringRef RangeTypeStr = getCppTypename(Range);
+               !RangeTypeStr.empty()) {
       std::string Typename;
-      std::string Expr = llvm::Twine("*(::nbdl::detail::declval<" +
-                                     BeginTypeStr + ">())").str();
+      std::string Expr = ("*::std::ranges::begin(::nbdl::detail::declval<" +
+                          RangeTypeStr + "&>())").str();
       schir::SourceLocation Loc(mlir::OpaqueLoc
           ::getUnderlyingLocationOrNull<
             schir::SourceLocationEncoding*>(Op.getLoc()));
@@ -519,18 +527,16 @@ struct InferMatchEachArgType
         Op.emitError("clang expr type yielded empty string");
         return llvm::failure();
       }
-      mlir::TypeAttr InnerCppT =
-          mlir::TypeAttr::get(
-              nbdl_spec::CppType::get(Op.getContext(), Typename));
-      NewStoreT = nbdl_spec::StoreType::get(Op.getContext(), InnerCppT);
-    }
-
-    if (NewStoreT) {
-      Rewriter.modifyOpInPlace(Op, [&] { ElementArg.setType(NewStoreT); });
-      return llvm::success();
+      ElementT = nbdl_spec::CppType::get(Op.getContext(), Typename);
     } else {
+      Op.emitError("unsupported range type for match_each: ") << RangeT;
       return llvm::failure();
     }
+
+    auto NewStoreT = nbdl_spec::StoreType::get(Op.getContext(),
+                                               mlir::TypeAttr::get(ElementT));
+    Rewriter.modifyOpInPlace(Op, [&] { ElementArg.setType(NewStoreT); });
+    return llvm::success();
   }
 };
 

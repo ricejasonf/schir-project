@@ -6,12 +6,14 @@
 #include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
 #include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
 #include <mlir/Conversion/LLVMCommon/TypeConverter.h>
+#include <mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
 #include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
+#include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
@@ -30,6 +32,7 @@ namespace nbdl_spec {
 
 namespace arith = mlir::arith;
 namespace func = mlir::func;
+namespace memref = mlir::memref;
 namespace scf = mlir::scf;
 using llvm::dyn_cast;
 using llvm::isa;
@@ -60,6 +63,7 @@ struct ConversionTarget : mlir::ConversionTarget {
   {
     addLegalDialect<arith::ArithDialect>();
     addLegalDialect<func::FuncDialect>();
+    addLegalDialect<memref::MemRefDialect>();
     addLegalDialect<scf::SCFDialect>();
     addIllegalDialect<nbdl_spec::NbdlDialect>();
     // These are erased after the conversion when they have no uses.
@@ -216,6 +220,59 @@ struct LowerScope : mlir::OpConversionPattern<nbdl_spec::ScopeOp> {
   }
 };
 
+// Lower match_each on a memref to nested loops that
+// load each element in row-major order.
+struct LowerMatchEach : mlir::OpConversionPattern<nbdl_spec::MatchEachOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::MatchEachOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Value Range = Adaptor.getRange();
+    auto MRT = dyn_cast<mlir::MemRefType>(Range.getType());
+    if (!MRT)
+      return R.notifyMatchFailure(Op, "range is not a memref");
+    if (MRT.getRank() == 0)
+      return R.notifyMatchFailure(Op, "memref has rank 0");
+    mlir::Region& Body = Op.getBody();
+    if (Body.getNumArguments() != 1)
+      return R.notifyMatchFailure(Op, "unexpected region arguments");
+    mlir::Type ElementT =
+      getTypeConverter()->convertType(Body.getArgument(0).getType());
+    if (ElementT != MRT.getElementType())
+      return R.notifyMatchFailure(Op, "element type mismatch");
+    llvm::FailureOr<mlir::Block*> BodyBlock =
+      R.convertRegionTypes(&Body, *getTypeConverter());
+    if (llvm::failed(BodyBlock))
+      return R.notifyMatchFailure(Op, "region type conversion failed");
+
+    mlir::Location Loc = Op.getLoc();
+    mlir::Value Zero = arith::ConstantIndexOp::create(R, Loc, 0);
+    mlir::Value One = arith::ConstantIndexOp::create(R, Loc, 1);
+    llvm::SmallVector<mlir::Value, 4> Indices;
+    scf::ForOp InnerFor;
+    for (int64_t I = 0; I < MRT.getRank(); ++I) {
+      mlir::Value Dim = memref::DimOp::create(R, Loc, Range, I);
+      InnerFor = scf::ForOp::create(R, Loc, Zero, Dim, One);
+      Indices.push_back(InnerFor.getInductionVar());
+      R.setInsertionPointToStart(InnerFor.getBody());
+    }
+
+    // The body has its own terminator that replaces the yield.
+    mlir::Block* InnerBody = InnerFor.getBody();
+    R.eraseOp(InnerBody->getTerminator());
+    R.setInsertionPointToEnd(InnerBody);
+    mlir::Value Element = memref::LoadOp::create(R, Loc, Range, Indices);
+    R.mergeBlocks(*BodyBlock, InnerBody, Element);
+
+    // nbdl.match_each is a terminator, but scf.for is not.
+    R.setInsertionPoint(Op);
+    createTerminator(R, Op);
+    R.eraseOp(Op);
+    return llvm::success();
+  }
+};
+
 void populateLowerPatterns(mlir::RewritePatternSet& PS,
                            ::TypeConverter const& TC) {
   mlir::MLIRContext* Ctx = PS.getContext();
@@ -227,6 +284,7 @@ void populateLowerPatterns(mlir::RewritePatternSet& PS,
          LowerLiteral,
          LowerVisit,
          LowerMatchIf,
+         LowerMatchEach,
          LowerScope
          >(TC, Ctx);
 }
@@ -281,6 +339,7 @@ public:
     mlir::populateSCFToControlFlowConversionPatterns(PS);
     mlir::arith::populateArithToLLVMConversionPatterns(TC, PS);
     mlir::cf::populateControlFlowToLLVMConversionPatterns(TC, PS);
+    mlir::populateFinalizeMemRefToLLVMConversionPatterns(TC, PS);
     mlir::populateFuncToLLVMConversionPatterns(TC, PS);
 
     if (llvm::failed(mlir::applyPartialConversion(M, Target, std::move(PS))))

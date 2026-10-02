@@ -35,6 +35,7 @@ def LowerPass : NbdlPass<"nbdl-lower", "mlir::ModuleOp"> {
   let dependentDialects = ["nbdl_spec::NbdlDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
+                           "mlir::memref::MemRefDialect",
                            "mlir::scf::SCFDialect"];
 }
 
