@@ -76,14 +76,15 @@ namespace foo {
       (visit Fn (visit test_dot A B))))
 
   ; // Visit test_dot with MLIR typed results lowering to func.call.
+  ; // The results of visit are not stores so they need no unwrap.
   ; // CHECK-LABEL: @"::foo::test_test_call"
   ; // CHECK: [[SUM1:%[0-9]+]] = "nbdl.visit"
   ; // CHECK-SAME: <{validCppCrossMap}>
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
   ; // CHECK: [[SUM2:%[0-9]+]] = "nbdl.visit"
   ; // CHECK-SAME: <{validCppCrossMap}>
-  ; // CHECK: [[UA:%[0-9]+]] = "nbdl.unwrap"([[SUM1]])
-  ; // CHECK-NEXT: [[UB:%[0-9]+]] = "nbdl.unwrap"([[SUM2]])
-  ; // CHECK-NEXT: func.call @test_dot([[UA]], [[UB]])
+  ; // CHECK-NOT: "nbdl.unwrap"
+  ; // CHECK: func.call @test_dot([[SUM1]], [[SUM2]])
   (define-match-fn test_test_call (Store Fn)
     (match-params ((A : 'geomalg::vec3 (get Store '.a))
                    (B : 'geomalg::vec3 (get Store '.b)))

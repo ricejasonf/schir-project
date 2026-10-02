@@ -86,12 +86,15 @@ public:
 template <typename OpTy>
 using OpRewriteSchirClang = RewriteSchirClangBase<mlir::OpRewritePattern<OpTy>>;
 
+// Return true if T is !nbdl.unknown or a !nbdl.store
+// with no resolved alternatives.
 bool needsResolveT(mlir::Type T) {
+  if (isa<nbdl_spec::UnknownType>(T))
+    return true;
   auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   return ST && ST.getAlts().empty();
 }
 
-// Return true if V is a !nbdl.store has no resolved alternatives.
 bool needsResolve(mlir::Value V) {
   return needsResolveT(V.getType());
 }
@@ -108,26 +111,25 @@ mlir::Type getSingleAlt(mlir::Value V) {
   return getSingleAltT(V.getType());
 }
 
-llvm::StringRef getSingleCppAltT(mlir::Type T) {
-  auto ST = dyn_cast<nbdl_spec::StoreType>(T);
-  if (!ST || ST.getAlts().size() != 1)
-    return {};
-
-  mlir::Type AltT = getSingleAltT(T);
-  if (auto CT = dyn_cast<nbdl_spec::CppType>(AltT))
+// Get the C++ typename of a C++ type or a store
+// with a single C++ alternative.
+llvm::StringRef getCppTypenameT(mlir::Type T) {
+  if (auto ST = dyn_cast<nbdl_spec::StoreType>(T))
+    T = getSingleAltT(ST);
+  if (auto CT = dyn_cast_or_null<nbdl_spec::CppType>(T))
     return CT.getCppTypename();
   else
     return {};
 }
 
-llvm::StringRef getSingleCppAlt(mlir::Value V) {
-  return getSingleCppAltT(V.getType());
+llvm::StringRef getCppTypename(mlir::Value V) {
+  return getCppTypenameT(V.getType());
 }
 
 constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
   mlir::Type T = V.getType();
   return isa<nbdl_spec::MemberNameType, nbdl_spec::FuncNameType>(T) ||
-         !getSingleCppAlt(V).empty();
+         !getCppTypename(V).empty();
 };
 
 // Check visit argument types and inline any calls
@@ -143,6 +145,8 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   // mapping:
   //  store<...> -> store
   //  store<T> -> store<T>
+  //  store<T> -> T
+  //  T -> store<T>
   //  store<cpp<"T">> -> store<{get_mlir_type<T>}>
   //  store<cpp<"T">> -> {get_mlir_type<T>}
   // where we abuse braces to indicate a mapped type via the
@@ -154,17 +158,9 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (Op.getSfinae())
       return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
 
-    mlir::func::FuncOp CalleeFn;
-    auto FN = Op.getFn().getDefiningOp<nbdl_spec::FuncNameOp>();
-    if (!FN)
-      return llvm::failure();
-
-    auto M = Op->getParentOfType<mlir::ModuleOp>();
-    if (M)
-      if (mlir::Operation* Lookup = M.lookupSymbol(FN.getName()))
-        CalleeFn = dyn_cast<mlir::func::FuncOp>(Lookup);
+    mlir::func::FuncOp CalleeFn = Op.lookupCallee();
     if (!CalleeFn)
-      return llvm::failure();
+      return Rewriter.notifyMatchFailure(Op, "callee is not a func");
 
     mlir::ValueRange Args = Op.getArgs();
     llvm::ArrayRef<mlir::Type> ParamTs = CalleeFn.getArgumentTypes();
@@ -191,7 +187,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       auto [SCResult, ErrorMsg] = WithSchirClang(
         [&](schir::SchirClang SchirClang) {
           for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
-            llvm::StringRef CppTypeStr = getSingleCppAlt(Arg);
+            llvm::StringRef CppTypeStr = getCppTypename(Arg);
             if (CppTypeStr.empty()) {
               // This is an invalid case handled in isValidMapping.
               MappedTypeStrs.push_back(nullptr);
@@ -213,7 +209,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
         return llvm::failure();
       }
       for (auto [Arg, TypeStr] : llvm::zip(Args, MappedTypeStrs)) {
-        if (getSingleCppAlt(Arg).empty()) {
+        if (getCppTypename(Arg).empty()) {
           MappedArgTypes.push_back(Arg.getType());
           continue;
         }
@@ -305,11 +301,27 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
 
     mlir::Block& CalleeBody = CalleeFn.getBody().front();
     mlir::IRMapping Mapping;
-    Mapping.map(CalleeBody.getArguments(), Op.getArgs());
+    Rewriter.setInsertionPoint(Discard);
+
+    // Lift arguments that are not stores for store type parameters.
+    for (auto [Param, Arg] : llvm::zip(CalleeBody.getArguments(),
+                                       Op.getArgs())) {
+      mlir::Value Mapped = Arg;
+      if (isa<nbdl_spec::StoreType>(Param.getType()) &&
+          !isa<nbdl_spec::StoreType>(Arg.getType())) {
+        // An unknown argument lifts to an unresolved store.
+        auto LiftedT = needsResolve(Arg)
+          ? nbdl_spec::StoreType::get(Op.getContext())
+          : nbdl_spec::StoreType::get(Op.getContext(),
+                                      mlir::TypeAttr::get(Arg.getType()));
+        Mapped = nbdl_spec::LiftStoreOp::create(Rewriter, Arg.getLoc(),
+                                                LiftedT, Arg);
+      }
+      Mapping.map(Param, Mapped);
+    }
 
     // The callee body has its own terminator so it
     // replaces both the visit and the discard.
-    Rewriter.setInsertionPoint(Discard);
     for (mlir::Operation& CalleeOp : CalleeBody)
       Rewriter.clone(CalleeOp, Mapping);
 
@@ -354,9 +366,9 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     // then all must be mapped via `get_mlir_type`.
     bool Result = false;
     for (auto [Arg, ParamT] : llvm::zip(Args, ParamTs)) {
-      if (!getSingleCppAlt(Arg).empty() &&
+      if (!getCppTypename(Arg).empty() &&
           !needsResolveT(ParamT) &&
-          getSingleCppAltT(ParamT).empty()) {
+          getCppTypenameT(ParamT).empty()) {
         Result = true;
         break;
       }
@@ -367,7 +379,7 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
 
 // Resolve the result type of nbdl.visit.
 // Additionally, validate arguments if we have that in the IR
-//  (ie when the callee is a FuncNameOp.)
+//  (ie when the callee is a function name.)
 struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   using Base::Base;
 
@@ -376,7 +388,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!HasSchirClang())
       return Rewriter.notifyMatchFailure(Op, "no SchirClang available");
 
-    if (!needsResolve(Op.getResult()))
+    if (!isa<nbdl_spec::UnknownType>(Op.getType()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
     if (needsResolve(Op.getFn()) ||
@@ -384,27 +396,12 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       return Rewriter.notifyMatchFailure(Op, "args are not resolved");
 
     mlir::MLIRContext* Ctx = Op.getContext();
-    nbdl_spec::StoreType NewStoreT;
+    mlir::Type NewT;
 
-    if (auto FN = Op.getFn().getDefiningOp<nbdl_spec::FuncNameOp>()) {
-      // Look up the symbol and get the result type.
-      auto M = Op->getParentOfType<mlir::ModuleOp>();
-      mlir::Operation* Lookup = nullptr;
-      if (M)
-        Lookup = M.lookupSymbol(FN.getName());
-      auto F = dyn_cast_or_null<mlir::func::FuncOp>(Lookup);
-      llvm::ArrayRef<mlir::Type> ResultTs;
-      if (F)
-        ResultTs = F.getResultTypes();
-      if (ResultTs.size() == 1) {
-        // Idempotently lift a known return type to a store.
-        auto ST = dyn_cast<nbdl_spec::StoreType>(ResultTs.front());
-        if (ST && !needsResolveT(ST))
-          NewStoreT = ST;
-        else if (!ST)
-          NewStoreT = nbdl_spec::StoreType::get(Ctx,
-              mlir::TypeAttr::get(ResultTs.front()));
-      }
+    if (mlir::func::FuncOp F = Op.lookupCallee()) {
+      llvm::ArrayRef<mlir::Type> ResultTs = F.getResultTypes();
+      if (ResultTs.size() == 1 && !needsResolveT(ResultTs.front()))
+        NewT = ResultTs.front();
     } else if (llvm::all_of(Op.getArgs(), isCppWriteable)) {
       // All arguments are writeable as C++.
       std::string Typename;
@@ -437,12 +434,11 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
         return llvm::failure();
       }
 
-      auto NewCppT = mlir::TypeAttr::get(nbdl_spec::CppType::get(Ctx, Typename));
-      NewStoreT = nbdl_spec::StoreType::get(Ctx, NewCppT);
+      NewT = nbdl_spec::CppType::get(Ctx, Typename);
     }
 
-    if (NewStoreT) {
-      Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
+    if (NewT) {
+      Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewT); });
       return llvm::success();
     } else {
       return llvm::failure();
@@ -465,12 +461,12 @@ struct InferMatchIfThenArgType
 
     // Other than special cases (e.g. sfinae), the ThenArg should
     // be the result of the conditional expression.
-    mlir::Type NewThenArgT = getSingleAlt(Cond);
-    if (!NewThenArgT)
-      return Rewriter.notifyMatchFailure(Op, "cond type not single alt");
+    mlir::Type NewThenArgT = Cond.getType();
+    if (needsResolveT(NewThenArgT))
+      return Rewriter.notifyMatchFailure(Op, "cond type not resolved");
 
     // Implicitly unwrap a `sfinae_result`
-    llvm::StringRef CondTypeStr = getSingleCppAlt(Cond);
+    llvm::StringRef CondTypeStr = getCppTypename(Cond);
     auto VOp = Cond.getDefiningOp<nbdl_spec::VisitOp>();
     if (VOp && VOp.getSfinae() && !CondTypeStr.empty()) {
       CondTypeStr.consume_front("::");
@@ -479,9 +475,7 @@ struct InferMatchIfThenArgType
              CondTypeStr.ends_with(">") && "expecting sfinae_result");
 
       llvm::StringRef Inner = CondTypeStr.drop_front(Prefix.size()).drop_back(1);
-      mlir::TypeAttr InnerCppT =
-          mlir::TypeAttr::get(nbdl_spec::CppType::get(Op.getContext(), Inner));
-      NewThenArgT = nbdl_spec::StoreType::get(Op.getContext(), InnerCppT);
+      NewThenArgT = nbdl_spec::CppType::get(Op.getContext(), Inner);
     }
 
     Rewriter.modifyOpInPlace(Op, [&] { ThenArg.setType(NewThenArgT); });
@@ -500,14 +494,13 @@ struct InferMatchEachArgType
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
 
     mlir::Value BeginArg = Op.getBegin();
-    mlir::Type BeginArgT = getSingleAlt(BeginArg);
-    if (!BeginArgT)
-      return Rewriter.notifyMatchFailure(Op, "input not single alt");
+    if (needsResolve(BeginArg))
+      return Rewriter.notifyMatchFailure(Op, "input not resolved");
 
     nbdl_spec::StoreType NewStoreT;
 
     // Handle cpp type.
-    llvm::StringRef BeginTypeStr = getSingleCppAlt(BeginArg);
+    llvm::StringRef BeginTypeStr = getCppTypename(BeginArg);
     if (!BeginTypeStr.empty()) {
       std::string Typename;
       std::string Expr = llvm::Twine("*(::nbdl::detail::declval<" +
@@ -541,6 +534,26 @@ struct InferMatchEachArgType
   }
 };
 
+// Infer the result of lifting a value whose type is inferred.
+struct InferLiftStoreType : mlir::OpRewritePattern<nbdl_spec::LiftStoreOp> {
+  using mlir::OpRewritePattern<nbdl_spec::LiftStoreOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::LiftStoreOp Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    if (!needsResolve(Op.getResult()))
+      return Rewriter.notifyMatchFailure(Op, "type already resolved");
+    mlir::Type ValueT = Op.getValue().getType();
+    if (needsResolveT(ValueT))
+      return Rewriter.notifyMatchFailure(Op, "value type not resolved");
+
+    auto NewStoreT = nbdl_spec::StoreType::get(Op.getContext(),
+                                               mlir::TypeAttr::get(ValueT));
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
+    return llvm::success();
+  }
+};
+
 // Inline match that simplifies to the identity operation.
 struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
   using Base::Base;
@@ -556,7 +569,7 @@ struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
       return Rewriter.notifyMatchFailure(Op, "store is not single alt");
 
     // Non-C++ types have no mechanism to implement match.
-    llvm::StringRef CppTypeStr = getSingleCppAlt(Store);
+    llvm::StringRef CppTypeStr = getCppTypename(Store);
     if (!CppTypeStr.empty()) {
       bool IsIdentity = false;
       schir::SourceLocation Loc(mlir::OpaqueLoc
@@ -660,6 +673,7 @@ public:
     PS.add<InferVisitResultType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchEachArgType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchIfThenArgType>(Ctx);
+    PS.add<InferLiftStoreType>(Ctx);
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));

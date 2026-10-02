@@ -222,13 +222,25 @@ public:
   }
 
   // Indicate if the value is printed directly or bound to variable.
+  // The C++ object of a store with a single alternative
+  // is its contained value so lifting and unwrapping
+  // are the identity in C++.
+  static mlir::Value StripStoreCasts(mlir::Value V) {
+    while (isa_and_nonnull<LiftStoreOp, UnwrapOp>(V.getDefiningOp()))
+      V = V.getDefiningOp()->getOperand(0);
+    return V;
+  }
+
   static constexpr
   auto  IsConstantLike = [](mlir::Value V) -> bool {
+    V = StripStoreCasts(V);
     return isa_and_nonnull<LiteralOp, ConstexprOp, ConstOp>(V.getDefiningOp());
   };
 
   void WriteExpr(mlir::Value V, bool IsFwd = false) {
-    if (auto Op = V.getDefiningOp<LiteralOp>()) {
+    if (StripStoreCasts(V) != V) {
+      WriteExpr(StripStoreCasts(V), IsFwd);
+    } else if (auto Op = V.getDefiningOp<LiteralOp>()) {
       WriteExpr(Op);
     } else if (auto Op = V.getDefiningOp<ConstexprOp>()) {
       WriteExpr(Op);
@@ -444,6 +456,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<ReturnOp>(Op))       return Visit(cast<ReturnOp>(Op));
     else if (isa<CallOp>(Op))         return Visit(cast<CallOp>(Op));
     else if (isa<UnwrapOp>(Op))       return Visit(cast<UnwrapOp>(Op));
+    else if (isa<LiftStoreOp>(Op))    return Visit(cast<LiftStoreOp>(Op));
     else if (isa<StoreComposeOp>(Op)) return Visit(cast<StoreComposeOp>(Op));
     else if (isa<ScopeOp>(Op))
       return VisitRegion(cast<ScopeOp>(Op).getBody());
@@ -471,6 +484,11 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
     if (FT.getNumResults() > 1)
       return SetError("multiple return types are not supported in C++", Op);
+
+    auto IsStoreT = [](mlir::Type T) { return isa<StoreType>(T); };
+    if (llvm::none_of(FT.getInputs(), IsStoreT) &&
+        llvm::none_of(FT.getResults(), IsStoreT))
+      return VisitNormalFunc(Op, Name);
 
     // Write the lambda variable declaration.
     OS << "[[maybe_unused]] inline constexpr auto " << Name << " = []";
@@ -516,6 +534,42 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << "{\n";
     VisitRegion(Body);
     OS << "};";
+  }
+
+  // Write a normal function declaration for a FuncOp
+  // whose types are all mappable to C++.
+  void VisitNormalFunc(FuncOp Op, llvm::StringRef Name) {
+    mlir::FunctionType FT = Op.getFunctionType();
+    mlir::Region& Body = Op.getBody();
+    if (Body.empty())
+      return SetError("empty function body", Op);
+
+    // Write the return type.
+    OS << "inline ";
+    if (FT.getNumResults() == 0) {
+      OS << "void";
+    } else {
+      llvm::SmallString<64> ResultTypename;
+      if (!schir::MappableToCpp::lookup(FT.getResult(0), ResultTypename))
+        return SetError("result type is not mappable to C++", Op);
+      OS << ResultTypename;
+    }
+    OS << ' ' << Name;
+
+    ValueMapScope Scope(ValueMap);
+    // Write parameters.
+    OS << '(';
+    for (mlir::BlockArgument Arg : Body.getArguments()) {
+      llvm::SmallString<64> ArgTypename;
+      if (!schir::MappableToCpp::lookup(Arg.getType(), ArgTypename))
+        return SetError("parameter type is not mappable to C++", Op);
+      if (Arg.getArgNumber() != 0)
+        OS << ", ";
+      OS << ArgTypename << ' ' << SetLocalVarName(Arg, "arg_");
+    }
+    OS << ") {\n";
+    VisitRegion(Body);
+    OS << "}";
   }
 
   void Visit(ReturnOp Op) {
@@ -648,10 +702,12 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ");\n";
   }
 
-  // The C++ object of a store with a single alternative
-  // is already its contained value.
-  void Visit(UnwrapOp Op) {
-    SetLocalVal(Op.getResult(), GetLocalVal(Op.getValue()));
+  void Visit(UnwrapOp) {
+    // The unwrapped value is written at each use (see WriteExpr).
+  }
+
+  void Visit(LiftStoreOp) {
+    // The lifted value is written at each use (see WriteExpr).
   }
 
   void Visit(StoreComposeOp Op) {
@@ -1102,12 +1158,12 @@ writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
   // Populate the input args with declvals.
   auto Scope = Writer.MakeValueMapScope();
   for (mlir::Value Arg : Op.getArgs()) {
-    if (auto ST = dyn_cast<StoreType>(Arg.getType());
-        ST && ST.getAlts().size() == 1) {
-      if (auto CT = dyn_cast<CppType>(ST.getAlts().front().getValue()))
-        Writer.SetLocalVal(Arg,
-            "::nbdl::detail::declval<" + CT.getCppTypename() + ">()");
-    }
+    mlir::Type T = Arg.getType();
+    if (auto ST = dyn_cast<StoreType>(T); ST && ST.getAlts().size() == 1)
+      T = ST.getAlts().front().getValue();
+    if (auto CT = dyn_cast<CppType>(T))
+      Writer.SetLocalVal(Writer.StripStoreCasts(Arg),
+          "::nbdl::detail::declval<" + CT.getCppTypename() + ">()");
   }
 
   Writer.WriteVisitExpr(Op);

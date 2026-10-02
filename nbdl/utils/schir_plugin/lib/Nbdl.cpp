@@ -329,6 +329,14 @@ void nbdl_spec_get_store_alts(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(C.CreateList(Results));
 }
 
+// Return true if the mlir.value is a !nbdl.store.
+void nbdl_spec_is_store(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::Value V = schir::any_cast<mlir::Value>(Args.front());
+  C.Cont(schir::Bool(V && isa<nbdl_spec::StoreType>(V.getType())));
+}
+
 // Get the name of a mlir.value of type !nbdl.member_name by
 // visiting its defining operation (which we expect should exist).
 void nbdl_get_member_name(schir::Context& C, schir::ValueRefs Args) {

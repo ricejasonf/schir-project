@@ -62,7 +62,7 @@ int sum(int a, int b) {
     (sfinae-visit '.get_five Store))
   (match-cond
     ((GetFive store)
-     (match (GetFive store) ; // valid within region
+     (match (lift-store (GetFive store)) ; // valid within region
       (else => (lambda (val) (visit fn val)))))
     (else (visit fn 1))))
 
@@ -70,7 +70,7 @@ int sum(int a, int b) {
 (define-match-fn test_3 (store fn)
   (define (GetFive Store)
     (sfinae-visit '.get_five Store))
-  (match (GetFive store)
+  (match (lift-store (GetFive store))
     (else => fn))) // Fails for foo but not bar.
 
 (define-match-fn test_4 (store x fn)

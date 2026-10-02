@@ -67,17 +67,44 @@ llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
 
   for (auto [I, Operand, ResultT] : llvm::enumerate(getOperands(), ResultTs)) {
     mlir::Type OperandT = Operand.getType();
-    // Allow unresolved stores which are inferred later.
-    auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(OperandT);
-    bool IsUnresolved = ST && ST.getAlts().empty();
-    // Allow the contained type of a store with a single alternative.
-    auto ResultST = llvm::dyn_cast<nbdl_spec::StoreType>(ResultT);
-    bool IsLifted = ResultST && ResultST.getAlts().size() == 1 &&
-                    ResultST.getAlts().front().getValue() == OperandT;
-    if (OperandT != ResultT && !IsUnresolved && !IsLifted)
+    // Allow unknown values which are inferred later.
+    bool IsUnknown = llvm::isa<nbdl_spec::UnknownType>(OperandT);
+    if (OperandT != ResultT && !IsUnknown)
       return emitOpError("type of return operand ") << I << " ("
         << OperandT << ") does not match function result type ("
         << ResultT << ")";
   }
+  return llvm::success();
+}
+
+// Get the FuncNameOp that defines V looking through
+// a !nbdl.store<!nbdl.func_name> created by LiftStoreOp.
+// Return a null op if V is not a function name.
+static
+nbdl_spec::FuncNameOp getFuncName(mlir::Value V) {
+  if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
+    V = Op.getValue();
+  return V.getDefiningOp<nbdl_spec::FuncNameOp>();
+}
+
+mlir::func::FuncOp nbdl_spec::VisitOp::lookupCallee() {
+  nbdl_spec::FuncNameOp FN = getFuncName(getFn());
+  auto M = (*this)->getParentOfType<mlir::ModuleOp>();
+  if (!FN || !M)
+    return {};
+  return M.lookupSymbol<mlir::func::FuncOp>(FN.getName());
+}
+
+llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
+  mlir::Type ValueT = getValue().getType();
+  if (llvm::isa<nbdl_spec::StoreType>(ValueT))
+    return emitOpError("cannot lift a value that is already a store");
+  // An unknown value lifts to an unresolved store.
+  auto ExpectedT = llvm::isa<nbdl_spec::UnknownType>(ValueT)
+    ? nbdl_spec::StoreType::get(getContext())
+    : nbdl_spec::StoreType::get(getContext(), mlir::TypeAttr::get(ValueT));
+  if (getResult().getType() != ExpectedT)
+    return emitOpError("result type (") << getResult().getType()
+      << ") should be " << ExpectedT;
   return llvm::success();
 }

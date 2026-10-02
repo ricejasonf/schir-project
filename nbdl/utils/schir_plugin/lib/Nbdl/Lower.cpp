@@ -53,8 +53,9 @@ struct TypeConverter : mlir::TypeConverter {
   }
 };
 
+// Function signatures are not converted since define-fn uses raw types.
 struct ConversionTarget : mlir::ConversionTarget {
-  ConversionTarget(mlir::MLIRContext& Ctx, ::TypeConverter const& TC)
+  ConversionTarget(mlir::MLIRContext& Ctx)
     : mlir::ConversionTarget(Ctx)
   {
     addLegalDialect<arith::ArithDialect>();
@@ -63,11 +64,6 @@ struct ConversionTarget : mlir::ConversionTarget {
     addIllegalDialect<nbdl_spec::NbdlDialect>();
     // These are erased after the conversion when they have no uses.
     addLegalOp<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp>();
-
-    addDynamicallyLegalOp<func::FuncOp>([&TC](func::FuncOp Op) {
-      return TC.isSignatureLegal(Op.getFunctionType()) &&
-             TC.isLegal(&Op.getBody());
-    });
   }
 };
 
@@ -109,16 +105,20 @@ struct LowerDiscardLike : mlir::OpConversionPattern<OpTy> {
   }
 };
 
-// The converted value is the contained type.
-struct LowerUnwrap : mlir::OpConversionPattern<nbdl_spec::UnwrapOp> {
-  using Base::Base;
+// Unwrapping or lifting a store is the identity on converted values
+// since a store is converted to its contained type.
+template <typename OpTy>
+struct LowerStoreCast : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
 
   llvm::LogicalResult matchAndRewrite(
-        nbdl_spec::UnwrapOp Op, OpAdaptor Adaptor,
+        OpTy Op, typename OpTy::Adaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
     mlir::Value Value = Adaptor.getValue();
-    if (Value.getType() != Op.getResult().getType())
-      return R.notifyMatchFailure(Op, "unwrap result type mismatch");
+    mlir::Type ResultT =
+      this->getTypeConverter()->convertType(Op.getResult().getType());
+    if (Value.getType() != ResultT)
+      return R.notifyMatchFailure(Op, "store cast type mismatch");
     R.replaceOp(Op, Value);
     return llvm::success();
   }
@@ -130,9 +130,9 @@ struct LowerLiteral : mlir::OpConversionPattern<nbdl_spec::LiteralOp> {
   llvm::LogicalResult matchAndRewrite(
         nbdl_spec::LiteralOp Op, OpAdaptor,
         mlir::ConversionPatternRewriter& R) const override {
-    mlir::Type ResultT = getTypeConverter()->convertType(Op.getType());
+    // The literal is not a store so it needs no conversion.
     auto Value = dyn_cast<mlir::TypedAttr>(Op.getValue());
-    if (!ResultT || !Value || Value.getType() != ResultT)
+    if (!Value || Value.getType() != Op.getType())
       return R.notifyMatchFailure(Op, "literal is not an arith constant");
     R.replaceOpWithNewOp<arith::ConstantOp>(Op, Value);
     return llvm::success();
@@ -148,19 +148,12 @@ struct LowerVisit : mlir::OpConversionPattern<nbdl_spec::VisitOp> {
         mlir::ConversionPatternRewriter& R) const override {
     if (Op.getSfinae() || Op.getValidCppCrossMap())
       return R.notifyMatchFailure(Op, "visit requires C++");
-    auto FN = Op.getFn().getDefiningOp<nbdl_spec::FuncNameOp>();
-    if (!FN)
-      return R.notifyMatchFailure(Op, "callee is not a function name");
-    auto M = Op->getParentOfType<mlir::ModuleOp>();
-    auto Callee = M ? M.lookupSymbol<func::FuncOp>(FN.getName())
-                    : func::FuncOp();
+    func::FuncOp Callee = Op.lookupCallee();
     if (!Callee)
       return R.notifyMatchFailure(Op, "callee is not a func in the module");
 
-    llvm::SmallVector<mlir::Type, 1> ResultTs;
-    if (llvm::failed(getTypeConverter()->convertTypes(
-            Callee.getResultTypes(), ResultTs)))
-      return R.notifyMatchFailure(Op, "callee result types not convertible");
+    // The callee has raw types that require no conversion.
+    mlir::TypeRange ResultTs = Callee.getResultTypes();
     if (ResultTs.size() > 1)
       return R.notifyMatchFailure(Op, "callee has multiple results");
 
@@ -226,12 +219,11 @@ struct LowerScope : mlir::OpConversionPattern<nbdl_spec::ScopeOp> {
 void populateLowerPatterns(mlir::RewritePatternSet& PS,
                            ::TypeConverter const& TC) {
   mlir::MLIRContext* Ctx = PS.getContext();
-  mlir::populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-      PS, TC);
   PS.add<LowerReturn,
          LowerDiscardLike<nbdl_spec::DiscardOp>,
          LowerDiscardLike<nbdl_spec::NoOp>,
-         LowerUnwrap,
+         LowerStoreCast<nbdl_spec::UnwrapOp>,
+         LowerStoreCast<nbdl_spec::LiftStoreOp>,
          LowerLiteral,
          LowerVisit,
          LowerMatchIf,
@@ -252,7 +244,7 @@ public:
     mlir::ModuleOp M = getOperation();
 
     ::TypeConverter TC;
-    ::ConversionTarget Target(*Ctx, TC);
+    ::ConversionTarget Target(*Ctx);
     mlir::RewritePatternSet PS(Ctx);
     populateLowerPatterns(PS, TC);
 

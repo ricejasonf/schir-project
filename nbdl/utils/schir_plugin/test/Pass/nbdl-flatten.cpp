@@ -53,7 +53,7 @@ struct holder {
 ; // CHECK: [[MEMBER:%[0-9]+]] = "nbdl.member_name"() <{name = "get_float"}>
 ; // CHECK: "nbdl.visit"([[MEMBER]],
 ; // CHECK-SAME: : (!nbdl.member_name, !nbdl.store<!nbdl.cpp<"foo::not_a_store">>)
-; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"float">>
+; // CHECK-SAME: -> !nbdl.cpp<"float">
 (define-match-fn test_infer_visit_result (Store Fn)
   (match (get Store)
     ('foo::not_a_store =>
@@ -78,9 +78,9 @@ struct holder {
 ; // CHECK-LABEL: @test_infer_match_if_then_arg_sfinae(
 ; // CHECK: [[MEMB0:%[0-9]+]] = "nbdl.member_name"() <{name = "get_float"}>
 ; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"([[MEMB0]], %arg{{[0-9]+}})
-; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"nbdl::detail::sfinae_result<float>">>
+; // CHECK-SAME: -> !nbdl.cpp<"nbdl::detail::sfinae_result<float>">
 ; // CHECK: "nbdl.match_if"([[VISIT0]])
-; // CHECK-NEXT: ([[THENARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"float">>):
+; // CHECK-NEXT: ([[THENARG:%arg[0-9]+]]: !nbdl.cpp<"float">):
 (define-match-fn test_infer_match_if_then_arg_sfinae (Store Fn)
   (match (get Store)
     ('foo::not_a_store =>
@@ -215,28 +215,33 @@ struct holder {
          ('int32_t => Fn)
          (else => noop))))))
 
-; // Literal types should match corresponding c++ types of literals.
+; // Literal types should match corresponding c++ types of literals
+; // when lifted to a store.
 ; // CHECK-LABEL: @test_inline_match_literal(
 ; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
+; // CHECK-SAME: -> i32
+; // CHECK-NEXT: [[STORE:%[0-9]+]] = "nbdl.lift_store"([[LIT]])
 ; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NOT: "nbdl.match"
-; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[LIT]])
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[STORE]])
 ; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
 ; // CHECK-NEXT: }
 (define-match-fn test_inline_match_literal (Fn)
-  (match 5
+  (match (lift-store 5)
     ('int32_t => Fn)
     (else => noop)))
 
 ; // CHECK-LABEL: @test_inline_match_literal_float(
 ; // CHECK: [[LIT:%[0-9]+]] = "nbdl.literal"()
+; // CHECK-SAME: -> f32
+; // CHECK-NEXT: [[STORE:%[0-9]+]] = "nbdl.lift_store"([[LIT]])
 ; // CHECK-SAME: -> !nbdl.store<f32>
 ; // CHECK-NOT: "nbdl.match"
-; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[LIT]])
+; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[STORE]])
 ; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
 ; // CHECK-NEXT: }
 (define-match-fn test_inline_match_literal_float (Fn)
-  (match 3.14
+  (match (lift-store 3.14)
     ('int32_t => noop)
     ('float => Fn)
     (else => noop)))

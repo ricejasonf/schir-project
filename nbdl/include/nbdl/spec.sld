@@ -21,6 +21,8 @@
       (load-builtin "nbdl_spec_register_nbdl_dialect"))
     (define get-store-alts
       (load-builtin "nbdl_spec_get_store_alts"))
+    (define store-value?
+      (load-builtin "nbdl_spec_is_store"))
     (define nbdl_spec_create_store_type
       (load-builtin "nbdl_spec_create_store_type"))
     (define get-member-name
@@ -42,14 +44,16 @@
         ((Typename Tag)
          (nbdl_spec_cpp_type Typename current-schir-clang Tag))))
 
+    ;; Lift a string-like to a C++ type or return the mlir type as is.
+    (define (%cpp-or-type T)
+      (if (or (string? T) (symbol? T))
+        (!cpp T)
+        T))
+
     ;; Create a !nbdl.store type where string-likes are lifted to C++ types.
     (define (!nbdl.store . Alts)
       (apply nbdl_spec_create_store_type
-             (map (lambda (Alt)
-                    (if (or (string? Alt) (symbol? Alt))
-                      (!cpp Alt)
-                      Alt))
-                  Alts)))
+             (map %cpp-or-type Alts)))
 
     ;; "Cpp" module will translate to c++ via translate-cpp.
     (define main-module (create-top-module "nbdl_spec_module_cpp"))
@@ -107,6 +111,7 @@
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.func_name (type "!nbdl.func_name"))
     (define !nbdl.unit (type "!nbdl.unit"))
+    (define !nbdl.unknown (type "!nbdl.unknown"))
     (define i32 (type "i32"))
     (define f32 (type "f32"))
 
@@ -216,14 +221,12 @@
         ((symbol? Arg)
           (build-constexpr Loc Arg))
         ((exact-integer? Arg)
-          (build-literal Loc (attr (number->string Arg) i32)
-                         (!nbdl.store i32)))
+          (build-literal Loc (attr (number->string Arg) i32) i32))
         ((flonum? Arg)
-          (build-literal Loc (attr (number->string Arg) f32)
-                         (!nbdl.store f32)))
+          (build-literal Loc (attr (number->string Arg) f32) f32))
         ((string? Arg)
           (build-literal Loc (string-attr Arg)
-                         (!nbdl.store 'std::string_view)))
+                         (!cpp 'std::string_view)))
         (else Arg)))
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
@@ -280,17 +283,18 @@
           (attributes:)
           (result-types: !nbdl.unit))))
 
-    (define (build-literal Loc Arg StoreT)
+    (define (build-literal Loc Arg T)
       (result
         (create-op "nbdl.literal"
           (loc: Loc)
           (operands:)
           (attributes: ("value" Arg))
-          (result-types: StoreT))))
+          (result-types: T))))
 
+    ;; The result is not a store.
     (define (build-constexpr Loc ExprStr)
-      (define StoreT
-        (!nbdl.store (!cpp (expr->type ExprStr) 'canonical)))
+      (define T
+        (!cpp (expr->type ExprStr) 'canonical))
       (when (member-name-literal? ExprStr)
         (error "unexpected member name: {}" ExprStr))
       (result
@@ -298,7 +302,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("expr" (string-attr ExprStr)))
-          (result-types: StoreT))))
+          (result-types: T))))
 
     ; Build a key for store-compose.
     (define (build-store-key Loc Key)
@@ -550,6 +554,10 @@
               (eqv? '%nbdl-path (car PathSpec)))
          (let ((RootStore (cadr PathSpec))
                (PathNodes (cddr PathSpec)))
+          (when (and (value? RootStore)
+                     (not (store-value? RootStore)))
+            (error-with-loc (source-loc PathNodes)
+                            "expecting a store as the root of a path (see lift-store)"))
           (cond
             ((and (value? RootStore)
                   (pair? PathNodes))
@@ -812,9 +820,10 @@
         (if Sfinae?
           (unit-attr)
           #f))
+      ;; The result is not a store.
       (define ResultType
         (if MatchingResults?
-          (!nbdl.store)
+          !nbdl.unknown
           !nbdl.unit))
       (define VisitResult
         (result
@@ -917,8 +926,13 @@
       (syntax-rules (=>)
         ((match-aux PathSpec
           (TypeN => FnN) ...)
-         (%match-results (list PathSpec)
+         (let ((PathSpecExpr PathSpec))
+          (%match-results (list PathSpecExpr)
           (lambda (Store)
+            (unless (store-value? (car Store))
+              ;; Use the source location of the %expr.
+              (error-with-loc (cadr PathSpecExpr)
+                              "expecting a store to match (see lift-store)"))
             (%top-level
               (lambda()
                 ; Canonicalize C++ typenames so types can be compared.
@@ -935,7 +949,7 @@
                   (attributes:)
                   (result-types:)
                   (region: "overloads" ((OverloadArg : (GetArgType TypeN)))
-                    ((make-visit-proc FnN) OverloadArg)) ...))))))))
+                    ((make-visit-proc FnN) OverloadArg)) ...)))))))))
 
     ;; Match a resolved object by its type.
     ;; - It is an error if a type appears more that once as an alternative.
@@ -1075,8 +1089,9 @@
                                         Body ...))))))
              (make-named-fn SymName FuncOp)))))))
 
-    ;; Define a concrete function for use with Nbdl operations whose parameter
-    ;; and result types are implicitly lifted to store types.
+    ;; Define a normal function whose parameter and result types are
+    ;; mlir types where string-likes are lifted to C++ types.
+    ;; Use lift-store on a parameter to use it with Nbdl operations.
     (define-syntax define-fn
       (syntax-rules (: ->)
         ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...) Body1 BodyN ...)
@@ -1096,15 +1111,50 @@
                            ("function_type"
                             (type-attr
                               (%function-type
-                                (vector (!nbdl.store ArgT) ...)
-                                (vector (!nbdl.store RetT) ...)))))
+                                (vector (%cpp-or-type ArgT) ...)
+                                (vector (%cpp-or-type RetT) ...)))))
                          (result-types:)
-                         (region: "body" ((Arg : (!nbdl.store ArgT))
+                         (region: "body" ((Arg : (%cpp-or-type ArgT))
                                           ...)
                                   Body1 BodyN ...))))))
              (when (memq 'Name export-c-names)
                (lower-to-llvm FuncOp))
              (make-named-fn SymName FuncOp)))))))
+
+    (define (build-lift-store Loc Arg)
+      (define Value (maybe-build-expr Loc Arg))
+      (define ResultT
+        (cond
+          ((not (value? Value))
+           (error-with-loc Loc "expecting mlir value to lift: {}" Value))
+          ((store-value? Value)
+           (error-with-loc Loc "value is already a store"))
+          ((value? !nbdl.unknown Value) (!nbdl.store))
+          (else (!nbdl.store (get-type Value)))))
+      (result
+        (create-op "nbdl.lift_store"
+                   (loc: Loc)
+                   (operands: Value)
+                   (attributes:)
+                   (result-types: ResultT))))
+
+    ;; An expr (e.g. visit) is lifted when it is resolved.
+    (define (lift-store-aux Loc Arg)
+      (if (expr? Arg)
+        (%expr Loc
+               (lambda (Loc Fn)
+                 (%invoke-expr Arg
+                   (lambda (Value)
+                     (Fn (build-lift-store Loc Value))))))
+        (build-lift-store Loc Arg)))
+
+    ;; Lift a value of a non-store type (e.g. a define-fn parameter,
+    ;; a literal, or the result of a visit) to a store for use with
+    ;; Nbdl operations.
+    (define-syntax lift-store
+      (syntax-rules ()
+        ((lift-store Value)
+         (lift-store-aux (syntax-source-loc Value) Value))))
 
     (define (return-aux Loc Exprs)
       (close-previous-scope)
@@ -1212,6 +1262,7 @@
     match-if
     define-match-fn
     define-fn
+    lift-store
     return
     match-params
     visit

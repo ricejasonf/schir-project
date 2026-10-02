@@ -39,6 +39,14 @@ def Nbdl_Unit : TypeDef<Nbdl_Dialect, "Unit", []> {
   }];
 }
 
+def Nbdl_Unknown : TypeDef<Nbdl_Dialect, "Unknown", []> {
+  let mnemonic = "unknown";
+  let description = [{
+    A placeholder for the type of a value that is not yet inferred
+    and is not necessarily a store (e.g. the result of a visit.)
+  }];
+}
+
 def Nbdl_Cpp : TypeDef<Nbdl_Dialect, "Cpp", []> {
   let mnemonic = "cpp";
   let description = [{
@@ -113,16 +121,9 @@ def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
                            Nbdl_Unit,
                            Nbdl_Tag]>;
 
-// TypePlus is for keys callable objects which allow member names
-// used for accessing members or calling member functions.
-def Nbdl_TypePlus : AnyTypeOf<[Nbdl_Store,
-                               Nbdl_Unit,
-                               Nbdl_Tag,
-                               Nbdl_MemberName,
-                               Nbdl_FuncName]>;
-
 // Implicitly default to the unit type for keys.
-def Nbdl_Key : Optional<Nbdl_TypePlus>;
+// Keys may be any value (e.g. a literal or member name.)
+def Nbdl_Key : Optional<AnyType>;
 
 class Nbdl_Op<string mnemonic, list<Trait> traits = []> :
     Op<Nbdl_Dialect, mnemonic, traits>;
@@ -135,7 +136,7 @@ def Nbdl_LiteralOp : Nbdl_Op<"literal", []> {
   }];
 
   let arguments = (ins AnyAttrOf<[I32Attr, F32Attr, StrAttr]>:$value);
-  let results   = (outs Nbdl_Type:$result);
+  let results   = (outs AnyType:$result);
 }
 
 def Nbdl_GetOp : Nbdl_Op<"get", []> {
@@ -199,7 +200,7 @@ def Nbdl_MatchIfOp : Nbdl_Op<"match_if", [Terminator]> {
     Note that, like MatchOp, the operation has no result.
   }];
 
-  let arguments = (ins Nbdl_Type:$cond);
+  let arguments = (ins AnyType:$cond);
   let regions   = (region SizedRegion<1>:$thenRegion,
                           SizedRegion<1>:$elseRegion);
 }
@@ -209,7 +210,7 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
     The result of a constant expression in C++.
   }];
   let arguments = (ins StrAttr:$expr);
-  let results = (outs Nbdl_Type:$result);
+  let results = (outs AnyType:$result);
 }
 
 def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
@@ -352,14 +353,15 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
     a value.
   }];
 
-  let arguments = (ins Nbdl_Type:$arg);
+  let arguments = (ins AnyType:$arg);
   let results   = (outs);
 }
 
 def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
                                        HasParent<"mlir::func::FuncOp">]> {
   let description = [{
-    Return results from a FuncOp where an operand may be an unresolved store.
+    Return results from a FuncOp. Each operand must be of the
+    corresponding result type or !nbdl.unknown until it is inferred.
   }];
 
   let arguments = (ins Variadic<AnyType>:$operands);
@@ -369,11 +371,15 @@ def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
 
 def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let description = [{
-    Call a function with resolved stores as arguments
-    returning a result. This is analogous to std::visit,
-    but if any function parameter is not a store type then
-    the corresponding argument must be of that exact type or a
-    store type with a single alternative of that exact type.
+    Call a function with resolved arguments returning a result.
+    This is analogous to std::visit, but if any function parameter
+    is not a store type then the corresponding argument must be of
+    that exact type or a store type with a single alternative of
+    that exact type.
+
+    The result is not a store since the parent structure of the
+    object is not described by the IR. Its type is !nbdl.unknown until
+    it is inferred (or !nbdl.unit if it is discarded.)
 
     The Sfinae unit attribute indicates the call should
     be wrapped in a SFINAE check which only has meaning
@@ -385,11 +391,16 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     C linkage name, a lowered FuncOp that will be injected
     into the LLVM module.
   }];
-  let arguments = (ins Nbdl_TypePlus:$fn,
-                       Variadic<Nbdl_Type>:$args,
+  let arguments = (ins AnyType:$fn,
+                       Variadic<AnyType>:$args,
                        UnitAttr:$sfinae,
                        UnitAttr:$validCppCrossMap);
-  let results = (outs Nbdl_Type:$result);
+  let results = (outs AnyType:$result);
+  let extraClassDeclaration = [{
+    // Look up the FuncOp in the parent module if the callee
+    // is a function name (possibly lifted to a store.)
+    ::mlir::func::FuncOp lookupCallee();
+  }];
 }
 
 def Nbdl_ConsumerOp : Nbdl_Op<"consumer", []> {
@@ -444,7 +455,7 @@ def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
     in the Range.
   }];
 
-  let arguments = (ins Nbdl_Type:$begin, Nbdl_Type:$end);
+  let arguments = (ins AnyType:$begin, AnyType:$end);
   let results = (outs);
   let regions = (region SizedRegion<1>:$body);
 }
@@ -457,6 +468,22 @@ def Nbdl_UnwrapOp : Nbdl_Op<"unwrap"> {
 
   let arguments = (ins Nbdl_Store:$value);
   let results = (outs AnyType:$result);
+}
+
+def Nbdl_LiftStoreOp : Nbdl_Op<"lift_store", [Pure]> {
+  let description = [{
+    Lift a value of any type that is not a store to a store
+    with that type as its single alternative.
+    This is the inverse of UnwrapOp and enables use of the
+    value with Nbdl operations.
+
+    If the value is !nbdl.unknown, the result is an unresolved
+    store until the type of the value is inferred.
+  }];
+
+  let arguments = (ins AnyType:$value);
+  let results = (outs Nbdl_Store:$result);
+  let hasVerifier = 1;
 }
 
 #endif

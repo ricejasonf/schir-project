@@ -79,7 +79,7 @@ namespace foo {
       EventHandler
       (store-compose html::event_data ;; // Create local context object
                      EventData ;(ref EventData)
-                     (ref Ctx))
+                     (lift-store (ref Ctx)))
       Fn))
 
   (define-match-fn send_event (Ctx Id Fn)

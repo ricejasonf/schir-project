@@ -29,15 +29,16 @@
 (define-match-fn test_negative_float (fn)
   (visit fn -2.5))
 
-; // Literal types match their corresponding C++ types.
+; // Literal types match their corresponding C++ types
+; // when lifted to a store.
 (define-match-fn test_match_int (fn)
-  (match 5
+  (match (lift-store 5)
     ('float => (lambda (x) (visit fn 1.5)))
     ('int32_t => fn)
     (else => (lambda (x) (visit fn 2)))))
 
 (define-match-fn test_match_float (fn)
-  (match 3.14
+  (match (lift-store 3.14)
     ('int32_t => (lambda (x) (visit fn 1)))
     ('float => fn)
     (else => (lambda (x) (visit fn 2)))))
