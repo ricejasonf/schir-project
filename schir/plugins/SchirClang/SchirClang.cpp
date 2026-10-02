@@ -28,7 +28,8 @@ namespace schir {
 struct SchirClangImpl {
   clang::Parser& ClangParser;
   schir::SchirScheme SchirScheme;
-  llvm::BumpPtrAllocator LexerSpellings; // TODO use PP scratch buffer
+  // Spellings of tokens written to the lexer.
+  llvm::BumpPtrAllocator LexerSpellings;
   schir_clang::LexerWriter LexerWriter;
   bool IsResuming = false;
   std::function<void(schir::SourceLocation Loc, llvm::StringRef Str)>

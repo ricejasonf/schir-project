@@ -65,14 +65,25 @@ public:
     if (Chars.empty()) return;
 
     // Own the Chars and add a null terminator.
-    size_t NewSize = Chars.size() + 1;
     char *S = LexerSpellings.template Allocate<char>(Chars.size() + 1);
     S[Chars.size()] = '\0';
     std::copy(Chars.begin(), Chars.end(), S);
+    llvm::StringRef Spelling(S, Chars.size());
+
+    clang::SourceManager& SM = Parser.getPreprocessor().getSourceManager();
+    // The spellings are given their own FileID so each token has a
+    // distinct location.
+    // "<scratch space>" informs Clang this is not from a macro.
+    clang::FileID FID = SM.createFileID(
+        llvm::MemoryBufferRef(Spelling, "<scratch space>"));
+    clang::SourceLocation SpellingLoc = SM.getLocForStartOfFile(FID);
+    clang::SourceLocation ExpansionLoc = Loc.isValid()
+      ? SM.createExpansionLoc(SpellingLoc, Loc, Loc, Chars.size() + 1)
+      : SpellingLoc;
 
     // Lex Tokens for the TokenBuffer.
-    clang::Lexer Lexer(clang::SourceLocation(), Parser.getLangOpts(),
-            S, S, S + Chars.size());
+    clang::Lexer Lexer(SpellingLoc, Parser.getLangOpts(),
+                       S, S, S + Chars.size());
     while (true) {
       Token Tok;
       Lexer.LexFromRawLexer(Tok);
@@ -81,7 +92,8 @@ public:
       if (Tok.is(clang::tok::raw_identifier))
         Parser.getPreprocessor().LookUpIdentifierInfo(Tok);
 
-      Tok.setLocation(Loc);
+      Tok.setLocation(ExpansionLoc.getLocWithOffset(
+            SM.getFileOffset(Tok.getLocation())));
       Tok.setFlag(clang::Token::IsReinjected);
 
       if (Tok.is(clang::tok::eof)) break;
