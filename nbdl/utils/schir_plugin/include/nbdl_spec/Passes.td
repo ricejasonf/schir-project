@@ -45,6 +45,7 @@ def LowerToLLVMPass : NbdlPass<"nbdl-to-llvm", "mlir::ModuleOp"> {
     Lower output dialects of nbdl-lower to the LLVM dialect.
   }];
   let dependentDialects = ["mlir::LLVM::LLVMDialect",
+                           "mlir::affine::AffineDialect",
                            "mlir::cf::ControlFlowDialect"];
 }
 

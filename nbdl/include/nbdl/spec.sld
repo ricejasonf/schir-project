@@ -105,8 +105,8 @@
               (Fn Op)))
           (loop (cdr Rest)))))
 
-    ;; Functions exported via export-c that are lowered
-    ;; to LLVM by finalize-module (ie by define-fn.)
+    ;; Functions exported via export-c or export-c-internal that are
+    ;; lowered to LLVM by finalize-module (ie by define-fn.)
     (define %lower-to-llvm-ops '())
 
     ;; Return a procedure that emits C++ for an Op via Translate.
@@ -140,6 +140,9 @@
       (%finalize-exports export-c-ops
                          (lambda (Op) (memq Op %lower-to-llvm-ops))
                          lower-to-llvm)
+      (%finalize-exports export-c-internal-ops
+                         (lambda (Op) (memq Op %lower-to-llvm-ops))
+                         lower-to-llvm)
       (when llvm-module
         (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm")
         (inject-module llvm-module)
@@ -153,6 +156,11 @@
                  (memq Name export-c-names))
         (error-with-loc Loc "name cannot be exported to both C++ and C: {}"
                         Name))
+      (when (and (memq Name export-c-internal-names)
+                 (or (memq Name export-cpp-names)
+                     (memq Name export-c-names)))
+        (error-with-loc Loc "internal name cannot also be exported: {}"
+                        Name))
       (with-module-builder
         main-module
         (lambda ()
@@ -165,7 +173,10 @@
                (%add-export-op Loc export-cpp-ops Name TopLevelOp)))
             ((memq Name export-c-names)
              (set! export-c-ops
-               (%add-export-op Loc export-c-ops Name TopLevelOp))))
+               (%add-export-op Loc export-c-ops Name TopLevelOp)))
+            ((memq Name export-c-internal-names)
+             (set! export-c-internal-ops
+               (%add-export-op Loc export-c-internal-ops Name TopLevelOp))))
           TopLevelOp)))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
@@ -1092,7 +1103,8 @@
                                           ...)
                                   Body1 BodyN ...))))))
              ;; Process exports if any.
-             (when (memq 'Name export-c-names)
+             (when (or (memq 'Name export-c-names)
+                       (memq 'Name export-c-internal-names))
                (set! %lower-to-llvm-ops
                  (cons FuncOp %lower-to-llvm-ops)))
              (make-named-fn SymName FuncOp)))))))
@@ -1206,13 +1218,15 @@
       (write main-module)
       (newline))
 
-    ;; Names exported via export-cpp or export-c.
+    ;; Track the names of exports.
     (define export-cpp-names '())
     (define export-c-names '())
+    (define export-c-internal-names '())
 
-    ;; Exported ops as elements (Name Op) in order of definition.
+    ;; Track exported ops as (Name Op) in order of definition.
     (define export-cpp-ops '())
     (define export-c-ops '())
+    (define export-c-internal-ops '())
 
     (define-syntax export-cpp
       (syntax-rules ()
@@ -1228,6 +1242,15 @@
          (set! export-c-names
            (append
              export-c-names
+             (list 'Name ...))))))
+
+    ;; Export to the LLVM module without exposing declarations to C++.
+    (define-syntax export-c-internal
+      (syntax-rules ()
+        ((export-c-internal Name ...)
+         (set! export-c-internal-names
+           (append
+             export-c-internal-names
              (list 'Name ...))))))
 
     (define (run-pass-nbdl-flatten)
@@ -1256,6 +1279,7 @@
     noop
     export-cpp
     export-c
+    export-c-internal
     finalize-module
 
     ;; Reexport some base stuff

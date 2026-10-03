@@ -1,6 +1,7 @@
 // Copyright Jason Rice 2026
 
 #include <nbdl_spec/NbdlDialect.h>
+#include <mlir/Conversion/AffineToStandard/AffineToStandard.h>
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
 #include <mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h>
 #include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
@@ -9,17 +10,20 @@
 #include <mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
 #include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
+#include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/MemRef/Transforms/Transforms.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/DialectConversion.h>
+#include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
 
@@ -332,10 +336,20 @@ public:
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
 
+    // Expand memref view operations (e.g. subview) into operations
+    // on their strided metadata which MemRefToLLVM can lower.
+    {
+      mlir::RewritePatternSet PS(Ctx);
+      memref::populateExpandStridedMetadataPatterns(PS);
+      if (llvm::failed(mlir::applyPatternsGreedily(M, std::move(PS))))
+        return signalPassFailure();
+    }
+
     mlir::LLVMTypeConverter TC(Ctx);
     mlir::LLVMConversionTarget Target(*Ctx);
 
     mlir::RewritePatternSet PS(Ctx);
+    mlir::populateAffineToStdConversionPatterns(PS);
     mlir::populateSCFToControlFlowConversionPatterns(PS);
     mlir::arith::populateArithToLLVMConversionPatterns(TC, PS);
     mlir::cf::populateControlFlowToLLVMConversionPatterns(TC, PS);
