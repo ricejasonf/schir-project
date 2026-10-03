@@ -441,8 +441,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
   // Write C++ forward declarations.
   bool IsDeclaration = false;
-  // Write the declaration with C linkage.
-  bool IsExternC = false;
+  // Write a function that calls a lowered function via its C adapter.
+  bool IsLoweredWrapper = false;
 
   void Visit(mlir::Operation* Op) {
     Flush();
@@ -506,8 +506,10 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       return SetError("empty function body", Op);
 
     auto IsStoreT = [](mlir::Type T) { return isa<StoreType>(T); };
-    if (IsExternC || (llvm::none_of(FT.getInputs(), IsStoreT) &&
-                      llvm::none_of(FT.getResults(), IsStoreT)))
+    if (IsLoweredWrapper)
+      return WriteLoweredWrapper(Op, Name);
+    if (llvm::none_of(FT.getInputs(), IsStoreT) &&
+        llvm::none_of(FT.getResults(), IsStoreT))
       return VisitNormalFunc(Op, Name);
 
     std::string ClassName = (Name + "_fn").str();
@@ -605,14 +607,9 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
   // Declare a normal function.
   //  inline R name(T...);
-  // With C language linkage, memref arguments are expanded into the
-  // elements of their descriptor (ie allocated, aligned, offset,
-  // sizes..., strides...) which is how nbdl::memref is destructured
-  // by nbdl::detail::cross_call.
-  //  extern "C" R name(T*, T*, std::intptr_t, ...);
   void WriteNormalFuncDecl(FuncOp Op, llvm::StringRef Name) {
     mlir::FunctionType FT = Op.getFunctionType();
-    OS << (IsExternC ? "extern \"C\" " : "inline ");
+    OS << "inline ";
     if (FT.getNumResults() == 0) {
       OS << "void";
     } else {
@@ -626,22 +623,73 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     llvm::ListSeparator Sep;
     for (mlir::Type T : FT.getInputs()) {
       llvm::SmallString<64> Typename;
-      auto MT = dyn_cast<mlir::MemRefType>(T);
-      if (IsExternC && MT) {
-        if (!MT.hasRank() || MT.getRank() == 0 ||
-            !schir::MappableToCpp::lookup(MT.getElementType(), Typename))
-          return SetError("memref parameter is not mappable to C++", Op);
-        OS << Sep << Typename << '*' << Sep << Typename << '*'
-           << Sep << "::std::intptr_t";
-        for (int64_t I = 0; I < 2 * MT.getRank(); ++I)
-          OS << Sep << "::std::intptr_t";
-        continue;
-      }
       if (!schir::MappableToCpp::lookup(T, Typename))
         return SetError("parameter type is not mappable to C++", Op);
       OS << Sep << Typename;
     }
     OS << ");";
+  }
+
+  // Define a function with the C++ types mapped from the MLIR types of
+  // a function lowered from MLIR that calls the lowered function via
+  // its C adapter. The adapter receives a pointer to the result and
+  // each argument so the C++ objects are passed the same way regardless
+  // of how the lowered prototype maps to the C ABI.
+  //  extern "C" void nbdl_c_3foo4name(void*, void*, ...);
+  //  [[maybe_unused]] inline R name(T arg_0, ...) {
+  //    R result{};
+  //    nbdl_c_3foo4name(&result, &arg_0, ...);
+  //    return result;
+  //  }
+  void WriteLoweredWrapper(FuncOp Op, llvm::StringRef Name) {
+    mlir::FunctionType FT = Op.getFunctionType();
+    mlir::Region& Body = Op.getBody();
+    std::string AdapterName = getCAdapterName(Op.getSymName());
+
+    // Declare the adapter.
+    OS << "extern \"C\" void " << AdapterName << '(';
+    llvm::interleaveComma(
+        llvm::seq(FT.getNumResults() + FT.getNumInputs()), OS,
+        [&](unsigned) { OS << "void*"; });
+    OS << ");\n";
+
+    // Write the return type.
+    llvm::SmallString<64> ResultTypename;
+    if (FT.getNumResults() == 1 &&
+        !schir::MappableToCpp::lookup(FT.getResult(0), ResultTypename))
+      return SetError("result type is not mappable to C++", Op);
+    OS << "[[maybe_unused]] inline "
+       << (ResultTypename.empty() ? "void" : ResultTypename.str())
+       << ' ' << Name;
+
+    // Write parameters.
+    ValueMapScope Scope(ValueMap);
+    OS << '(';
+    for (mlir::BlockArgument Arg : Body.getArguments()) {
+      llvm::SmallString<64> ArgTypename;
+      if (!schir::MappableToCpp::lookup(Arg.getType(), ArgTypename))
+        return SetError("parameter type is not mappable to C++", Op);
+      if (Arg.getArgNumber() != 0)
+        OS << ", ";
+      OS << ArgTypename << ' ' << SetLocalVarName(Arg, "arg_");
+    }
+    OS << ") {\n";
+
+    // Call the adapter.
+    if (!ResultTypename.empty())
+      OS << ResultTypename << " result{};\n";
+    OS << AdapterName << '(';
+    llvm::ListSeparator Sep;
+    if (!ResultTypename.empty())
+      OS << Sep << "&result";
+    for (mlir::BlockArgument Arg : Body.getArguments()) {
+      OS << Sep << '&';
+      PrintLocalVal(Arg);
+    }
+    OS << ");\n";
+    if (!ResultTypename.empty())
+      OS << "return result;\n";
+    OS << "}";
   }
 
   void Visit(ReturnOp Op) {
@@ -740,19 +788,6 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   void WriteVisitExprBare(VisitOp Op) {
     mlir::Value Fn = Op.getFn();
     mlir::OperandRange Args = Op.getArgs();
-    if (Op.getValidCppCrossMap()) {
-      // Call a lowered function by its C linkage name with
-      // arguments expanded to match its lowered prototype.
-      // (e.g. a memref is passed as its destructured elements.)
-      OS << "::nbdl::detail::cross_call(";
-      WriteExpr(Fn);
-      for (mlir::Value V : Args) {
-        OS << ", ";
-        WriteExpr(V);
-      }
-      OS << ")";
-      return;
-    }
     if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
       assert(!Args.empty() && "member call should have at least one argument");
       WriteExpr(Args.front());
@@ -773,7 +808,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     // Do nothing.
   }
 
-  // Call a to-be-lowered function by its C linkage name.
+  // Call a function by its C++ name.
   void Visit(CallOp Op) {
     if (Op.getNumResults() > 1)
       return SetError("call should have less than 2 results", Op);
@@ -1220,7 +1255,7 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
   if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op)) {
     FuncWriter Writer(LexerWriter);
     Writer.IsDeclaration = Mode != TranslateMode::Definition;
-    Writer.IsExternC = Mode == TranslateMode::ExternCDeclaration;
+    Writer.IsLoweredWrapper = Mode == TranslateMode::LoweredWrapper;
     Writer.Visit(Op);
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);

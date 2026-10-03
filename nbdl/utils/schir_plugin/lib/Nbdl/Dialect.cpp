@@ -112,3 +112,13 @@ llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
       << ") should be " << ExpectedT;
   return llvm::success();
 }
+
+std::string nbdl_spec::getCAdapterName(llvm::StringRef SymName) {
+  // TODO Consider using schir::Mangle. (It requires schir::Context.)
+  std::string Result = "nbdl_c_";
+  llvm::SmallVector<llvm::StringRef, 4> Parts;
+  SymName.split(Parts, "::", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+  for (llvm::StringRef Part : Parts)
+    Result += std::to_string(Part.size()) + Part.str();
+  return Result;
+}

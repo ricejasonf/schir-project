@@ -90,9 +90,9 @@ struct int_sink {
 (define-fn add_value ((S : 'foo::my_struct) (X : 'int)) -> ('int)
   (return (visit add_ints (get (lift-store S) '.value) X)))
 
-; // Functions exported via export-c have the unqualified symbol name
-; // and are lowered to LLVM.
-; // CHECK-LABEL: func.func @add_i32
+; // Functions exported via export-c have the namespace qualified
+; // symbol name (like export-cpp) and are lowered to LLVM.
+; // CHECK-LABEL: func.func @"::foo::add_i32"
 ; // CHECK-SAME: (%arg0: i32, %arg1: i32) -> i32
 ; // CHECK-NEXT: [[SUM:%[0-9]+]] = arith.addi %arg0, %arg1 : i32
 ; // CHECK-NEXT: "nbdl.return"([[SUM]]) : (i32) -> ()
@@ -106,9 +106,9 @@ struct int_sink {
 
 ; // Visit an export-c function from an export-c function.
 ; // Literals are not stores.
-; // CHECK-LABEL: func.func @add_one_i32
+; // CHECK-LABEL: func.func @"::foo::add_one_i32"
 ; // CHECK-SAME: (%arg0: i32) -> i32
-; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @add_i32}>
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::add_i32"}>
 ; // CHECK-NEXT: [[ONE:%[0-9]+]] = "nbdl.literal"() <{value = 1 : i32}>
 ; // CHECK-SAME: () -> i32
 ; // CHECK-NEXT: [[RESULT:%[0-9]+]] = "nbdl.visit"([[FN]], %arg0, [[ONE]])
@@ -129,7 +129,7 @@ struct int_sink {
 
 ; // Visit a define-fn with MLIR types within a match-fn.
 ; // CHECK-LABEL: func.func @"::foo::sum_foo_bar_i32"
-; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @add_i32}>
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::add_i32"}>
 ; // CHECK: "nbdl.visit"([[FN]],
 ; // CHECK-SAME: <{validCppCrossMap}>
 ; // CHECK-SAME: -> i32
@@ -199,14 +199,14 @@ struct int_sink {
 
 ; // The continuation is lowered to a call where the
 ; // pointer is unwrapped from its lifted store.
-; // CHECK-LABEL: func.func @sum_to_ptr
+; // CHECK-LABEL: func.func @"::foo::sum_to_ptr"
 ; // CHECK-SAME: (%arg0: i32, %arg1: i32, %arg2: !llvm.ptr) {
 ; // CHECK-NOT: "nbdl.func_name"() <{name = @sum_to}>
 ; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"
 ; // CHECK-SAME: -> i32
 ; // CHECK: [[DEST:%[0-9]+]] = "nbdl.unwrap"
 ; // CHECK-SAME: (!nbdl.store<!llvm.ptr>) -> !llvm.ptr
-; // CHECK-NEXT: func.call @write_i32([[SUM]], [[DEST]])
+; // CHECK-NEXT: func.call @"::foo::write_i32"([[SUM]], [[DEST]])
 ; // CHECK: "nbdl.return"() : () -> ()
 (define-fn sum_to_ptr ((A : i32) (B : i32) (Dest : !llvm.ptr)) -> ()
   (visit sum_to A B Dest write_i32)
@@ -227,7 +227,8 @@ int main() {
     SCHIR_ASSERT(value == 42);
   }
   SCHIR_ASSERT(foo::add_value(foo::my_struct{42}, 8) == 50);
-  // Functions exported via export-c are declared extern "C".
+  // Functions exported via export-c are called via C++ wrappers
+  // with the C++ types mapped from their MLIR types.
   SCHIR_ASSERT(foo::add_i32(5, 6) == 11);
   SCHIR_ASSERT(foo::add_i32(-5, 3) == -2);
   SCHIR_ASSERT(foo::add_one_i32(41) == 42);
@@ -240,6 +241,10 @@ int main() {
   }
 
   // Functions are normal functions with the specified types.
+  static_assert(std::same_as<decltype(foo::add_i32),
+                             std::int32_t(std::int32_t, std::int32_t)>);
+  static_assert(std::same_as<decltype(foo::write_i32),
+                             void(std::int32_t, void*)>);
   static_assert(std::same_as<decltype(foo::add_ints), int(int, int)>);
   static_assert(std::same_as<decltype(foo::get_value),
                              void(foo::my_struct, foo::int_sink)>);

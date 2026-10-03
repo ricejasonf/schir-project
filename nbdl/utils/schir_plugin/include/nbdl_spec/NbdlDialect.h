@@ -7,6 +7,8 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
+#include <llvm/ADT/StringRef.h>
+#include <string>
 
 namespace schir {
 class SchirClangImpl;
@@ -27,6 +29,17 @@ llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,
 
 // Register passes that can be run via a pass pipeline string.
 void registerPasses();
+
+// The attribute that marks a function to be called from C++ via a
+// C adapter created by the nbdl-c-adapter pass. Its value is the
+// function type before lowering.
+inline constexpr llvm::StringLiteral CAdapterAttrName = "nbdl.c_adapter";
+
+// Get the C linkage name of the adapter for a function lowered from MLIR
+// given its symbol name.
+// Each name component is prefixed with its length.
+//  e.g. ::foo::add_i32 -> nbdl_c_3foo7add_i32
+std::string getCAdapterName(llvm::StringRef SymName);
 }
 
 // Include the generated header files

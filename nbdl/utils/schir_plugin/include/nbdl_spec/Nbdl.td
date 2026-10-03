@@ -401,7 +401,7 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     If arguments are verified to be a valid mapping from
     C++ types to MLIR types, then we set the ValidCppCrossMap
     unit attribute. This means a C++ function will call, by its
-    C linkage name, a lowered FuncOp that will be injected
+    C++ name, the wrapper of a lowered FuncOp that will be injected
     into the LLVM module.
   }];
   let arguments = (ins AnyType:$fn,

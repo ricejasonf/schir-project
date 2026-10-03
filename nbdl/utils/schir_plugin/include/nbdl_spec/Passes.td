@@ -49,4 +49,20 @@ def LowerToLLVMPass : NbdlPass<"nbdl-to-llvm", "mlir::ModuleOp"> {
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def CAdapterPass : NbdlPass<"nbdl-c-adapter", "mlir::ModuleOp"> {
+  let summary = "create C adapters for lowered functions called from C++";
+  let description = [{
+    For each llvm.func marked with the nbdl.c_adapter attribute (whose
+    value is the function type before lowering), create an adapter with
+    C linkage that receives a pointer to each result followed by a
+    pointer to each argument and calls the lowered function.
+
+    Pointers are passed the same way by every C ABI so C++ can call
+    the adapter without depending on how the lowered prototype maps to
+    the C ABI of the target. Each pointee has the layout of the C++ type
+    mapped from the MLIR type.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+}
+
 #endif // NBDL_DIALECT_PASSES_TD

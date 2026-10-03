@@ -157,15 +157,16 @@
       FuncOp)
 
     ;; Generate a FuncOp that automatically returns the last expr via geomalg.return.
+    ;; The symbol name of the FuncOp is the result of the expression SymName.
     ;; Export this to expose to nbdl.
     (define-syntax define-func-aux
       (syntax-rules()
-        ((define-func FuncName ((ArgName : ArgType) ...)
-                      BodyI ... BodyN)
+        ((define-func-aux SymName FuncName ((ArgName : ArgType) ...)
+                          BodyI ... BodyN)
          (define-func-aux-aux
            (syntax-source-loc FuncName)
            (syntax-source-loc BodyN)
-           'FuncName
+           SymName
            (list ArgType ...)
            (list (syntax-source-loc ArgName) ...)
            (lambda (ArgName ...)
@@ -183,7 +184,7 @@
          (begin
            ;; Overwrite the FuncOp with a callable lambda that builds the call expression.
            (define FuncName
-             (let ((FuncOp (define-func-aux FuncName
+             (let ((FuncOp (define-func-aux 'FuncName FuncName
                                             ((ArgName : ArgType) ...)
                                             BodyI ... BodyN)))
               (%make-call-fn FuncOp (FuncName ArgName ...))))))))

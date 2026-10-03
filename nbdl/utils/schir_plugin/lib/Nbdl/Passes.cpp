@@ -941,13 +941,16 @@ public:
 namespace nbdl_spec {
 #define GEN_PASS_DECL_LOWERPASS
 #define GEN_PASS_DECL_LOWERTOLLVMPASS
+#define GEN_PASS_DECL_CADAPTERPASS
 #define GEN_PASS_REGISTRATION_LOWERPASS
 #define GEN_PASS_REGISTRATION_LOWERTOLLVMPASS
+#define GEN_PASS_REGISTRATION_CADAPTERPASS
 #include "nbdl_spec/NbdlPasses.h.inc"
 
 void registerPasses() {
   registerLowerPass();
   registerLowerToLLVMPass();
+  registerCAdapterPass();
 }
 
 llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,

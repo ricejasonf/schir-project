@@ -40,13 +40,13 @@ namespace foo {
   (export-c test_dot test_add)
   (export-cpp test_test_dot test_test_call)
 
-  ; // CHECK-LABEL: func.func @test_dot
+  ; // CHECK-LABEL: func.func @"::foo::test_dot"
   ; // CHECK-SAME: -> !geomalg.blade<0>
   ; // CHECK: "geomalg.dot"
   (define-geomalg-fn test_dot ((A : !vec3) (B : !vec3))
     (dot A B))
 
-  ; // CHECK-LABEL: func.func @test_add
+  ; // CHECK-LABEL: func.func @"::foo::test_add"
   ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
   ; // CHECK: "geomalg.expand"
   (define-geomalg-fn test_add ((A : !vec3) (B : !vec3))
@@ -60,7 +60,7 @@ namespace foo {
     (vprod A B))
 
   ; // CHECK-LABEL: @"::foo::test_test_dot"
-  ; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @test_dot}>
+  ; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::test_dot"}>
   ; // CHECK: "nbdl.visit"([[FN]],
   ; // CHECK-SAME: <{validCppCrossMap}>
   (define-match-fn test_test_dot (Store Fn)
@@ -77,7 +77,7 @@ namespace foo {
   ; // CHECK: [[SUM2:%[0-9]+]] = "nbdl.visit"
   ; // CHECK-SAME: <{validCppCrossMap}>
   ; // CHECK-NOT: "nbdl.unwrap"
-  ; // CHECK: func.call @test_dot([[SUM1]], [[SUM2]])
+  ; // CHECK: func.call @"::foo::test_dot"([[SUM1]], [[SUM2]])
   (define-match-fn test_test_call (Store Fn)
     (match-params ((A : 'geomalg::vec3 (get Store '.a))
                    (B : 'geomalg::vec3 (get Store '.b)))
@@ -89,7 +89,7 @@ namespace foo {
   ; // CHECK: [[UA:%[0-9]+]] = "nbdl.unwrap"([[A]])
   ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
   ; // CHECK-NEXT: [[UB:%[0-9]+]] = "nbdl.unwrap"([[B]])
-  ; // CHECK-NEXT: func.call @test_dot([[UA]], [[UB]])
+  ; // CHECK-NEXT: func.call @"::foo::test_dot"([[UA]], [[UB]])
   ; // CHECK-NEXT: [[UNIT:%[0-9]+]] = "nbdl.unit"()
   ; // CHECK-NEXT: "nbdl.discard"([[UNIT]])
   (define-match-fn test_call_dot (A B Fn)

@@ -16,8 +16,9 @@ enum class TranslateMode {
   Definition,
   // Declare a function so it may be referenced by C++ name.
   Declaration,
-  // Declare a function with C language linkage.
-  ExternCDeclaration,
+  // Define a C++ function that calls a function lowered from MLIR
+  // via its C adapter (see the nbdl-c-adapter pass.)
+  LoweredWrapper,
 };
 
 std::tuple<std::string, schir::SourceLocationEncoding*, mlir::Operation*>

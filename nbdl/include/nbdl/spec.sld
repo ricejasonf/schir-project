@@ -17,8 +17,10 @@
       (load-builtin "nbdl_spec_translate_cpp"))
     (define declare-cpp
       (load-builtin "nbdl_spec_declare_cpp"))
-    (define declare-extern-c
-      (load-builtin "nbdl_spec_declare_extern_c"))
+    (define define-lowered-wrapper
+      (load-builtin "nbdl_spec_define_lowered_wrapper"))
+    (define mark-c-adapter
+      (load-builtin "nbdl_spec_mark_c_adapter"))
     (define close-previous-scope
       (load-builtin "nbdl_spec_close_previous_scope"))
     (define register-nbdl-dialect
@@ -67,19 +69,36 @@
     (load-dialect "arith")
 
     ;; Create the symbol name for a top level op.
+    ;; Exported names are qualified with the current C++ namespace
+    ;; so they are distinct from the names exported by other modules.
+    ;; TODO We assume a single translation unit. To support multiple
+    ;;      translation units, we need to properly handle the external
+    ;;      linkage of lowered functions and anonymous namespaces.
     (define (top-level-name Name)
-      (if (memq Name export-cpp-names)
+      (if (or (memq Name export-cpp-names)
+              (memq Name export-c-names)
+              (memq Name export-c-internal-names))
         (namespace-prefix Name)
         Name))
 
     (define llvm-module #f)
 
+    ;; Copy a FuncOp into Module to be lowered.
+    (define (copy-to-lowered-module Module FuncOp)
+      (with-module-builder
+        Module
+        (lambda ()
+          (define Copy (copy-op FuncOp))
+          ;; Mark to have an abi adapter created to allow calling from C++.
+          (when (%export-op? export-c-ops FuncOp)
+            (mark-c-adapter Copy))
+          Copy)))
+
     ;; Copy a FuncOp into the llvm-module.
     (define (lower-to-llvm FuncOp)
       (unless llvm-module
         (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
-      (with-module-builder llvm-module
-                           (lambda () (copy-op FuncOp))))
+      (copy-to-lowered-module llvm-module FuncOp))
 
     ;; An element (Name Op) of an exported ops list.
     (define (%make-export Name Op)
@@ -87,6 +106,14 @@
 
     (define (%export-op Export)
       (cadr Export))
+
+    ;; Return #t if Op is an element of ExportOps.
+    (define (%export-op? ExportOps Op)
+      (let loop ((Rest ExportOps))
+        (cond
+          ((null? Rest) #f)
+          ((eq? Op (%export-op (car Rest))) #t)
+          (else (loop (cdr Rest))))))
 
     ;; Add the element (Name Op) to the end of ExportOps so
     ;; elements are in order of definition.
@@ -122,7 +149,8 @@
       (not (define-store-op? Op)))
 
     ;; Finish the module by writing c++ translations, forward declarations,
-    ;; and lowering and injecting backend modules.
+    ;; wrappers of lowered functions, and lowering and injecting
+    ;; backend modules.
     (define (finalize-module)
       (%finalize-exports export-cpp-ops define-store-op?
                          (%emit-cpp translate-cpp))
@@ -131,8 +159,9 @@
       (nbdl_canonicalize_cpp_types main-module current-schir-clang)
       (%finalize-exports export-cpp-ops %function-op?
                          (%emit-cpp declare-cpp))
+      ;; Lowered functions are called from C++ via wrappers.
       (%finalize-exports export-c-ops %function-op?
-                         (%emit-cpp declare-extern-c))
+                         (%emit-cpp define-lowered-wrapper))
       ;; Infer types and simplify operations.
       (run-pass-nbdl-flatten)
       (%finalize-exports export-cpp-ops %function-op?
@@ -144,7 +173,7 @@
                          (lambda (Op) (memq Op %lower-to-llvm-ops))
                          lower-to-llvm)
       (when llvm-module
-        (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm")
+        (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm" "nbdl-c-adapter")
         (inject-module llvm-module)
         (set! llvm-module #f)))
 
@@ -1300,6 +1329,7 @@
 
     ;; Stuff that should be broken out as a common details lib
     top-level-op
+    copy-to-lowered-module
     make-named-fn
     write-cpp
     dump-op

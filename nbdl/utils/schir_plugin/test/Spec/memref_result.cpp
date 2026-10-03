@@ -8,6 +8,29 @@
 // RUN:   %s -o %t
 // RUN: %t
 
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -fpass-plugin=SchirLLVMPass.so \
+// RUN:   -S -emit-llvm %s -o - | FileCheck --check-prefix=LLVM \
+// RUN:   --implicit-check-not=nbdl_c_3foo14accumulate_i32 %s
+
+// C++ calls a lowered function via its C adapter which receives pointers
+// to the result and arguments. A memref is passed as a pointer to its
+// descriptor (ie nbdl::memref) and a memref result is stored through
+// the result pointer.
+// LLVM-LABEL: define void @nbdl_c_3foo10drop_front(ptr %0, ptr %1, ptr %2)
+// LLVM-NEXT: [[SRC:%[0-9]+]] = load { ptr, ptr, i64, [1 x i64], [1 x i64] }, ptr %1, align 1
+// LLVM-COUNT-5: extractvalue {{.*}} [[SRC]]
+// LLVM-NEXT: [[COUNT:%[0-9]+]] = load i32, ptr %2, align 1
+// LLVM-NEXT: [[VIEW:%[0-9]+]] = call { ptr, ptr, i64, [1 x i64], [1 x i64] } @"::foo::drop_front"({{.*}}, i32 [[COUNT]])
+// LLVM-NEXT: store { ptr, ptr, i64, [1 x i64], [1 x i64] } [[VIEW]], ptr %0, align 1
+// LLVM-NEXT: ret void
+
+// A function with no results has no result pointer.
+// LLVM-LABEL: define void @nbdl_c_3foo8sum_tail(ptr %0, ptr %1, ptr %2)
+// LLVM: call void @"::foo::sum_tail"(
+// LLVM-NEXT: ret void
+
 #include <nbdl/bind_memref.hpp>
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
@@ -21,8 +44,8 @@ namespace foo {
 (import (nbdl spec)
         (only (schir mlir) attr create-op result load-dialect))
 
-(export-c-internal drop_front accumulate_i32)
-(export-c sum_tail)
+(export-c-internal accumulate_i32)
+(export-c drop_front sum_tail)
 (export-cpp sum_vector_tail)
 
 (load-dialect "memref")
@@ -31,8 +54,8 @@ namespace foo {
 (define !memref_i32 (type "memref<?xi32, strided<[?], offset: ?>>"))
 
 ; // Return a view of Src without its first Count elements.
-; // A memref result is only returned to other lowered functions.
-; // CHECK-LABEL: func.func @drop_front
+; // A memref result is returned to C++ as a nbdl::memref.
+; // CHECK-LABEL: func.func @"::foo::drop_front"
 ; // CHECK-SAME: -> memref<?xi32, strided<[?], offset: ?>>
 ; // CHECK: [[VIEW:%[a-z0-9]+]] = memref.subview
 ; // CHECK-NEXT: "nbdl.return"([[VIEW]])
@@ -104,8 +127,8 @@ namespace foo {
   (return))
 
 ; // Use the returned view in a lowered function.
-; // CHECK-LABEL: func.func @sum_tail
-; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @drop_front}>
+; // CHECK-LABEL: func.func @"::foo::sum_tail"
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::drop_front"}>
 ; // CHECK-NEXT: [[TAIL:%[0-9]+]] = "nbdl.visit"([[FN]], %arg0, %arg1)
 ; // CHECK-SAME: -> memref<?xi32, strided<[?], offset: ?>>
 ; // CHECK-NEXT: "nbdl.lift_store"([[TAIL]])
@@ -118,7 +141,7 @@ namespace foo {
 
 ; // Bind each std::vector to a nbdl::memref to visit the lowered function.
 ; // CHECK-LABEL: func.func @"::foo::sum_vector_tail"
-; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @sum_tail}>
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::sum_tail"}>
 ; // CHECK: "nbdl.visit"([[FN]], {{%[0-9]+}}, {{%arg[0-9]+}}, {{%[0-9]+}})
 ; // CHECK-SAME: <{validCppCrossMap}>
 (define-match-fn sum_vector_tail (Src Count Dest)
@@ -137,6 +160,17 @@ namespace foo {
 
 int main() {
   std::vector<std::int32_t> src{1, 2, 3, 4, 5};
+
+  // Receive the memref result of a lowered function.
+  {
+    nbdl::memref<std::int32_t, 1> tail
+      = foo::drop_front(nbdl::bind_memref(src), 2);
+    SCHIR_ASSERT(tail.allocated == src.data());
+    SCHIR_ASSERT(tail.aligned + tail.offset == src.data() + 2);
+    SCHIR_ASSERT(tail.size == 3);
+    SCHIR_ASSERT(tail.stride == 1);
+  }
+
   std::vector<std::int32_t> dest{0};
   foo::sum_vector_tail(src, 1, dest);
   SCHIR_ASSERT(dest[0] == 2 + 3 + 4 + 5);

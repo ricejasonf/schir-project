@@ -26,24 +26,26 @@
       (syntax-rules ()
         ((define-geomalg-fn Name ((ArgName : ArgType) ...) BodyI ... BodyN)
          (define Name
-           (let ((FuncOp (top-level-op (syntax-source-loc Name)
-                                       'Name
-                                       (lambda (SymName)
-                                         (geomalg-define-func-aux
-                                           Name ((ArgName : ArgType) ...)
-                                           BodyI ...
-                                           BodyN)))))
+           (let ((SymName #f))
+            (let ((FuncOp (top-level-op
+                            (syntax-source-loc Name)
+                            'Name
+                            (lambda (SymName_)
+                              (set! SymName SymName_)
+                              (geomalg-define-func-aux
+                                SymName_ Name ((ArgName : ArgType) ...)
+                                BodyI ...
+                                BodyN)))))
              ;; Just force CGA metric for now since it is the only use case.
              (run-passes (parent-op FuncOp)
                          (string-append
                            "geomalg-expand{metric=cga func-name="
-                           'Name
+                           SymName
                            "}"))
-             (with-module-builder llvm-module
-                                  (lambda () (copy-op FuncOp)))
+             (copy-to-lowered-module llvm-module FuncOp)
              ; TODO geomalg-to-llvm is applied to the whole module
              ;      which includes previously lowered functions.
-             (run-passes llvm-module "geomalg-to-llvm")
-             (make-named-fn 'Name FuncOp))))))
+             (run-passes llvm-module "geomalg-to-llvm" "nbdl-c-adapter")
+             (make-named-fn SymName FuncOp)))))))
 
     ));

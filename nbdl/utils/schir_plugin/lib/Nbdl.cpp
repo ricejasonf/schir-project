@@ -199,10 +199,26 @@ void nbdl_spec_declare_cpp(Context& C, ValueRefs Args) {
   translateCpp(C, Args, nbdl_spec::TranslateMode::Declaration);
 }
 
-// Declare a function (FuncOp) in C++ with C language linkage.
-// (declare-extern-c op [port])
-void nbdl_spec_declare_extern_c(Context& C, ValueRefs Args) {
-  translateCpp(C, Args, nbdl_spec::TranslateMode::ExternCDeclaration);
+// Define a C++ function that calls a function (FuncOp) lowered
+// from MLIR via its C adapter.
+// (define-lowered-wrapper op [port])
+void nbdl_spec_define_lowered_wrapper(Context& C, ValueRefs Args) {
+  translateCpp(C, Args, nbdl_spec::TranslateMode::LoweredWrapper);
+}
+
+// Mark a FuncOp to have a C adapter created by
+// the nbdl-c-adapter pass once it is lowered.
+// (mark-c-adapter op)
+void nbdl_spec_mark_c_adapter(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(
+      dyn_cast<mlir::Operation>(Args[0]));
+  if (!FuncOp)
+    return C.RaiseError("expecting func.func: {}", Args[0]);
+  FuncOp->setAttr(nbdl_spec::CAdapterAttrName,
+                  mlir::TypeAttr::get(FuncOp.getFunctionType()));
+  C.Cont();
 }
 
 // If the current block has a terminator, wrap the

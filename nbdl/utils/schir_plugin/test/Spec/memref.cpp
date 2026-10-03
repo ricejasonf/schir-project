@@ -12,6 +12,7 @@
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
 #include <array>
+#include <concepts>
 #include <cstdint>
 #include <mdspan>
 #include <vector>
@@ -62,7 +63,7 @@ namespace foo {
 
 ; // The element type is inferred from the memref, and the
 ; // element is unwrapped to call the lowered function.
-; // CHECK-LABEL: func.func @sum_i32
+; // CHECK-LABEL: func.func @"::foo::sum_i32"
 ; // CHECK-SAME: (%arg0: memref<?xi32, strided<[?], offset: ?>>,
 ; // CHECK-SAME: %arg1: memref<?xi32, strided<[?], offset: ?>>) {
 ; // CHECK: [[SRC:%[0-9]+]] = "nbdl.lift_store"(%arg0)
@@ -70,7 +71,7 @@ namespace foo {
 ; // CHECK-NEXT: ^bb0([[X:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK-NEXT: [[XVAL:%[0-9]+]] = "nbdl.unwrap"([[X]])
 ; // CHECK-SAME: (!nbdl.store<i32>) -> i32
-; // CHECK-NEXT: func.call @accumulate_i32([[XVAL]], %arg1)
+; // CHECK-NEXT: func.call @"::foo::accumulate_i32"([[XVAL]], %arg1)
 (define-fn sum_i32 ((Src : !memref_i32) (Dest : !memref_i32)) -> ()
   (match-each (lift-store Src)
     (lambda (X)
@@ -79,7 +80,7 @@ namespace foo {
 
 ; // Elements of a memref with a rank > 1 are matched in row-major order.
 ; // TODO Actually check row-major order.
-; // CHECK-LABEL: func.func @sum_i32_2d
+; // CHECK-LABEL: func.func @"::foo::sum_i32_2d"
 ; // CHECK: "nbdl.match_each"
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<i32>):
 (define-fn sum_i32_2d ((Src : !memref_2d_i32) (Dest : !memref_i32)) -> ()
@@ -91,7 +92,7 @@ namespace foo {
 ; // Bind each std::vector to a nbdl::memref and visit the lowered
 ; // function with the C++ arguments mapped to memrefs.
 ; // CHECK-LABEL: func.func @"::foo::sum_vector"
-; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @sum_i32}>
+; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::sum_i32"}>
 ; // CHECK: [[SRC:%[0-9]+]] = "nbdl.visit"
 ; // CHECK-SAME: -> !nbdl.cpp<"nbdl::memref<int, 1, long>">
 ; // CHECK: [[DEST:%[0-9]+]] = "nbdl.visit"
@@ -110,6 +111,14 @@ namespace foo {
 } // namespace foo
 } // namespace
 
+// The C++ wrapper of a lowered function takes nbdl::memref by value.
+static_assert(std::same_as<decltype(foo::sum_i32),
+                           void(nbdl::memref<std::int32_t, 1>,
+                                nbdl::memref<std::int32_t, 1>)>);
+static_assert(std::same_as<decltype(foo::sum_i32_2d),
+                           void(nbdl::memref<std::int32_t, 2>,
+                                nbdl::memref<std::int32_t, 1>)>);
+
 int main() {
   std::vector<std::int32_t> src{1, 2, 3, 4, 5};
   std::vector<std::int32_t> dest{0};
@@ -117,10 +126,9 @@ int main() {
   foo::sum_vector(src, dest);
   SCHIR_ASSERT(dest[0] == 15);
 
-  // Call the lowered function directly.
+  // Call the lowered function via its C++ wrapper.
   dest[0] = 0;
-  nbdl::detail::cross_call(foo::sum_i32, nbdl::bind_memref(src),
-                           nbdl::bind_memref(dest));
+  foo::sum_i32(nbdl::bind_memref(src), nbdl::bind_memref(dest));
   SCHIR_ASSERT(dest[0] == 15);
 
   // Respect the stride of the memref. (ie every other element)
@@ -130,8 +138,7 @@ int main() {
                                         std::array<std::intptr_t, 1>{2});
     std::mdspan strided(src.data(), mapping);
     dest[0] = 0;
-    nbdl::detail::cross_call(foo::sum_i32, nbdl::bind_memref(strided),
-                             nbdl::bind_memref(dest));
+    foo::sum_i32(nbdl::bind_memref(strided), nbdl::bind_memref(dest));
     SCHIR_ASSERT(dest[0] == 1 + 3 + 5);
   }
 
@@ -140,8 +147,7 @@ int main() {
     std::array<std::int32_t, 6> data{1, 2, 3, 4, 5, 6};
     std::mdspan matrix(data.data(), std::dextents<std::intptr_t, 2>(2, 3));
     dest[0] = 0;
-    nbdl::detail::cross_call(foo::sum_i32_2d, nbdl::bind_memref(matrix),
-                             nbdl::bind_memref(dest));
+    foo::sum_i32_2d(nbdl::bind_memref(matrix), nbdl::bind_memref(dest));
     SCHIR_ASSERT(dest[0] == 21);
   }
 }
