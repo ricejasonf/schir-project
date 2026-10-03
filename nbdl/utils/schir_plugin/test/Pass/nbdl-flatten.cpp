@@ -2,9 +2,11 @@
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -fsyntax-only %s | FileCheck %s
 
+#include <nbdl/ext/std/unordered_map.hpp>
 #include <nbdl/spec.hpp>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -32,6 +34,15 @@ public:
 };
 
 using int_or_text = nbdl::variant<int, std::string, float>;
+using int_to_text = std::unordered_map<int, std::string>;
+using int_or_text_holder = nbdl::variant_holder<int, std::string, float>;
+using int_or_text_alias = nbdl::strong_alias<int_or_text>;
+
+// A composed store where compose_key matches the variant
+// and any other key matches the parent map.
+struct compose_key { };
+using composed = nbdl::detail::store_composite_t<compose_key, int_or_text,
+                                                 int_to_text>;
 
 struct holder {
   not_a_store plain;
@@ -338,6 +349,103 @@ struct nbdl::get_impl<foo::keyed> {
        (match Variant
          ('int => noop)
          (else => Fn))))))
+
+; // Matching std::unordered_map with a key yields the mapped
+; // value or nbdl::not_in_set.
+; // CHECK-LABEL: @test_infer_match_unordered_map_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"int">>):
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}, %arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::not_in_set">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">>):
+(define-match-fn test_infer_match_unordered_map_alts (Store Key Fn)
+  (match (get Store)
+    ('foo::int_to_text =>
+     (lambda (Map)
+       (match (get Key)
+         ('int =>
+          (lambda (K)
+            (match (get Map K)
+              (else => Fn)))))))))
+
+; // CHECK-LABEL: @test_infer_match_variant_holder_index_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"nbdl::variant_index_t">>):
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}, %arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"unsigned long">>):
+(define-match-fn test_infer_match_variant_holder_index_alts (Store Key Fn)
+  (match (get Store)
+    ('foo::int_or_text_holder =>
+     (lambda (Holder)
+       (match (get Key)
+         ('nbdl::variant_index_t =>
+          (lambda (K)
+            (match (get Holder K)
+              (else => Fn)))))))))
+
+; // variant_holder has no nbdl::unresolved alternative.
+; // CHECK-LABEL: @test_infer_match_variant_holder_value_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"nbdl::variant_value_t">>):
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}, %arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">,
+; // CHECK-SAME: !nbdl.cpp<"float">>):
+(define-match-fn test_infer_match_variant_holder_value_alts (Store Key Fn)
+  (match (get Store)
+    ('foo::int_or_text_holder =>
+     (lambda (Holder)
+       (match (get Key)
+         ('nbdl::variant_value_t =>
+          (lambda (K)
+            (match (get Holder K)
+              (else => Fn)))))))))
+
+; // A strong_alias of a store matches as the aliased store.
+; // CHECK-LABEL: @test_infer_match_strong_alias_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"nbdl::strong_alias<
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">,
+; // CHECK-SAME: !nbdl.cpp<"int">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">,
+; // CHECK-SAME: !nbdl.cpp<"float">>):
+(define-match-fn test_infer_match_strong_alias_alts (Store Fn)
+  (match (get Store)
+    ('foo::int_or_text_alias =>
+     (lambda (Alias)
+       (match Alias
+         (else => Fn))))))
+
+; // The composed key matches the composed value.
+; // CHECK-LABEL: @test_infer_match_store_compose_key_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"foo::compose_key">>):
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}, %arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">,
+; // CHECK-SAME: !nbdl.cpp<"int">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">,
+; // CHECK-SAME: !nbdl.cpp<"float">>):
+(define-match-fn test_infer_match_store_compose_key_alts (Store Key Fn)
+  (match (get Store)
+    ('foo::composed =>
+     (lambda (Composed)
+       (match (get Key)
+         ('foo::compose_key =>
+          (lambda (K)
+            (match (get Composed K)
+              (else => Fn)))))))))
+
+; // Any other key matches the parent store.
+; // CHECK-LABEL: @test_infer_match_store_compose_parent_alts(
+; // CHECK: ^bb0({{.*}}!nbdl.cpp<"int">>):
+; // CHECK-NEXT: "nbdl.match"(%arg{{[0-9]+}}, %arg{{[0-9]+}}) ({
+; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::not_in_set">,
+; // CHECK-SAME: !nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">>):
+(define-match-fn test_infer_match_store_compose_parent_alts (Store Key Fn)
+  (match (get Store)
+    ('foo::composed =>
+     (lambda (Composed)
+       (match (get Key)
+         ('int =>
+          (lambda (K)
+            (match (get Composed K)
+              (else => Fn)))))))))
 
 (finalize-module)
 

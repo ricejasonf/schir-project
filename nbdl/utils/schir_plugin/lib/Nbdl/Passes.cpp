@@ -684,7 +684,7 @@ struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
             std::string Expr;
             llvm::raw_string_ostream OS(Expr);
             OS << "::nbdl::match(::nbdl::detail::declval<" << StoreAlt
-               << ">(), ";
+               << "&>(), ";
             if (!KeyAlt.empty())
               OS << "::nbdl::detail::declval<" << KeyAlt << ">(), ";
             OS << "[](auto&& ... args) -> void { (void)" << ProbeName
