@@ -26,7 +26,8 @@
       (syntax-rules ()
         ((define-geomalg-fn Name ((ArgName : ArgType) ...) BodyI ... BodyN)
          (define Name
-           (let ((FuncOp (top-level-op 'Name
+           (let ((FuncOp (top-level-op (syntax-source-loc Name)
+                                       'Name
                                        (lambda (SymName)
                                          (geomalg-define-func-aux
                                            Name ((ArgName : ArgType) ...)

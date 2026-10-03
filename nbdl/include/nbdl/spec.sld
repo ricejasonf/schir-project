@@ -68,7 +68,7 @@
 
     ;; Create the symbol name for a top level op.
     (define (top-level-name Name)
-      (if (assq Name export-cpp-names)
+      (if (memq Name export-cpp-names)
         (namespace-prefix Name)
         Name))
 
@@ -81,31 +81,27 @@
       (with-module-builder llvm-module
                            (lambda () (copy-op FuncOp))))
 
-    ;; Get the Op of an element (Name Op) in Exports or #f.
-    (define (%export-op Exports Name)
-      (define Entry (assq Name Exports))
-      (and Entry (cadr Entry)))
+    ;; An element (Name Op) of an exported ops list.
+    (define (%make-export Name Op)
+      (list Name Op))
 
-    ;; Set the Op of the element (Name Op) in Exports moving it to
-    ;; the end so defined elements are in order of definition.
-    (define (%set-export-op Exports Name Op)
-      (let loop ((Rest Exports)
-                 (Result '()))
-        (cond
-          ((null? Rest)
-           (reverse (cons (list Name Op) Result)))
-          ((eq? (car (car Rest)) Name)
-           (loop (cdr Rest) Result))
-          (else
-           (loop (cdr Rest) (cons (car Rest) Result))))))
+    (define (%export-op Export)
+      (cadr Export))
 
-    ;; Call Fn with each defined Op in Exports (in order of definition)
+    ;; Add the element (Name Op) to the end of ExportOps so
+    ;; elements are in order of definition.
+    (define (%add-export-op Loc ExportOps Name Op)
+      (when (assq Name ExportOps)
+        (error-with-loc Loc "exported name defined more than once: {}" Name))
+      (append ExportOps (list (%make-export Name Op))))
+
+    ;; Call Fn with each Op in ExportOps (in order of definition)
     ;; that satisfies Pred.
-    (define (%finalize-exports Exports Pred Fn)
-      (let loop ((Rest Exports))
+    (define (%finalize-exports ExportOps Pred Fn)
+      (let loop ((Rest ExportOps))
         (unless (null? Rest)
-          (let ((Op (cadr (car Rest))))
-            (when (and Op (Pred Op))
+          (let ((Op (%export-op (car Rest))))
+            (when (Pred Op)
               (Fn Op)))
           (loop (cdr Rest)))))
 
@@ -128,20 +124,20 @@
     ;; Finish the module by writing c++ translations, forward declarations,
     ;; and lowering and injecting backend modules.
     (define (finalize-module)
-      (%finalize-exports export-cpp-names define-store-op?
+      (%finalize-exports export-cpp-ops define-store-op?
                          (%emit-cpp translate-cpp))
       ;; Declarations are written with canonical C++ types
       ;; to match the definitions.
       (nbdl_canonicalize_cpp_types main-module current-schir-clang)
-      (%finalize-exports export-cpp-names %function-op?
+      (%finalize-exports export-cpp-ops %function-op?
                          (%emit-cpp declare-cpp))
-      (%finalize-exports export-c-names %function-op?
+      (%finalize-exports export-c-ops %function-op?
                          (%emit-cpp declare-extern-c))
       ;; Infer types and simplify operations.
       (run-pass-nbdl-flatten)
-      (%finalize-exports export-cpp-names %function-op?
+      (%finalize-exports export-cpp-ops %function-op?
                          (%emit-cpp translate-cpp))
-      (%finalize-exports export-c-names
+      (%finalize-exports export-c-ops
                          (lambda (Op) (memq Op %lower-to-llvm-ops))
                          lower-to-llvm)
       (when llvm-module
@@ -152,10 +148,11 @@
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
     ;; Initial passes and C++ translation are deferred to finalize-module.
-    (define (top-level-op Name Thunk)
-      (when (and (assq Name export-cpp-names)
-                 (assq Name export-c-names))
-        (error "name cannot be exported to both C++ and C: {}" Name))
+    (define (top-level-op Loc Name Thunk)
+      (when (and (memq Name export-cpp-names)
+                 (memq Name export-c-names))
+        (error-with-loc Loc "name cannot be exported to both C++ and C: {}"
+                        Name))
       (with-module-builder
         main-module
         (lambda ()
@@ -163,12 +160,12 @@
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
           (cond
-            ((assq Name export-cpp-names)
-             (set! export-cpp-names
-               (%set-export-op export-cpp-names Name TopLevelOp)))
-            ((assq Name export-c-names)
-             (set! export-c-names
-               (%set-export-op export-c-names Name TopLevelOp))))
+            ((memq Name export-cpp-names)
+             (set! export-cpp-ops
+               (%add-export-op Loc export-cpp-ops Name TopLevelOp)))
+            ((memq Name export-c-names)
+             (set! export-c-ops
+               (%add-export-op Loc export-c-ops Name TopLevelOp))))
           TopLevelOp)))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
@@ -484,6 +481,7 @@
            (let ((SymName #f))
             (let ((DefineStoreOp
                    (top-level-op
+                     (syntax-source-loc Name)
                      'Name
                      (lambda (SymName_)
                        (define Loc (syntax-source-loc Name))
@@ -1042,6 +1040,7 @@
          (define Name
            (let ((SymName #f))
             (let ((FuncOp (top-level-op
+                           (syntax-source-loc Name)
                            'Name
                            (lambda (SymName_)
                              (set! SymName SymName_)
@@ -1073,6 +1072,7 @@
            (let ((SymName #f))
             (let ((FuncOp
                    (top-level-op
+                     (syntax-source-loc Name)
                      'Name
                      (lambda (SymName_)
                        (set! SymName SymName_)
@@ -1092,7 +1092,7 @@
                                           ...)
                                   Body1 BodyN ...))))))
              ;; Process exports if any.
-             (when (assq 'Name export-c-names)
+             (when (memq 'Name export-c-names)
                (set! %lower-to-llvm-ops
                  (cons FuncOp %lower-to-llvm-ops)))
              (make-named-fn SymName FuncOp)))))))
@@ -1206,11 +1206,13 @@
       (write main-module)
       (newline))
 
-    ;; Exported names as elements (Name Op) where Op is #f
-    ;; until it is defined. Names exported via export-c are
-    ;; also declared in C++ with C linkage.
+    ;; Names exported via export-cpp or export-c.
     (define export-cpp-names '())
     (define export-c-names '())
+
+    ;; Exported ops as elements (Name Op) in order of definition.
+    (define export-cpp-ops '())
+    (define export-c-ops '())
 
     (define-syntax export-cpp
       (syntax-rules ()
@@ -1218,7 +1220,7 @@
          (set! export-cpp-names
            (append
              export-cpp-names
-             (list (list 'Name #f) ...))))))
+             (list 'Name ...))))))
 
     (define-syntax export-c
       (syntax-rules ()
@@ -1226,7 +1228,7 @@
          (set! export-c-names
            (append
              export-c-names
-             (list (list 'Name #f) ...))))))
+             (list 'Name ...))))))
 
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
