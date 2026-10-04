@@ -86,7 +86,7 @@ namespace foo {
     (visit receive_event
            (ref Ctx)
            (visit 'html::make_event_data Id)
-           'foo::some_event_handler
+           some_event_handler
            Fn))
 
   (finalize-module)

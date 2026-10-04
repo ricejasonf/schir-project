@@ -10,6 +10,7 @@
 #include <mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
 #include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
+#include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
@@ -355,6 +356,7 @@ public:
     mlir::cf::populateControlFlowToLLVMConversionPatterns(TC, PS);
     mlir::populateFinalizeMemRefToLLVMConversionPatterns(TC, PS);
     mlir::populateFuncToLLVMConversionPatterns(TC, PS);
+    mlir::populateVectorToLLVMConversionPatterns(TC, PS);
 
     if (llvm::failed(mlir::applyPartialConversion(M, Target, std::move(PS))))
       return signalPassFailure();

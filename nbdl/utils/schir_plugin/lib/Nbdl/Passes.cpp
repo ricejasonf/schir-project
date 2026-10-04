@@ -12,8 +12,10 @@
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
+#include <mlir/Pass/PassRegistry.h>
 #include <mlir/Transforms/CSE.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <mlir/Transforms/Passes.h>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -87,10 +89,10 @@ public:
 template <typename OpTy>
 using OpRewriteSchirClang = RewriteSchirClangBase<mlir::OpRewritePattern<OpTy>>;
 
-// Return true if T is !nbdl.unknown or a !nbdl.store
-// with no resolved alternatives.
+// Return true if T is a placeholder or a
+// !nbdl.store with no resolved alternatives.
 bool needsResolveT(mlir::Type T) {
-  if (isa<nbdl_spec::UnknownType>(T))
+  if (schir::isPlaceholder(T))
     return true;
   auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   return ST && ST.getAlts().empty();
@@ -342,6 +344,8 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!IsDiscarded)
       return Rewriter.notifyMatchFailure(Op,
           "lowering visit with used result is not supported");
+    if (llvm::any_of(CalleeFn.getResultTypes(), needsResolveT))
+      return Rewriter.notifyMatchFailure(Op, "callee result not yet inferred");
 
     llvm::SmallVector<mlir::Value, 8> CallArgs;
     for (auto [Arg, ParamT] : llvm::zip(Op.getArgs(),
@@ -389,7 +393,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!HasSchirClang())
       return Rewriter.notifyMatchFailure(Op, "no SchirClang available");
 
-    if (!isa<nbdl_spec::UnknownType>(Op.getType()))
+    if (!schir::isPlaceholder(Op.getType()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
     if (needsResolve(Op.getFn()) ||
@@ -727,7 +731,7 @@ struct InferConstexprType : OpRewriteSchirClang<nbdl_spec::ConstexprOp> {
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::ConstexprOp Op,
       mlir::PatternRewriter& Rewriter) const override {
-    if (!isa<nbdl_spec::UnknownType>(Op.getType()))
+    if (!schir::isPlaceholder(Op.getType()))
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
 
     std::string Typename;
@@ -748,6 +752,49 @@ struct InferConstexprType : OpRewriteSchirClang<nbdl_spec::ConstexprOp> {
 
     auto NewT = nbdl_spec::CppType::get(Op.getContext(), Typename);
     Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewT); });
+    return llvm::success();
+  }
+};
+
+// Infer the placeholder result type of a function from the
+// operands of every nbdl.return in its body.
+struct InferFuncResultType : mlir::OpRewritePattern<mlir::func::FuncOp> {
+  using mlir::OpRewritePattern<mlir::func::FuncOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::func::FuncOp Op, mlir::PatternRewriter& Rewriter) const override {
+    llvm::ArrayRef<mlir::Type> ResultTs = Op.getResultTypes();
+    if (ResultTs.size() != 1)
+      return Rewriter.notifyMatchFailure(Op, "function does not have one result");
+    if (!schir::isPlaceholder(ResultTs.front()))
+      return Rewriter.notifyMatchFailure(Op, "result type already resolved");
+
+    llvm::SmallVector<nbdl_spec::ReturnOp, 4> Returns;
+    Op.walk([&](nbdl_spec::ReturnOp R) { Returns.push_back(R); });
+    if (Returns.empty())
+      return Rewriter.notifyMatchFailure(Op, "function has no nbdl.return");
+
+    // Every return must resolve to the same type.
+    mlir::Type InferredT;
+    for (nbdl_spec::ReturnOp R : Returns) {
+      mlir::Value Arg = R.getArg();
+      if (!Arg)
+        return Rewriter.notifyMatchFailure(Op, "return has no operand");
+      mlir::Type ArgT = Arg.getType();
+      if (needsResolveT(ArgT))
+        return Rewriter.notifyMatchFailure(Op, "return operand not resolved");
+      if (InferredT && InferredT != ArgT) {
+        R.emitError("type of return (") << ArgT
+          << ") does not match the type of a previous return ("
+          << InferredT << ")";
+        return llvm::failure();
+      }
+      InferredT = ArgT;
+    }
+
+    auto NewFT = mlir::FunctionType::get(Op.getContext(),
+                                         Op.getArgumentTypes(), InferredT);
+    Rewriter.modifyOpInPlace(Op, [&] { Op.setFunctionType(NewFT); });
     return llvm::success();
   }
 };
@@ -911,6 +958,7 @@ public:
     PS.add<InferGetType>(SchirClangOpt.get(), Ctx);
     PS.add<InferConstexprType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchOverloadType>(SchirClangOpt.get(), Ctx);
+    PS.add<InferFuncResultType>(Ctx);
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
@@ -969,6 +1017,46 @@ llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
                             : std::shared_ptr<SchirClangMutex>();
   PM.addPass(std::make_unique<FlattenPass>(std::move(SCM)));
   return PM.run(Op);
+}
+
+llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
+                            schir::SchirClangImpl* SchirClangImpl,
+                            llvm::ArrayRef<std::string> Pipelines) {
+  mlir::PassManager PM(Op->getContext());
+  auto SCM = SchirClangImpl ? std::make_shared<SchirClangMutex>(SchirClangImpl)
+                            : std::shared_ptr<SchirClangMutex>();
+
+  // The inference passes may depend on the results of
+  // each other so run them until nothing changes.
+  std::string ParseError;
+  llvm::raw_string_ostream ParseErrorOS(ParseError);
+  bool HasParseError = false;
+  PM.addPass(mlir::createCompositeFixedPointPass("nbdl-inference",
+    [&](mlir::OpPassManager& InferPM) {
+      InferPM.addPass(std::make_unique<FlattenPass>(SCM));
+      for (llvm::StringRef Pipeline : Pipelines)
+        if (llvm::failed(mlir::parsePassPipeline(Pipeline, InferPM,
+                                                 ParseErrorOS)))
+          HasParseError = true;
+    }, /*maxIterations=*/32));
+  if (HasParseError)
+    return mlir::emitError(Op->getLoc(), "invalid inference pass pipeline: ")
+      << ParseError;
+
+  if (llvm::failed(PM.run(Op)))
+    return llvm::failure();
+
+  // It is an error if any function result type was not inferred.
+  bool HasError = false;
+  Op->walk([&](mlir::func::FuncOp FuncOp) {
+    if (llvm::none_of(FuncOp.getResultTypes(), [](mlir::Type T) {
+          return schir::isPlaceholder(T); }))
+      return;
+    FuncOp.emitError("unable to infer result type of function: ")
+      << FuncOp.getSymName();
+    HasError = true;
+  });
+  return llvm::failure(HasError);
 }
 
 } // namespace nbdl_spec

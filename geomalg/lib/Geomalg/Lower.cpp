@@ -10,6 +10,7 @@
 #include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
 #include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
 #include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
@@ -61,10 +62,17 @@ mlir::ValueRange expandVector(mlir::RewriterBase& R, mlir::Location Loc,
 
 // All types will be converted a single scalar type
 // and vectors of that scalar type.
+// Types from other dialects are not converted.
 struct TypeConverter : mlir::TypeConverter {
   TypeConverter(mlir::Type ScalarT)
     : mlir::TypeConverter()
   {
+    // Geomalg types with no conversion (e.g. unknown) fail.
+    addConversion([](mlir::Type T) -> mlir::Type {
+      if (llvm::isa<GeomalgDialect>(T.getDialect()))
+        return mlir::Type();
+      return T;
+    });
     addConversion([ScalarT](BladeType BT) { return ScalarT; });
     addConversion([ScalarT](ZeroType ZT) { return ScalarT; });
     addConversion([ScalarT](MultivectorLike MV) {
@@ -75,7 +83,7 @@ struct TypeConverter : mlir::TypeConverter {
 };
 
 struct ConversionTarget : mlir::ConversionTarget {
-  ConversionTarget(mlir::MLIRContext& Ctx)
+  ConversionTarget(mlir::MLIRContext& Ctx, mlir::TypeConverter const& TC)
     : mlir::ConversionTarget(Ctx)
   {
     // Legalize stuff.
@@ -83,6 +91,14 @@ struct ConversionTarget : mlir::ConversionTarget {
     addLegalDialect<linalg::LinalgDialect>();
     addLegalDialect<func::FuncDialect>();
     addLegalDialect<vector::VectorDialect>();
+    // Function signatures, calls, and returns with geomalg types
+    // are converted.
+    addDynamicallyLegalOp<func::FuncOp>([&TC](func::FuncOp Op) {
+      return TC.isSignatureLegal(Op.getFunctionType()) &&
+             TC.isLegal(&Op.getBody());
+    });
+    addDynamicallyLegalOp<func::CallOp, func::ReturnOp>(
+      [&TC](mlir::Operation* Op) { return TC.isLegal(Op); });
   }
 };
 
@@ -417,6 +433,7 @@ public:
   }
 };
 
+// FIXME Lowering geomalg.return should not be a part of the lowering pass.
 struct LowerReturn : mlir::OpConversionPattern<ReturnOp>,
                      ::PatternBase {
   using Base::Base;
@@ -424,30 +441,12 @@ struct LowerReturn : mlir::OpConversionPattern<ReturnOp>,
   llvm::LogicalResult matchAndRewrite(
         ReturnOp Op, ReturnOp::Adaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
-    mlir::Location Loc = Op->getLoc();
-    mlir::Type ScalarT = getScalarT();
-
-    auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op->getParentOp());
-    if (!FuncOp)
+    if (!isa<mlir::func::FuncOp>(Op->getParentOp()))
       return llvm::failure();
 
-
-    mlir::Value NewResult = Adaptor.getArg();
-    R.replaceOpWithNewOp<mlir::func::ReturnOp>(Op, NewResult);
-
-    // Update the function signature so the new func::ReturnOp will be valid.
-    // This means replacing the entire FuncOp.
-    mlir::FunctionType FT = FuncOp.getFunctionType();
-    mlir::TypeConverter const* TC = getTypeConverter();
-    mlir::TypeConverter::SignatureConversion SC(FT.getNumInputs());
-    if (llvm::failed(TC->convertSignatureArgs(FT.getInputs(), SC)))
-        return R.notifyMatchFailure(Op,
-            "failed to remap function argument types");
-    mlir::FunctionType NewFT = mlir::FunctionType::get(
-        R.getContext(), SC.getConvertedTypes(), NewResult.getType());
-    FuncOp.setFunctionType(NewFT);
-    R.applySignatureConversion(&FuncOp.getBody().front(), SC);
-
+    // The function signature is converted by the
+    // function type conversion pattern.
+    R.replaceOpWithNewOp<mlir::func::ReturnOp>(Op, Adaptor.getArg());
     return llvm::success();
   }
 };
@@ -497,18 +496,22 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
          LowerReturn,
          LowerCall
          >(*TC, Ctx);
+  mlir::populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(PS,
+                                                                      *TC);
+  mlir::populateCallOpTypeConversionPattern(PS, *TC);
+  mlir::populateReturnOpTypeConversionPattern(PS, *TC);
 }
 
 llvm::LogicalResult
 applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::ModuleOp Op) {
-  // Do that actual Conversion.
-  ::ConversionTarget Target(*Ctx);
-
   mlir::RewritePatternSet PS(Ctx);
   mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
   // Note that TypeConverter has its pointer captured.
   ::TypeConverter TC(ScalarT);
   populateLowerPasses(PS, &TC);
+
+  // Do that actual Conversion.
+  ::ConversionTarget Target(*Ctx, TC);
 
   mlir::ConversionConfig Config;
   Config.allowPatternRollback = false;

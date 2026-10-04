@@ -26,8 +26,7 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
     return true;
 
   // We must know the semantics.
-  if (!isa<MultivectorLike, BladeType,
-           UnknownType, ZeroType>(A))
+  if (!isa<MultivectorLike, BladeType, ZeroType>(A))
     return false;
 
   // If all other sum operands become zero then

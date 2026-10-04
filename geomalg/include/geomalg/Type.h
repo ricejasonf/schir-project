@@ -17,14 +17,16 @@ bool isZero(mlir::Type T) {
   return isa<geomalg::ZeroType>(T);
 }
 
+// Return true if the type is a placeholder for a type that
+// is not yet inferred (e.g. !geomalg.unknown.)
 inline
-bool isUnknown(mlir::Value V) {
-  return isa<geomalg::UnknownType>(V.getType());
+bool isUnknown(mlir::Type T) {
+  return schir::isPlaceholder(T);
 }
 
 inline
-bool isUnknown(mlir::Type T) {
-  return isa<geomalg::UnknownType>(T);
+bool isUnknown(mlir::Value V) {
+  return isUnknown(V.getType());
 }
 
 inline

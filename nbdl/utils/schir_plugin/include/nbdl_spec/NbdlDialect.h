@@ -7,6 +7,8 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
+#include <schir/Interfaces/PlaceholderLike.h>
+#include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
 #include <string>
 
@@ -21,6 +23,13 @@ using mlir::StringAttr;
 
 llvm::LogicalResult runFlattenPass(mlir::Operation* Op,
         schir::SchirClangImpl* SchirClangImpl = nullptr);
+
+// Run the flatten pass with the passes of the given pipeline strings
+// until a fixed point is reached. It is an error if the result type
+// of any function is not inferred (ie it is still a placeholder.)
+llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
+        schir::SchirClangImpl* SchirClangImpl,
+        llvm::ArrayRef<std::string> Pipelines);
 
 // Replace each !nbdl.cpp_alias with the !nbdl.cpp type
 // of its canonical typename. (The flatten pass also does this.)

@@ -37,27 +37,33 @@ namespace foo {
           (nbdl spec geomalg)
           (geomalg base))
 
-  (export-c test_dot test_add)
+  (export-c test_dot test_add cancel_vec3)
   (export-cpp test_test_dot test_test_call)
 
+  ; // Functions with geomalg operations exported to C are lowered to LLVM
+  ; // by the lowering pass registered by (nbdl spec geomalg).
   ; // CHECK-LABEL: func.func @"::foo::test_dot"
   ; // CHECK-SAME: -> !geomalg.blade<0>
   ; // CHECK: "geomalg.dot"
-  (define-geomalg-fn test_dot ((A : !vec3) (B : !vec3))
-    (dot A B))
+  ; // CHECK: "nbdl.return"
+  (define-fn test_dot ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (dot A B)))
 
   ; // CHECK-LABEL: func.func @"::foo::test_add"
   ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
   ; // CHECK: "geomalg.expand"
-  (define-geomalg-fn test_add ((A : !vec3) (B : !vec3))
-    (sum A B))
+  ; // CHECK: "nbdl.return"
+  (define-fn test_add ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (sum A B)))
 
+  ; // The trivector term of the reflection is
+  ; // simplified away before the result type is inferred.
   ; // CHECK-LABEL: func.func @test_reflect
-  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>, <7>>
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
   ; // CHECK-NOT: "geomalg.vprod"
-  ; // CHECK: geomalg.return
-  (define-geomalg-fn test_reflect ((A : !vec3) (B : !vec3))
-    (vprod A B))
+  ; // CHECK: "nbdl.return"
+  (define-fn test_reflect ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (vprod A B)))
 
   ; // CHECK-LABEL: @"::foo::test_test_dot"
   ; // CHECK: [[FN:%[0-9]+]] = "nbdl.func_name"() <{name = @"::foo::test_dot"}>
@@ -97,6 +103,77 @@ namespace foo {
                    (Y : !vec3 B))
       (visit test_dot X Y)))
 
+  ; // The result types of functions defined with define-fn are inferred
+  ; // by the geomalg-expand pass registered by (nbdl spec geomalg).
+  ; // CHECK-LABEL: func.func @add_vec3(
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK: "geomalg.expand"
+  ; // CHECK: "nbdl.return"
+  ; // CHECK-SAME: (!geomalg.multivector<<1>, <2>, <4>>) -> ()
+  (define-fn add_vec3 ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (sum A B)))
+
+  ; // A !geomalg.unknown value may be returned as a placeholder.
+  ; // CHECK-LABEL: func.func @reflect_vec3(
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK-NOT: "geomalg.vprod"
+  ; // CHECK: "nbdl.return"
+  ; // CHECK-SAME: (!geomalg.multivector<<1>, <2>, <4>>) -> ()
+  (define-fn reflect_vec3 ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (vprod A B)))
+
+  ; // The result types of visits are inferred from the inferred
+  ; // result types of the callees.
+  ; // CHECK-LABEL: func.func @dot_sums(
+  ; // CHECK-SAME: -> !geomalg.blade<0>
+  ; // CHECK: [[SUM1:%[0-9]+]] = "nbdl.visit"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK: [[SUM2:%[0-9]+]] = "nbdl.visit"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK: [[DOT:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, [[SUM1]], [[SUM2]])
+  ; // CHECK-SAME: -> !geomalg.blade<0>
+  ; // CHECK-NEXT: "nbdl.return"([[DOT]])
+  (define-fn dot_sums ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (visit test_dot (visit add_vec3 A B) (visit add_vec3 B A))))
+
+  ; // An expr binds the results of visits for use with geomalg operations.
+  ; // The operands are !nbdl.unknown until the visits are inferred.
+  ; // CHECK-LABEL: func.func @dot_sum_expr(
+  ; // CHECK-SAME: -> !geomalg.blade<0>
+  ; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK-NEXT: [[DOT:%[0-9]+]] = "geomalg.dot"([[SUM]], %arg1)
+  ; // CHECK-SAME: (!geomalg.multivector<<1>, <2>, <4>>,
+  ; // CHECK-SAME: !geomalg.multivector<<1>, <2>, <4>>) -> !geomalg.blade<0>
+  ; // CHECK-NEXT: "nbdl.return"([[DOT]])
+  (define-fn dot_sum_expr ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (visit (lambda (S) (dot S B))
+                   (visit add_vec3 A B))))
+
+  ; // The result type of a geomalg operation with a !nbdl.unknown
+  ; // operand is inferred once the operand type is inferred.
+  ; // CHECK-LABEL: func.func @sum_sum_expr(
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK-NEXT: "geomalg.expand"([[SUM]])
+  ; // CHECK: "nbdl.return"
+  ; // CHECK-SAME: (!geomalg.multivector<<1>, <2>, <4>>) -> ()
+  (define-fn sum_sum_expr ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
+    (return (visit (lambda (S) (sum S A))
+                   (visit add_vec3 A B))))
+
+  ; // A value narrowed by simplification is widened
+  ; // to keep the explicit result type of the function.
+  ; // CHECK-LABEL: func.func @"::foo::cancel_vec3"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK-COUNT-3: "geomalg.blade"() <{coefficient = 0.0
+  ; // CHECK-NEXT: [[SUM:%[0-9]+]] = "geomalg.sum"
+  ; // CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
+  ; // CHECK-NEXT: "nbdl.return"([[SUM]])
+  (define-fn cancel_vec3 ((A : !vec3)) -> (!vec3)
+    (return (sum A (negate A))))
+
   (finalize-module)
 
   (write-nbdl-module)
@@ -126,7 +203,7 @@ bool vec_equal(geomalg::vec3 A, geomalg::vec3 B) {
 }
 
 int main() {
-  // Call the injected geomalg functions directly.
+  // Call the lowered geomalg functions directly.
   SCHIR_ASSERT(foo::test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
   SCHIR_ASSERT(foo::test_dot({{1, 0, 0}}, {{0, 1, 0}}).value == 0);
   SCHIR_ASSERT(foo::test_dot({{-1, 2, 0.5}}, {{2, 3, 4}}).value == 6);
@@ -134,6 +211,8 @@ int main() {
   SCHIR_ASSERT(vec_equal(foo::test_add({{1, 0, 0}}, {{0, 1, 0}}), {{1, 1, 0}}));
   SCHIR_ASSERT(vec_equal(foo::test_add({{-1, 2, 0.5}}, {{1, -2, -0.5}}),
                          {{0, 0, 0}}));
+
+  SCHIR_ASSERT(vec_equal(foo::cancel_vec3({{3, 2, 4}}), {{0, 0, 0}}));
 
   vec3_pair Store{{{3, 2, 4}}, {{4, 2, 1}}};
 

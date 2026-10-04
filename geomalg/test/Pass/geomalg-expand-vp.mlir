@@ -1,5 +1,5 @@
 // RUN: geomalg-opt \
-// RUN:--geomalg-expand="enable-patterns={ExpandVP, DistributeVP}" %s \
+// RUN:--geomalg-expand="simplify=false enable-patterns={ExpandVP, DistributeVP}" %s \
 // RUN:| FileCheck %s
 
 // RUN: geomalg-opt --geomalg-expand="metric=cga disable-patterns={ExpandMatvec}" \

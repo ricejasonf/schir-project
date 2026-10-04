@@ -39,7 +39,8 @@ struct int_sink {
 (import (nbdl spec)
         (only (schir mlir) create-op result load-dialect))
 
-(export-c add_i32 add_one_i32 write_i32 sum_to_ptr)
+(export-c add_i32 add_one_i32 write_i32 sum_to_ptr add_two_i32
+          add_one_expr double_add_one)
 (export-cpp context
             add_ints
             get_value
@@ -47,7 +48,10 @@ struct int_sink {
             sum_foo_bar_i32
             store_sum
             set_result
-            store_sum_func_name)
+            store_sum_func_name
+            add_ints_inferred
+            add_three_ints
+            set_result_expr)
 
 (define-context context (arg1 arg2)
   (member: '.foo 'int (init-args: arg1))
@@ -212,6 +216,85 @@ struct int_sink {
   (visit sum_to A B Dest write_i32)
   (return))
 
+; // A result type of !nbdl.unknown is inferred from the returned value.
+; // The C++ declaration is written once the result type is known.
+; // CHECK-LABEL: func.func @"::foo::add_ints_inferred"
+; // CHECK-SAME: (%arg0: !nbdl.cpp<"int">, %arg1: !nbdl.cpp<"int">)
+; // CHECK-SAME: -> !nbdl.cpp<"int">
+; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"
+; // CHECK-SAME: -> !nbdl.cpp<"int">
+; // CHECK-NEXT: "nbdl.return"([[SUM]])
+(define-fn add_ints_inferred ((A : 'int) (B : 'int)) -> (!nbdl.unknown)
+  (return (visit '|std::plus<int>{}| A B)))
+
+; // Visit a function with an inferred result type.
+; // CHECK-LABEL: func.func @"::foo::add_three_ints"
+; // CHECK-SAME: -> !nbdl.cpp<"int">
+; // CHECK: "nbdl.func_name"() <{name = @"::foo::add_ints_inferred"}>
+; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, %arg0, %arg1)
+; // CHECK-SAME: -> !nbdl.cpp<"int">
+; // CHECK-NEXT: [[RESULT:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, [[SUM]], %arg2)
+; // CHECK-SAME: -> !nbdl.cpp<"int">
+; // CHECK-NEXT: "nbdl.return"([[RESULT]])
+(define-fn add_three_ints ((A : 'int) (B : 'int) (C : 'int))
+                          -> (!nbdl.unknown)
+  (return (visit add_ints_inferred (visit add_ints_inferred A B) C)))
+
+; // A function exported via export-c with an inferred result type
+; // is lowered and its wrapper is defined once the type is known.
+; // CHECK-LABEL: func.func @"::foo::add_two_i32"
+; // CHECK-SAME: (%arg0: i32) -> i32
+; // CHECK: "nbdl.visit"
+; // CHECK-SAME: -> i32
+; // CHECK: "nbdl.visit"
+; // CHECK-SAME: -> i32
+(define-fn add_two_i32 ((A : i32)) -> (!nbdl.unknown)
+  (return (visit add_one_i32 (visit add_one_i32 A))))
+
+(define (addi A B)
+  (result (create-op "arith.addi"
+                     (loc: 0)
+                     (operands: A B)
+                     (attributes:)
+                     (result-types: i32))))
+
+; // A visit with a procedure as the callee applies it to the resolved
+; // values for use with operations from other dialects.
+; // CHECK-LABEL: func.func @"::foo::add_one_expr"
+; // CHECK-SAME: (%arg0: i32) -> i32
+; // CHECK: [[ONE:%[0-9]+]] = "nbdl.literal"() <{value = 1 : i32}>
+; // CHECK-NEXT: [[SUM:%[0-9]+]] = arith.addi %arg0, [[ONE]] : i32
+; // CHECK-NEXT: "nbdl.return"([[SUM]])
+(define-fn add_one_expr ((A : i32)) -> (!nbdl.unknown)
+  (return (visit (lambda (One) (addi A One))
+                 1)))
+
+; // The procedure may result in another expr (e.g. visit.)
+; // CHECK-LABEL: func.func @"::foo::double_add_one"
+; // CHECK-SAME: (%arg0: i32) -> i32
+; // CHECK: [[X:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, %arg0)
+; // CHECK-SAME: -> i32
+; // CHECK: [[SUM:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, [[X]], [[X]])
+; // CHECK-SAME: -> i32
+; // CHECK-NEXT: "nbdl.return"([[SUM]])
+(define-fn double_add_one ((A : i32)) -> (!nbdl.unknown)
+  (return (visit (lambda (X) (visit add_i32 X X))
+                 (visit add_one_i32 A))))
+
+; // If the result of a visit with a procedure as the callee is not used,
+; // the procedure is applied for its side effects.
+; // (ie The visit is discarded.)
+; // CHECK-LABEL: func.func @"::foo::set_result_expr"
+; // CHECK: [[FIVE:%[0-9]+]] = "nbdl.literal"() <{value = 5 : i32}>
+; // CHECK: [[RESULT:%[0-9]+]] = "nbdl.visit"({{%[0-9]+}}, [[FIVE]])
+; // CHECK-SAME: -> !nbdl.unit
+; // CHECK-NEXT: "nbdl.discard"([[RESULT]])
+; // CHECK: "nbdl.return"() : () -> ()
+(define-fn set_result_expr () -> ()
+  (visit (lambda (X) (visit 'foo::set_global_result X))
+         5)
+  (return))
+
 (finalize-module)
 (write-nbdl-module)
 
@@ -232,6 +315,11 @@ int main() {
   SCHIR_ASSERT(foo::add_i32(5, 6) == 11);
   SCHIR_ASSERT(foo::add_i32(-5, 3) == -2);
   SCHIR_ASSERT(foo::add_one_i32(41) == 42);
+  SCHIR_ASSERT(foo::add_ints_inferred(3, 4) == 7);
+  SCHIR_ASSERT(foo::add_three_ints(3, 4, 5) == 12);
+  SCHIR_ASSERT(foo::add_two_i32(40) == 42);
+  SCHIR_ASSERT(foo::add_one_expr(41) == 42);
+  SCHIR_ASSERT(foo::double_add_one(20) == 42);
   {
     std::int32_t dest = 0;
     foo::write_i32(7, &dest);
@@ -246,6 +334,12 @@ int main() {
   static_assert(std::same_as<decltype(foo::write_i32),
                              void(std::int32_t, void*)>);
   static_assert(std::same_as<decltype(foo::add_ints), int(int, int)>);
+  static_assert(std::same_as<decltype(foo::add_ints_inferred),
+                             int(int, int)>);
+  static_assert(std::same_as<decltype(foo::add_three_ints),
+                             int(int, int, int)>);
+  static_assert(std::same_as<decltype(foo::add_two_i32),
+                             std::int32_t(std::int32_t)>);
   static_assert(std::same_as<decltype(foo::get_value),
                              void(foo::my_struct, foo::int_sink)>);
   static_assert(std::same_as<decltype(foo::store_sum),
@@ -266,4 +360,8 @@ int main() {
   foo::global_result = 0;
   foo::store_sum_func_name(ctx);
   SCHIR_ASSERT(foo::global_result == 13);
+
+  foo::global_result = 0;
+  foo::set_result_expr();
+  SCHIR_ASSERT(foo::global_result == 5);
 }

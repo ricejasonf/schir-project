@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.13.4)
 
 set(GEOMALG_SOURCE_GEN_DEPS
   GeomalgOpsIncGen
-  GeomalgPassesIncGen)
+  GeomalgPassesIncGen
+  SchirInterfacesIncGen)
 
 set(GEOMALG_SOURCE_FILES
   Geomalg/Type.cpp;

@@ -1,4 +1,4 @@
-// RUN: geomalg-opt --geomalg-expand="metric=cga func-name=reflect" %s \
+// RUN: geomalg-opt --geomalg-expand="metric=cga func-name=reflect simplify=false" %s \
 // RUN: | FileCheck %s
 
 // RUN: not geomalg-opt --geomalg-expand="func-name=missing" %s 2>&1 \

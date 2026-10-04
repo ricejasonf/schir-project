@@ -691,9 +691,92 @@ struct ExpandConvert : OpRewriteMetric<geomalg::ConvertOp> {
       return llvm::success();
     }
 
+    // Widen to a type that the argument type is a narrowing of
+    // by adding the missing blades with zero coefficients.
+    // (e.g. to keep the result type of a function.)
+    if (!isUnknown(ArgT) && isValidNarrowing(ResultT, ArgT)) {
+      mlir::Value Widened;
+      if (auto BT = dyn_cast<BladeType>(ResultT)) {
+        assert(isZero(ArgT) && "expecting zero to widen to a blade");
+        Widened = BladeOp::create(Rewriter, Loc, BT, 0.0f);
+      } else {
+        Widened = liftToMultivector(Rewriter, ResultT, Arg);
+        // The blades are the same but the type may not be. (e.g. unit_vector)
+        if (Widened.getType() != ResultT)
+          Widened = CastOp::create(Rewriter, Loc, ResultT, Widened);
+      }
+      replaceOp(Rewriter, Op, Widened);
+      return llvm::success();
+    }
+
     // ConvertOps must eventually be removed or expanded, but not
     // necessarily at this point. (See RemoveConvert.)
     return llvm::failure();
+  }
+};
+
+// Convert each operand of Op that was narrowed from the type required
+// of it back to the required type. (See ExpandConvert.)
+static llvm::LogicalResult
+convertNarrowedOperands(mlir::PatternRewriter& Rewriter, mlir::Operation* Op,
+                        mlir::TypeRange RequiredTs) {
+  bool Changed = false;
+  for (auto [Operand, RequiredT] : llvm::zip(Op->getOpOperands(),
+                                             RequiredTs)) {
+    mlir::Value Arg = Operand.get();
+    mlir::Type ArgT = Arg.getType();
+    if (ArgT == RequiredT || isUnknown(ArgT) || isUnknown(RequiredT) ||
+        !isValidNarrowing(RequiredT, ArgT))
+      continue;
+    auto Convert = ConvertOp::create(Rewriter, Op->getLoc(), RequiredT, Arg);
+    Rewriter.modifyOpInPlace(Op, [&] { Operand.set(Convert); });
+    Changed = true;
+  }
+  return llvm::success(Changed);
+}
+
+// Keep the result types of a function when the values returned
+// are narrowed.
+// FIXME We need to properly detect a cross dialect ReturnOp
+//       or an interface so we aren't just visiting all terminators.
+struct ConvertNarrowedReturn
+    : mlir::OpTraitRewritePattern<mlir::OpTrait::IsTerminator> {
+  using Base = mlir::OpTraitRewritePattern<mlir::OpTrait::IsTerminator>;
+  using Base::OpTraitRewritePattern;
+
+  void initialize() {
+    setDebugName("ConvertNarrowedReturn");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override {
+    auto FuncOp = dyn_cast<mlir::FunctionOpInterface>(Op->getParentOp());
+    if (!FuncOp || Op->getNumSuccessors() != 0)
+      return llvm::failure();
+    llvm::ArrayRef<mlir::Type> ResultTs = FuncOp.getResultTypes();
+    if (ResultTs.size() != Op->getNumOperands())
+      return llvm::failure();
+    return convertNarrowedOperands(Rewriter, Op, ResultTs);
+  }
+};
+
+// Keep the parameter types of a callee when the call
+// arguments are narrowed.
+struct ConvertNarrowedCallArgs : mlir::OpRewritePattern<CallOp> {
+  using Base = mlir::OpRewritePattern<CallOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ConvertNarrowedCallArgs");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      CallOp Op, mlir::PatternRewriter& Rewriter) const override {
+    auto FuncOp = mlir::SymbolTable::lookupNearestSymbolFrom<
+                                    mlir::func::FuncOp>(Op, Op.getCalleeAttr());
+    if (!FuncOp)
+      return llvm::failure();
+    return convertNarrowedOperands(Rewriter, Op, FuncOp.getArgumentTypes());
   }
 };
 
@@ -741,7 +824,7 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
         Values.push_back(V);
     } else if (isa<MultivectorLike>(V.getType())) {
       llvm::append_range(Values, expandMultivector(Rewriter, V));
-    } else if (isa<UnknownType>(V.getType())) {
+    } else if (isUnknown(V)) {
       return llvm::failure();
     } else {
       // Discard zeros.
@@ -852,7 +935,8 @@ ExpandMatvec::matchAndRewrite(mlir::Operation* Op,
     return llvm::failure();
 
   assert(Op->getResults().size() == 1);
-  if (!isa<MultivectorLike, UnknownType>(Op->getResult(0).getType()))
+  if (!isa<MultivectorLike>(Op->getResult(0).getType()) &&
+      !isUnknown(Op->getResult(0)))
     return llvm::failure();
 
   // Match the first Multivector operand.
@@ -1002,12 +1086,12 @@ UpdateInferredTypes::matchAndRewrite(mlir::InferTypeOpInterface Op,
                             mlir::PatternRewriter& Rewriter) const {
   mlir::MLIRContext* Ctx = getContext();
   if (Op->getNumResults() != 1 ||
-      !isa<geomalg::UnknownType>(Op->getResult(0).getType()))
+      !isUnknown(Op->getResult(0)))
     return llvm::failure();
 
   // Is the inferred type still unknown?
   mlir::Type ResultT = inferReturnType(Op);
-  if (isa<geomalg::UnknownType>(ResultT))
+  if (isUnknown(ResultT))
     return llvm::failure();
 
   // Just set the result type to the inferred type.
@@ -1030,7 +1114,7 @@ llvm::LogicalResult RemoveCast::matchAndRewrite(
 llvm::LogicalResult RemoveExpand::matchAndRewrite(
     geomalg::ExpandOp ExpandOp,
     mlir::PatternRewriter& Rewriter) const {
-  if (isa<UnknownType>(ExpandOp.getArg().getType()))
+  if (isUnknown(ExpandOp.getArg()))
     return llvm::failure();
 
   // Replace unnecessary ExpandOps.
@@ -1306,7 +1390,7 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
   }
 
   // At this point only transform when the result type is not yet known.
-  if (!isa<geomalg::UnknownType>(LC.getResult().getType()))
+  if (!isUnknown(LC.getResult()))
     return llvm::failure();
 
   // 3.7 and 3.8 are handled by type inference.
@@ -1815,7 +1899,9 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          ExpandReverse,
          ExpandGradeInvo,
          UpdateCall,
-         UpdateInferredTypes>(Ctx, mlir::PatternBenefit(5));
+         UpdateInferredTypes,
+         ConvertNarrowedReturn,
+         ConvertNarrowedCallArgs>(Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandInverse,
          ExpandConvert
            >(Metric::get(MK), Ctx, mlir::PatternBenefit(5));
@@ -1831,6 +1917,16 @@ void populateExpandSumPatterns(mlir::RewritePatternSet& PS) {
   // algebra operations except for distribution.
   mlir::MLIRContext* Ctx = PS.getContext();
   PS.add<ExpandSum>(Ctx, mlir::PatternBenefit(0));
+}
+
+// Functions with no Geomalg operations are left untouched
+// (e.g. by CSE) since they may belong to another dialect.
+static bool hasGeomalgOps(mlir::func::FuncOp FuncOp) {
+  return FuncOp.walk([](mlir::Operation* Op) {
+      return llvm::isa_and_nonnull<geomalg::GeomalgDialect>(Op->getDialect())
+        ? mlir::WalkResult::interrupt()
+        : mlir::WalkResult::advance();
+    }).wasInterrupted();
 }
 
 class ExpandFuncPass
@@ -1866,6 +1962,10 @@ public:
 
   llvm::LogicalResult run(mlir::func::FuncOp FuncOp) const {
     mlir::MLIRContext* Ctx = FuncOp->getContext();
+
+    // A function with no Geomalg operations has nothing to expand.
+    if (!hasGeomalgOps(FuncOp))
+      return llvm::success();
 
     bool AnyIRChanged = true;
     while (AnyIRChanged) {
@@ -1915,6 +2015,8 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::func::FuncOp FuncOp = getOperation();
+    if (!hasGeomalgOps(FuncOp))
+      return;
 
     bool IRChanged = true;
     while (IRChanged) {
@@ -1942,8 +2044,14 @@ public:
            SimplifyNegate,
            SimplifyDot,
            RemoveExpand,
-           RemoveConvert
+           RemoveConvert,
+           ConvertNarrowedReturn,
+           ConvertNarrowedCallArgs
            >(Ctx, mlir::PatternBenefit(1));
+    // Expand the conversions that widen values narrowed
+    // by simplification. (No metric is needed to widen.)
+    PS.add<ExpandConvert>(geomalg::Metric::get(MetricKind::unknown), Ctx,
+                          mlir::PatternBenefit(1));
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                           disabledPatterns,
                           enabledPatterns);
@@ -2006,6 +2114,8 @@ public:
   llvm::LogicalResult run(mlir::func::FuncOp FuncOp) {
     mlir::OpPassManager PM(mlir::func::FuncOp::getOperationName());
     PM.addPass(geomalg::createExpandFuncPass(ExpandPassOpts));
+    if (simplify)
+      PM.addPass(geomalg::createSimplifyPass());
 
     if (llvm::failed(runPipeline(PM, FuncOp)))
       return llvm::failure();
@@ -2020,6 +2130,8 @@ public:
       mlir::OpPassManager PM(mlir::ModuleOp::getOperationName());
       PM.addNestedPass<mlir::func::FuncOp>(
           geomalg::createExpandFuncPass(ExpandPassOpts));
+      if (simplify)
+        PM.addNestedPass<mlir::func::FuncOp>(geomalg::createSimplifyPass());
 
       if (llvm::failed(runPipeline(PM, ModuleOp)))
         return llvm::failure();
@@ -2052,7 +2164,6 @@ void geomalg::registerGeomalgToSPIRV() {
                     GeomalgToSPIRVOptions const& Options) {
     geomalg::ExpandPassOptions EPO{.metric = Options.MetricName};
     PM.addPass(createExpandPass(EPO));
-    PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
     //PM.addPass(mlir::createSCCPPass());
     PM.addPass(createLowerPass());
     PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
@@ -2069,7 +2180,6 @@ void geomalg::registerGeomalgToLLVM() {
                     GeomalgToSPIRVOptions const& Options) {
     geomalg::ExpandPassOptions EPO{.metric = Options.MetricName};
     PM.addPass(createExpandPass(EPO));
-    PM.addNestedPass<mlir::func::FuncOp>(createSimplifyPass());
     //PM.addPass(mlir::createSCCPPass());
     PM.addPass(createLowerPass());
     PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());

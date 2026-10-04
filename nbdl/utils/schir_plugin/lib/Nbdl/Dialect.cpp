@@ -58,29 +58,6 @@ void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
   odsState.addRegion(std::move(body));
 }
 
-llvm::LogicalResult nbdl_spec::ReturnOp::verify() {
-  auto FuncOp = (*this)->getParentOfType<mlir::func::FuncOp>();
-  if (!FuncOp)
-    return emitOpError("expects to be nested in 'func.func'");
-  llvm::ArrayRef<mlir::Type> ResultTs = FuncOp.getResultTypes();
-  if (getNumOperands() != ResultTs.size())
-    return emitOpError("has ") << getNumOperands()
-      << " operands, but enclosing function returns " << ResultTs.size();
-
-  for (auto [I, Operand, ResultT] : llvm::enumerate(getOperands(), ResultTs)) {
-    mlir::Type OperandT = Operand.getType();
-    // Allow unknown values and C++ 'aliases' which are inferred later.
-    bool IsUnknown = llvm::isa<nbdl_spec::UnknownType>(OperandT) ||
-                     llvm::isa<nbdl_spec::CppAliasType>(OperandT) ||
-                     llvm::isa<nbdl_spec::CppAliasType>(ResultT);
-    if (OperandT != ResultT && !IsUnknown)
-      return emitOpError("type of return operand ") << I << " ("
-        << OperandT << ") does not match function result type ("
-        << ResultT << ")";
-  }
-  return llvm::success();
-}
-
 // Get the FuncNameOp that defines V looking through
 // a !nbdl.store<!nbdl.func_name> created by LiftStoreOp.
 // Return a null op if V is not a function name.
@@ -103,8 +80,8 @@ llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
   mlir::Type ValueT = getValue().getType();
   if (llvm::isa<nbdl_spec::StoreType>(ValueT))
     return emitOpError("cannot lift a value that is already a store");
-  // An unknown value lifts to an unresolved store.
-  auto ExpectedT = llvm::isa<nbdl_spec::UnknownType>(ValueT)
+  // A placeholder value lifts to an unresolved store.
+  auto ExpectedT = schir::isPlaceholder(ValueT)
     ? nbdl_spec::StoreType::get(getContext())
     : nbdl_spec::StoreType::get(getContext(), mlir::TypeAttr::get(ValueT));
   if (getResult().getType() != ExpectedT)

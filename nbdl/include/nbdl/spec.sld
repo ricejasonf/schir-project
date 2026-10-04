@@ -31,6 +31,8 @@
       (load-builtin "nbdl_spec_create_store_type"))
     (define nbdl_run_flatten_pass
       (load-builtin "nbdl_run_flatten_pass"))
+    (define nbdl_run_inference_passes
+      (load-builtin "nbdl_run_inference_passes"))
     (define nbdl_canonicalize_cpp_types
       (load-builtin "nbdl_canonicalize_cpp_types"))
     (define define-store-op?
@@ -157,13 +159,13 @@
       ;; Declarations are written with canonical C++ types
       ;; to match the definitions.
       (nbdl_canonicalize_cpp_types main-module current-schir-clang)
+      ;; Infer types and simplify operations.
+      (run-inference-passes)
       (%finalize-exports export-cpp-ops %function-op?
                          (%emit-cpp declare-cpp))
       ;; Lowered functions are called from C++ via wrappers.
       (%finalize-exports export-c-ops %function-op?
                          (%emit-cpp define-lowered-wrapper))
-      ;; Infer types and simplify operations.
-      (run-pass-nbdl-flatten)
       (%finalize-exports export-cpp-ops %function-op?
                          (%emit-cpp translate-cpp))
       (%finalize-exports export-c-ops
@@ -173,7 +175,9 @@
                          (lambda (Op) (memq Op %lower-to-llvm-ops))
                          lower-to-llvm)
       (when llvm-module
-        (run-passes llvm-module "nbdl-lower" "nbdl-to-llvm" "nbdl-c-adapter")
+        (apply run-passes llvm-module "nbdl-lower"
+               (append %lowering-passes
+                       (list "nbdl-to-llvm" "nbdl-c-adapter")))
         (inject-module llvm-module)
         (set! llvm-module #f)))
 
@@ -297,6 +301,9 @@
     (define (%match-expr-aux Loc Expr Fn)
       (cond
         ((value? Expr)
+         (Fn Expr))
+        ;; Procedures pass through (via expr+).
+        ((procedure? Expr)
          (Fn Expr))
         ((expr? Expr)
          (%invoke-expr Expr Fn))
@@ -856,11 +863,24 @@
             (%match-results
               ParamsSpec
               (lambda (Results)
-                (Fn (build-visit MatchingResults? Sfinae? Loc Results))))))
-        (%match-results ; Sfinae is #f
-          ParamsSpec
-          (lambda (Results)
-            (build-visit MatchingResults? #f Loc Results)))))
+                (define Callee (car Results))
+                (if (procedure? Callee)
+                  ;; The result may be a value, a literal,
+                  ;; or another expr.
+                  (%match-expr Loc (apply Callee (cdr Results)) Fn)
+                  (Fn (build-visit MatchingResults? Sfinae? Loc Results)))))))
+        (begin
+          (%match-results ; Sfinae is #f
+            ParamsSpec
+            (lambda (Results)
+              (define Callee (car Results))
+              (if (procedure? Callee)
+                ;; The procedure is applied for its side effects
+                ;; (e.g. a visit in its body is discarded.)
+                (%top-level
+                  (lambda () (apply Callee (cdr Results))))
+                (build-visit MatchingResults? #f Loc Results))))
+          (list %nbdl-discard Loc))))
 
     (define-syntax visit-aux
       (syntax-rules ()
@@ -1105,6 +1125,8 @@
     ;; Define a normal function whose parameter and result types are
     ;; mlir types where string-likes are lifted to C++ types.
     ;; Use lift-store on a parameter to use it with Nbdl operations.
+    ;; A result type of !nbdl.unknown is inferred from the returned values
+    ;; by the inference passes. (see register-inference-pass)
     (define-syntax define-fn
       (syntax-rules (: ->)
         ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...) Body1 BodyN ...)
@@ -1146,7 +1168,6 @@
            (error-with-loc Loc "expecting mlir value to lift: {}" Value))
           ((store-value? Value)
            (error-with-loc Loc "value is already a store"))
-          ((value? !nbdl.unknown Value) (!nbdl.store))
           (else (!nbdl.store (get-type Value)))))
       (result
         (create-op "nbdl.lift_store"
@@ -1165,9 +1186,6 @@
                      (Fn (build-lift-store Loc Value))))))
         (build-lift-store Loc Arg)))
 
-    ;; Lift a value of a non-store type (e.g. a define-fn parameter,
-    ;; a literal, or the result of a visit) to a store for use with
-    ;; Nbdl operations.
     (define-syntax lift-store
       (syntax-rules ()
         ((lift-store Value)
@@ -1185,14 +1203,14 @@
                      (result-types:))))
       (if #f #f)) ; return undefined
 
-    ;; Return results from a function defined with define-fn.
+    ;; Return the result (if any) from a function defined with define-fn.
     (define-syntax return
       (syntax-rules ()
         ((return)
          (return-aux (current-source-loc) '()))
-        ((return Expr1 ExprN ...)
-         (return-aux (syntax-source-loc Expr1)
-                     (list (%single-expr Expr1) (%single-expr ExprN) ...)))))
+        ((return Expr)
+         (return-aux (syntax-source-loc Expr)
+                     (list (%single-expr Expr))))))
 
     ;; Match stores via a let* like syntax.
     ;; Optionally, append a type constraint via `:` indentifier.
@@ -1286,6 +1304,39 @@
       (nbdl_run_flatten_pass
         main-module current-schir-clang))
 
+    ;; Pass pipeline strings for the inference stage
+    ;; (in order of registration.)
+    (define %inference-passes '())
+
+    ;; Register a pass pipeline (string) to be run with the flatten pass
+    ;; until a fixed point is reached. This allows the types of values
+    ;; from other dialects to be inferred by their own passes.
+    (define (register-inference-pass Pipeline)
+      (unless (string? Pipeline)
+        (error "expecting pass pipeline string: {}" Pipeline))
+      (unless (member Pipeline %inference-passes)
+        (set! %inference-passes
+          (append %inference-passes (list Pipeline)))))
+
+    ;; Pass pipeline strings for the lowering stage.
+    ;; (in order of registration.)
+    (define %lowering-passes '())
+
+    ;; Register a pass pipeline (string) to lower the operations of other
+    ;; dialects to dialects that nbdl-to-llvm can lower to LLVM or SPIRV.
+    (define (register-lowering-pass Pipeline)
+      (unless (string? Pipeline)
+        (error "expecting pass pipeline string: {}" Pipeline))
+      (unless (member Pipeline %lowering-passes)
+        (set! %lowering-passes
+          (append %lowering-passes (list Pipeline)))))
+
+    ;; Run the flatten pass and the registered inference passes.
+    ;; It is an error if the result type of any function is not inferred.
+    (define (run-inference-passes)
+      (apply nbdl_run_inference_passes
+             main-module current-schir-clang %inference-passes))
+
   ) ; end of... begin
   (export
     define-context
@@ -1302,6 +1353,8 @@
     define-fn
     lift-store
     return
+    register-inference-pass
+    register-lowering-pass
     match-params
     visit
     sfinae-visit
@@ -1325,16 +1378,17 @@
     type
     type->cpp
     !cpp
+    !nbdl.unknown
     dump
 
     ;; Stuff that should be broken out as a common details lib
     top-level-op
-    copy-to-lowered-module
     make-named-fn
     write-cpp
     dump-op
     dump-nbdl-module
     write-nbdl-module
     run-pass-nbdl-flatten
+    run-inference-passes
     )
 )  ; end of (nbdl spec)

@@ -46,6 +46,8 @@ add_llvm_install_targets(install-schir-scheme-libs
 add_custom_target(schir-scheme-libs)
 
 add_subdirectory(include/schir/Dialect)
+add_subdirectory(include/schir/Interfaces
+                 ${CMAKE_BINARY_DIR}/include/schir/Interfaces)
 add_subdirectory(lib)
 add_subdirectory(tools/schir-scheme)
 add_subdirectory(tools/schir-opt)

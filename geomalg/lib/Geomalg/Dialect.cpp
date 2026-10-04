@@ -112,7 +112,7 @@ geomalg::SumOp::inferReturnTypes(
   mlir::Type ResultT;
   for (mlir::Value V : Operands) {
     mlir::Type Type = V.getType();
-    if (isa<UnknownType, MultivectorType>(V.getType())) {
+    if (isUnknown(Type) || isa<MultivectorType>(Type)) {
       InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
       return llvm::success();
     } else if (isa<ZeroType>(V.getType())) {

@@ -315,12 +315,17 @@ void nbdl_spec_cpp_alias_type(schir::Context& C, schir::ValueRefs Args) {
 void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   mlir::MLIRContext* Ctx = C.MLIRContext.get();
   llvm::SmallVector<mlir::TypeAttr, 8> TypeAttrs;
+  bool HasPlaceholder = false;
   for (schir::Value Arg : Args) {
     auto Type = schir::any_cast<mlir::Type>(Arg);
     if (!Type)
       return C.RaiseError("expecting a mlir.type: {}", Arg);
+    HasPlaceholder |= schir::isPlaceholder(Type);
     TypeAttrs.push_back(mlir::TypeAttr::get(Type));
   }
+  // A store of a type that is not yet inferred is unresolved.
+  if (HasPlaceholder)
+    TypeAttrs.clear();
 
   mlir::Type StoreT = nbdl_spec::StoreType::get(Ctx, TypeAttrs);
   schir::Value Result = C.CreateAny<mlir::Type>(StoreT);
@@ -388,6 +393,36 @@ void nbdl_run_flatten_pass(schir::Context& C, schir::ValueRefs Args) {
     C, C.getLoc(),
     [&] { return nbdl_spec::runFlattenPass(Op, Impl); },
     "nbdl flatten pass failed");
+  if (llvm::failed(Result))
+    return;
+  C.Cont();
+}
+
+// Run the flatten pass and the passes of each pipeline string
+// until a fixed point is reached.
+// (run-inference-passes op schir-clang pipeline ...)
+void nbdl_run_inference_passes(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() < 2)
+    return C.RaiseError("invalid arity");
+
+  mlir::Operation* Op = dyn_cast<mlir::Operation>(Args[0]);
+  if (!Op)
+    return C.RaiseError("expecting mlir.operation");
+  auto* Impl = schir::any_cast<schir::SchirClangImpl*>(Args[1]);
+  if (!Impl)
+    return C.RaiseError("expecting SchirClang object");
+
+  llvm::SmallVector<std::string, 4> Pipelines;
+  for (schir::Value Arg : Args.drop_front(2)) {
+    if (!isa<schir::String>(Arg))
+      return C.RaiseError("expecting pass pipeline string: {}", Arg);
+    Pipelines.push_back(Arg.getStringRef().str());
+  }
+
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, C.getLoc(),
+    [&] { return nbdl_spec::runInferencePasses(Op, Impl, Pipelines); },
+    "nbdl inference passes failed");
   if (llvm::failed(Result))
     return;
   C.Cont();

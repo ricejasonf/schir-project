@@ -12,6 +12,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "schir/Interfaces/PlaceholderLike.td"
 
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
@@ -214,17 +215,20 @@ def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector",
   }];
 }
 
-def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown", []> {
+def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown",
+                              [Schir_PlaceholderLike]> {
   let mnemonic = "unknown";
   let description = [{
     A blade or multivector whose type must be inferred.
   }];
 }
 
+// A value of a placeholder type (e.g. !geomalg.unknown)
+// may be an operand until its type is inferred.
 def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
                                Geomalg_MultivectorLike,
                                Geomalg_Zero,
-                               Geomalg_Unknown]>;
+                               Schir_PlaceholderLike]>;
 
 // Operations
 

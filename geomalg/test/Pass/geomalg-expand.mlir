@@ -1,8 +1,8 @@
 // RUN: geomalg-opt \
-// RUN:   --geomalg-expand %s \
+// RUN:   --geomalg-expand="simplify=false" %s \
 // RUN:   | FileCheck %s
 // RUN: geomalg-opt \
-// RUN:   --geomalg-expand="metric=cga" %s \
+// RUN:   --geomalg-expand="metric=cga simplify=false" %s \
 // RUN:   | FileCheck --check-prefix="CGA" %s
 
 module {

@@ -12,6 +12,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "schir/Interfaces/PlaceholderLike.td"
 
 def Nbdl_Dialect : Dialect {
   let name = "nbdl";
@@ -39,11 +40,12 @@ def Nbdl_Unit : TypeDef<Nbdl_Dialect, "Unit", []> {
   }];
 }
 
-def Nbdl_Unknown : TypeDef<Nbdl_Dialect, "Unknown", []> {
+def Nbdl_Unknown : TypeDef<Nbdl_Dialect, "Unknown",
+                           [Schir_PlaceholderLike]> {
   let mnemonic = "unknown";
   let description = [{
     A placeholder for the type of a value that is not yet inferred
-    and is not necessarily a store (e.g. the result of a visit.)
+    and is not necessarily a store.
   }];
 }
 
@@ -371,15 +373,14 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
 
 def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator]> {
   let description = [{
-    Return results from a FuncOp. Each operand must be of the
-    corresponding result type or !nbdl.unknown until it is inferred.
-    It may be nested in operations (e.g. an identity nbdl.match)
-    until they are inlined by the flatten pass.
+    Return the result from a FuncOp, or nothing if the FuncOp has no
+    result. The operand must be of the result type unless either is a
+    placeholder type until it is inferred. It may be nested in the regions
+    of match operations until they are inlined by the flatten pass.
   }];
 
-  let arguments = (ins Variadic<AnyType>:$operands);
+  let arguments = (ins Optional<AnyType>:$arg);
   let results = (outs);
-  let hasVerifier = 1;
 }
 
 def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
@@ -494,8 +495,8 @@ def Nbdl_LiftStoreOp : Nbdl_Op<"lift_store", [Pure]> {
     This is the inverse of UnwrapOp and enables use of the
     value with Nbdl operations.
 
-    If the value is !nbdl.unknown, the result is an unresolved
-    store until the type of the value is inferred.
+    If the value is of a placeholder type, the result
+    is an unresolved store until the type of the value is inferred.
   }];
 
   let arguments = (ins AnyType:$value);
