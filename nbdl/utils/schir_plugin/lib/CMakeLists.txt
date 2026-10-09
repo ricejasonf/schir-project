@@ -8,5 +8,6 @@ add_library(Nbdl MODULE Nbdl.cpp
                         Nbdl/CAdapter.cpp)
 target_compile_options(Nbdl PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Nbdl NbdlOpsIncGen NbdlPassesIncGen SchirInterfacesIncGen)
+target_link_libraries(Nbdl PRIVATE SchirInterfaces)
 install(TARGETS Nbdl
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})

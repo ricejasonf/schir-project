@@ -719,10 +719,10 @@ struct ExpandConvert : OpRewriteMetric<geomalg::ConvertOp> {
 // of it back to the required type. (See ExpandConvert.)
 static llvm::LogicalResult
 convertNarrowedOperands(mlir::PatternRewriter& Rewriter, mlir::Operation* Op,
+                        llvm::MutableArrayRef<mlir::OpOperand> Operands,
                         mlir::TypeRange RequiredTs) {
   bool Changed = false;
-  for (auto [Operand, RequiredT] : llvm::zip(Op->getOpOperands(),
-                                             RequiredTs)) {
+  for (auto [Operand, RequiredT] : llvm::zip(Operands, RequiredTs)) {
     mlir::Value Arg = Operand.get();
     mlir::Type ArgT = Arg.getType();
     if (ArgT == RequiredT || isUnknown(ArgT) || isUnknown(RequiredT) ||
@@ -736,27 +736,27 @@ convertNarrowedOperands(mlir::PatternRewriter& Rewriter, mlir::Operation* Op,
 }
 
 // Keep the result types of a function when the values returned
-// are narrowed.
-// FIXME We need to properly detect a cross dialect ReturnOp
-//       or an interface so we aren't just visiting all terminators.
+// are narrowed. (This includes the returns of other dialects.)
 struct ConvertNarrowedReturn
-    : mlir::OpTraitRewritePattern<mlir::OpTrait::IsTerminator> {
-  using Base = mlir::OpTraitRewritePattern<mlir::OpTrait::IsTerminator>;
-  using Base::OpTraitRewritePattern;
+    : mlir::OpInterfaceRewritePattern<schir::InferableReturn> {
+  using Base = mlir::OpInterfaceRewritePattern<schir::InferableReturn>;
+  using Base::OpInterfaceRewritePattern;
 
   void initialize() {
     setDebugName("ConvertNarrowedReturn");
   }
 
   llvm::LogicalResult matchAndRewrite(
-      mlir::Operation* Op, mlir::PatternRewriter& Rewriter) const override {
-    auto FuncOp = dyn_cast<mlir::FunctionOpInterface>(Op->getParentOp());
-    if (!FuncOp || Op->getNumSuccessors() != 0)
+      schir::InferableReturn Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    mlir::FunctionOpInterface FuncOp = Op.getReturnedFunction();
+    if (!FuncOp)
       return llvm::failure();
     llvm::ArrayRef<mlir::Type> ResultTs = FuncOp.getResultTypes();
-    if (ResultTs.size() != Op->getNumOperands())
+    llvm::MutableArrayRef<mlir::OpOperand> Operands = Op.getReturnedOperands();
+    if (ResultTs.size() != Operands.size())
       return llvm::failure();
-    return convertNarrowedOperands(Rewriter, Op, ResultTs);
+    return convertNarrowedOperands(Rewriter, Op, Operands, ResultTs);
   }
 };
 
@@ -776,7 +776,8 @@ struct ConvertNarrowedCallArgs : mlir::OpRewritePattern<CallOp> {
                                     mlir::func::FuncOp>(Op, Op.getCalleeAttr());
     if (!FuncOp)
       return llvm::failure();
-    return convertNarrowedOperands(Rewriter, Op, FuncOp.getArgumentTypes());
+    return convertNarrowedOperands(Rewriter, Op, Op->getOpOperands(),
+                                   FuncOp.getArgumentTypes());
   }
 };
 

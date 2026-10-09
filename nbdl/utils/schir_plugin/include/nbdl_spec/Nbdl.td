@@ -12,7 +12,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "schir/Interfaces/PlaceholderLike.td"
+include "schir/Interfaces/Interfaces.td"
 
 def Nbdl_Dialect : Dialect {
   let name = "nbdl";
@@ -371,7 +371,8 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
   let results   = (outs);
 }
 
-def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator]> {
+def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
+    DeclareOpInterfaceMethods<Schir_InferableReturn, ["getReturnedFunction"]>]> {
   let description = [{
     Return the result from a FuncOp, or nothing if the FuncOp has no
     result. The operand must be of the result type unless either is a

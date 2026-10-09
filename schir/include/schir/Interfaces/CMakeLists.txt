@@ -1,3 +1,6 @@
-set(LLVM_TARGET_DEFINITIONS PlaceholderLike.td)
-mlir_tablegen(PlaceholderLike.h.inc -gen-type-interface-decls)
+set(LLVM_TARGET_DEFINITIONS Interfaces.td)
+mlir_tablegen(TypeInterfaces.h.inc -gen-type-interface-decls)
+mlir_tablegen(TypeInterfaces.cpp.inc -gen-type-interface-defs)
+mlir_tablegen(OpInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(OpInterfaces.cpp.inc -gen-op-interface-defs)
 add_public_tablegen_target(SchirInterfacesIncGen)

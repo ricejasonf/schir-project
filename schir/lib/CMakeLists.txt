@@ -35,3 +35,10 @@ target_link_libraries(schir
   PRIVATE
     LLVM
     MLIR)
+
+# Interfaces shared by the dialects of plugins.
+add_library(SchirInterfaces STATIC
+  Interfaces/Interfaces.cpp)
+set_property(TARGET SchirInterfaces PROPERTY POSITION_INDEPENDENT_CODE ON)
+# LLVM and MLIR are not linked so plugins may resolve them from the host.
+add_dependencies(SchirInterfaces SchirInterfacesIncGen)

@@ -10,7 +10,7 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
-#include <schir/Interfaces/PlaceholderLike.h>
+#include <schir/Interfaces/Interfaces.h>
 #include <concepts>
 
 namespace geomalg {

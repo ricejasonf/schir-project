@@ -757,7 +757,7 @@ struct InferConstexprType : OpRewriteSchirClang<nbdl_spec::ConstexprOp> {
 };
 
 // Infer the placeholder result type of a function from the
-// operands of every nbdl.return in its body.
+// operands of every return in its body (e.g. nbdl.return.)
 struct InferFuncResultType : mlir::OpRewritePattern<mlir::func::FuncOp> {
   using mlir::OpRewritePattern<mlir::func::FuncOp>::OpRewritePattern;
 
@@ -769,18 +769,21 @@ struct InferFuncResultType : mlir::OpRewritePattern<mlir::func::FuncOp> {
     if (!schir::isPlaceholder(ResultTs.front()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
-    llvm::SmallVector<nbdl_spec::ReturnOp, 4> Returns;
-    Op.walk([&](nbdl_spec::ReturnOp R) { Returns.push_back(R); });
+    llvm::SmallVector<schir::InferableReturn, 4> Returns;
+    Op.walk([&](schir::InferableReturn R) {
+      if (R.getReturnedFunction().getOperation() == Op.getOperation())
+        Returns.push_back(R);
+    });
     if (Returns.empty())
-      return Rewriter.notifyMatchFailure(Op, "function has no nbdl.return");
+      return Rewriter.notifyMatchFailure(Op, "function has no return");
 
     // Every return must resolve to the same type.
     mlir::Type InferredT;
-    for (nbdl_spec::ReturnOp R : Returns) {
-      mlir::Value Arg = R.getArg();
-      if (!Arg)
+    for (schir::InferableReturn R : Returns) {
+      llvm::MutableArrayRef<mlir::OpOperand> Operands = R.getReturnedOperands();
+      if (Operands.size() != 1)
         return Rewriter.notifyMatchFailure(Op, "return has no operand");
-      mlir::Type ArgT = Arg.getType();
+      mlir::Type ArgT = Operands.front().get().getType();
       if (needsResolveT(ArgT))
         return Rewriter.notifyMatchFailure(Op, "return operand not resolved");
       if (InferredT && InferredT != ArgT) {

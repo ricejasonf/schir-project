@@ -12,7 +12,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "schir/Interfaces/PlaceholderLike.td"
+include "schir/Interfaces/Interfaces.td"
 
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
@@ -505,7 +505,8 @@ def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Multilinear, ZeroAbsorb]> {
   ];
 }
 
-def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return", [Terminator]> {
+def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return",
+                         [Terminator, Schir_InferableReturn]> {
   let description = [{
     Provide a return-like operation that does not verify types
     so we can deduce return types in a subsequent pass.

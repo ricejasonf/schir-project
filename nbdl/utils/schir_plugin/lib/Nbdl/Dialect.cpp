@@ -76,6 +76,12 @@ mlir::func::FuncOp nbdl_spec::VisitOp::lookupCallee() {
   return M.lookupSymbol<mlir::func::FuncOp>(FN.getName());
 }
 
+// A return may be nested in the regions of match operations
+// until they are inlined by the flatten pass.
+mlir::FunctionOpInterface nbdl_spec::ReturnOp::getReturnedFunction() {
+  return (*this)->getParentOfType<mlir::FunctionOpInterface>();
+}
+
 llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
   mlir::Type ValueT = getValue().getType();
   if (llvm::isa<nbdl_spec::StoreType>(ValueT))
