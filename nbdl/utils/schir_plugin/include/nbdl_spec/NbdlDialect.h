@@ -72,4 +72,15 @@ std::string getCAdapterName(llvm::StringRef SymName);
 #include "nbdl_spec/NbdlOps.h.inc"
 #pragma clang diagnostic pop
 
+namespace nbdl_spec {
+// Get the initial value of a block argument of a nbdl.loop (repeatedly)
+// assuming that every iteration passes it unchanged. Otherwise, return V.
+mlir::Value lookThroughLoopArgs(mlir::Value V);
+
+// Get the FuncNameOp that defines V looking through block arguments of
+// loops and a !nbdl.store<!nbdl.func_name> created by LiftStoreOp.
+// Return a null op if V is not a function name.
+FuncNameOp getFuncName(mlir::Value V);
+}
+
 #endif

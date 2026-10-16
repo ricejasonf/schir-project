@@ -481,21 +481,26 @@ def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
 
 def Nbdl_LoopOp : Nbdl_Op<"loop", [Terminator]> {
   let description = [{
-    Let L be a nbdl.loop with initial values (x_1, ..., x_n) and let B
-    be its body with block arguments (a_1, ..., a_n) where each a_i has
-    the type of x_i. Define an iteration of L as an invocation of B with
-    each a_i bound to a value v_i. Let the first iteration bind each a_i
-    to x_i. If an iteration ends with a nbdl.continue of L with operands
-    (y_1, ..., y_n), then let the next iteration bind each a_i to y_i.
-    Otherwise, let the iteration end L like the end of a match overload.
+    Let L be a nbdl.loop of a function F with initial values
+    (x_1, ..., x_n) and let B be its body with block arguments
+    (a_1, ..., a_n) where each a_i has the type of x_i. Define an
+    iteration of L as an invocation of B with each a_i bound to a value
+    v_i. Let the first iteration bind each a_i to x_i. If an iteration
+    ends with a nbdl.continue of L with operands (y_1, ..., y_n), then
+    let the next iteration bind each a_i to y_i. If an iteration ends
+    with a nbdl.continue of a parent loop of L, then let it end L and
+    continue that loop. Otherwise, let the iteration end L like the end
+    of a match overload.
 
-    Let the flatten pass create L when it inlines a visit on a function F
-    that visits itself recursively. Define the loop-carried values of L
-    as the arguments of the visit on F at the parameters of F that some
-    recursive visit does not pass unchanged.
+    Let the flatten pass create L when it inlines a visit on F with the
+    arguments of the visit as the initial values. Let it replace a visit
+    on F in tail position within L with a nbdl.continue of L. Once no
+    visit within L may be inlined (or after the inference passes), inline
+    the body of L if no nbdl.continue continues L, and remove each block
+    argument that every nbdl.continue of L passes unchanged.
   }];
 
-  let arguments = (ins Variadic<AnyType>:$inits);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inits);
   let results = (outs);
   let regions = (region SizedRegion<1>:$body);
   let hasVerifier = 1;
@@ -503,18 +508,20 @@ def Nbdl_LoopOp : Nbdl_Op<"loop", [Terminator]> {
 
 def Nbdl_ContinueOp : Nbdl_Op<"continue", [Terminator]> {
   let description = [{
-    Let C be a nbdl.continue with operands (y_1, ..., y_n) and let L be
-    the nearest parent nbdl.loop of C with block arguments (a_1, ..., a_n).
-    Define C as the end of an iteration of L such that the next iteration
-    binds each a_i to y_i. Require the type of each y_i to be the type of
-    a_i unless either type is not yet inferred.
+    Let C be a nbdl.continue of a function F with operands (y_1, ..., y_n)
+    and let L be the nearest parent nbdl.loop of C whose function is F
+    with block arguments (a_1, ..., a_n). Define C as the end of an iteration of L
+    such that the next iteration binds each a_i to y_i. Require the type
+    of each y_i to be the type of a_i unless either type is not yet
+    inferred.
   }];
 
-  let arguments = (ins Variadic<AnyType>:$args);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$args);
   let results = (outs);
   let hasVerifier = 1;
   let extraClassDeclaration = [{
-    // Get the loop to continue (ie the nearest parent nbdl.loop.)
+    // Get the loop to continue (ie the nearest parent nbdl.loop
+    // of the same function.)
     LoopOp getLoop();
   }];
 }

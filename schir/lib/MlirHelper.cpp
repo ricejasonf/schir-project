@@ -17,6 +17,7 @@
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/Value.h>
 #include <mlir/IR/Operation.h>
+#include <llvm/ADT/ScopeExit.h>
 
 namespace schir::mlir_helper {
 mlir::MLIRContext* getCurrentContext(schir::Context& C) {
@@ -90,16 +91,27 @@ llvm::LogicalResult WithDiagnosticsHandler(
   bool HasErrors = false;
   if (!isa<schir::Undefined>(Irr))
     Irrs.push_back(Irr);
+  auto AddNote = [&](mlir::Diagnostic& D) {
+    std::string ErrMsg = D.str();
+    mlir::Location ErrLoc = D.getLocation();
+    auto Loc = schir::SourceLocation(mlir::OpaqueLoc
+      ::getUnderlyingLocationOrNull<
+          schir::SourceLocationEncoding*>(ErrLoc));
+    schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
+                                       schir::Empty());
+    Irrs.push_back(Error);
+  };
+  // Locate errors by their source locations
+  // instead of printing operations as notes.
+  bool PrevPrintOp = MCtx->shouldPrintOpOnDiagnostic();
+  MCtx->printOpOnDiagnostic(false);
+  llvm::scope_exit RestorePrintOp(
+      [&] { MCtx->printOpOnDiagnostic(PrevPrintOp); });
   mlir::ScopedDiagnosticHandler DH(MCtx,
       [&](mlir::Diagnostic& D) -> llvm::LogicalResult {
-        std::string ErrMsg = D.str();
-        mlir::Location ErrLoc = D.getLocation();
-        auto Loc = schir::SourceLocation(mlir::OpaqueLoc
-          ::getUnderlyingLocationOrNull<
-              schir::SourceLocationEncoding*>(ErrLoc));
-        schir::Value Error = C.CreateError(Loc, llvm::StringRef(ErrMsg),
-                                           schir::Empty());
-        Irrs.push_back(Error);
+        AddNote(D);
+        for (mlir::Diagnostic& Note : D.getNotes())
+          AddNote(Note);
         HasErrors = true;
         return llvm::success(); // Disable mlir error output.
       });

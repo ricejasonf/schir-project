@@ -16,6 +16,15 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -DTEST_LOOP_TYPE_MISMATCH -fsyntax-only -Xclang -verify %s
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_NOT_TAIL_CONTINUATION -fsyntax-only -Xclang -verify %s
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_NO_BASE_CASE_MUTUAL -fsyntax-only -Xclang -verify %s
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_CHANGING_FN -fsyntax-only -Xclang -verify %s
 
 #include <nbdl/spec.hpp>
 
@@ -113,6 +122,83 @@
                     Fn)))
 (define-fn sum_to ((N : 'int) (Fn : 'nbdl::noop_t)) -> ()
   (visit sum_down N '|int{0}| Fn)
+  (return))
+(finalize-module)
+}
+#endif
+
+#ifdef TEST_NOT_TAIL_CONTINUATION
+// Detect recursion via a function passed as an argument when inlining.
+// Expect finalize-module to raise errors from the inference passes.
+// expected-error@* {{nbdl inference passes failed}}
+// expected-note@+10 {{recursive visit must be in tail position}}
+// expected-note@+17 {{the function is visited here}}
+#pragma schir_scheme
+{
+(import (nbdl spec)
+        (only (schir base) begin))
+(export-cpp run)
+; // Visit Fn twice (ie not in tail position.)
+(define-match-fn visit_twice (N Fn Sink)
+  (begin
+    (visit Fn N Sink)
+    (visit Fn N Sink)))
+; // Visit walk recursively via visit_twice.
+(define-match-fn walk (N Sink)
+  (match-if (visit '|std::equal_to<int>{}| N '|int{0}|)
+    (visit Sink N)
+    (visit visit_twice (visit '|std::minus<int>{}| N '|int{1}|) walk Sink)))
+(define-fn run ((N : 'int) (Sink : 'nbdl::noop_t)) -> ()
+  (visit walk N Sink)
+  (return))
+(finalize-module)
+}
+#endif
+
+#ifdef TEST_NO_BASE_CASE_MUTUAL
+// Detect no base case for functions that visit each other.
+// (Expect the error within the definition of ping as well.)
+// expected-error@* {{nbdl inference passes failed}}
+// expected-note@+9 {{recursive visit has no base case (ie every branch continues a loop)}}
+// expected-note@+12 {{recursive visit has no base case (ie every branch continues a loop)}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-cpp run)
+(declare-match-fn pong)
+; // Visit each function from the other in every branch.
+(define-match-fn ping (N)
+  (visit pong N))
+(define-match-fn pong (N)
+  (visit ping N))
+(define-fn run ((N : 'int)) -> ()
+  (visit ping N)
+  (return))
+(finalize-module)
+}
+#endif
+
+#ifdef TEST_CHANGING_FN
+// Require a function passed to a recursive visit to be the same in every
+// iteration since a function is not a value that a loop can carry.
+// expected-error@* {{nbdl inference passes failed}}
+// expected-note@+13 {{recursive visit must pass the same function or member name as argument 1}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-cpp run)
+(define-match-fn finish (N)
+  (visit '|nbdl::noop_t{}| N))
+(define-match-fn finish_other (N)
+  (visit '|nbdl::noop_t{}| N))
+; // Pass a different function in the recursive visit.
+(define-match-fn count_down (N Fn)
+  (match-if (visit '|std::equal_to<int>{}| N '|int{0}|)
+    (visit Fn N)
+    (visit count_down (visit '|std::minus<int>{}| N '|int{1}|)
+                      finish_other)))
+(define-fn run ((N : 'int)) -> ()
+  (visit count_down N finish)
   (return))
 (finalize-module)
 }

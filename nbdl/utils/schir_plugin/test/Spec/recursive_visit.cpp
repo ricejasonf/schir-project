@@ -102,7 +102,7 @@ struct int_sink {
 ; // CHECK: [[N:%[0-9]+]] = "nbdl.lift_store"(%arg0)
 ; // CHECK-NEXT: [[ACC:%[0-9]+]] = "nbdl.lift_store"
 ; // CHECK-NEXT: [[DEST:%[0-9]+]] = "nbdl.lift_store"(%arg1)
-; // CHECK-NEXT: "nbdl.loop"([[N]], [[ACC]])
+; // CHECK-NEXT: "nbdl.loop"([[N]], [[ACC]]) <{fn = @sum_down}>
 ; // CHECK-NEXT: ^bb0([[N_ARG:%arg[0-9]+]]: !nbdl.store<i32>,
 ; // CHECK-SAME: [[ACC_ARG:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.visit"({{%[0-9]+}}, [[N_ARG]])
@@ -115,7 +115,7 @@ struct int_sink {
 ; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NEXT: [[NEXT_ACC:%[0-9]+]] = "nbdl.lift_store"
 ; // CHECK-SAME: -> !nbdl.store<i32>
-; // CHECK-NEXT: "nbdl.continue"([[NEXT_N]], [[NEXT_ACC]])
+; // CHECK-NEXT: "nbdl.continue"([[NEXT_N]], [[NEXT_ACC]]) <{fn = @sum_down}>
 ; // CHECK-NOT: "nbdl.func_name"() <{name = @sum_down}>
 ; // CHECK: "nbdl.return"() : () -> ()
 (define-fn sum_to_i32 ((N : i32) (Dest : !llvm.ptr)) -> ()
@@ -131,10 +131,10 @@ struct int_sink {
                         Fn)))
 
 ; // CHECK-LABEL: func.func @"::foo::sum_to_int"
-; // CHECK: "nbdl.loop"
+; // CHECK: "nbdl.loop"({{.*}}) <{fn = @"::foo::sum_down_int"}>
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>,
 ; // CHECK-SAME: {{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
-; // CHECK: "nbdl.continue"
+; // CHECK: "nbdl.continue"({{.*}}) <{fn = @"::foo::sum_down_int"}>
 (define-fn sum_to_int ((N : 'int) (Sink : 'foo::int_sink)) -> ()
   (visit sum_down_int N '|int{0}| Sink)
   (return))
@@ -176,14 +176,14 @@ struct int_sink {
 ; // CHECK-LABEL: func.func @"::foo::count_down_ptr"
 ; // CHECK-SAME: (%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 ; // CHECK: [[COUNTER:%[0-9]+]] = "nbdl.lift_store"(%arg0)
-; // CHECK: "nbdl.loop"() ({
+; // CHECK: "nbdl.loop"() <{fn = @count_down}> ({
 ; // CHECK-NEXT: "nbdl.func_name"() <{name = @"::foo::dec_is_zero_i32"}>
 ; // CHECK-NEXT: "nbdl.visit"({{%[0-9]+}}, [[COUNTER]])
 ; // CHECK-SAME: -> i1
 ; // CHECK: "nbdl.match_if"
 ; // CHECK: func.call @"::foo::write_i32"
 ; // CHECK: }, {
-; // CHECK-NEXT: "nbdl.continue"() : () -> ()
+; // CHECK-NEXT: "nbdl.continue"() <{fn = @count_down}> : () -> ()
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : () -> ()
 (define-fn count_down_ptr ((Counter : !llvm.ptr) (Dest : !llvm.ptr)) -> ()

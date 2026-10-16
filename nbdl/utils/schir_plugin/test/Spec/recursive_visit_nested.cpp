@@ -111,18 +111,18 @@ namespace foo {
 ; // Nest the loop of sum_down in the loop of count_up.
 ; // Expect each continue to be for its own loop.
 ; // CHECK-LABEL: func.func @"::foo::count_up_then_sum"(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
-; // CHECK: "nbdl.loop"({{%[0-9]+}}) ({
+; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @count_up}> ({
 ; // CHECK-NEXT: ^bb0([[OUTER_N:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.match_if"
-; // CHECK: "nbdl.loop"([[OUTER_N]], {{%[0-9]+}}) ({
+; // CHECK: "nbdl.loop"([[OUTER_N]], {{%[0-9]+}}) <{fn = @sum_down}> ({
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<i32>,
 ; // CHECK-SAME: {{%arg[0-9]+}}: !nbdl.store<i32>):
 ; // CHECK: func.call @"::foo::accumulate_i32"
-; // CHECK: "nbdl.continue"({{%[0-9]+}}, {{%[0-9]+}})
+; // CHECK: "nbdl.continue"({{%[0-9]+}}, {{%[0-9]+}}) <{fn = @sum_down}>
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : (!nbdl.store<i32>, !nbdl.store<i32>) -> ()
 ; // CHECK-NEXT: }, {
-; // CHECK: "nbdl.continue"({{%[0-9]+}})
+; // CHECK: "nbdl.continue"({{%[0-9]+}}) <{fn = @count_up}>
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : (!nbdl.store<i32>) -> ()
 (define-fn count_up_then_sum ((Counter : !llvm.ptr) (Dest : !llvm.ptr)) -> ()
@@ -133,7 +133,7 @@ namespace foo {
 ; // CHECK-LABEL: func.func @"::foo::sum_each"({{.*}}, %arg1: !llvm.ptr) {
 ; // CHECK: "nbdl.match_each"
 ; // CHECK-NEXT: ^bb0([[X:%arg[0-9]+]]: !nbdl.store<i32>):
-; // CHECK: "nbdl.loop"([[X]], {{%[0-9]+}})
+; // CHECK: "nbdl.loop"([[X]], {{%[0-9]+}}) <{fn = @sum_down}>
 (define-fn sum_each ((Src : !memref_i32) (Dest : !llvm.ptr)) -> ()
   (match-each (lift-store Src)
     (lambda (X)
@@ -146,28 +146,31 @@ namespace foo {
 
 ; // Lower each loop to a scf.while with the loop-carried values as its
 ; // iteration arguments so no memory is allocated for either loop.
-; // Let the inner loop end the outer loop like any other terminator.
+; // Let the inner loop also yield the flag and values of the outer loop
+; // as results so the outer loop ends with them.
 ; // LOWERED-LABEL: func.func @"::foo::count_up_then_sum"
 ; // LOWERED-NOT: memref.alloca
 ; // LOWERED: scf.while ([[OUTER_N:%.+]] = %c0_i32) : (i32) -> i32 {
 ; // LOWERED-NEXT: [[DONE:%.+]] = func.call @"::foo::dec_is_zero_i32"(%arg0)
 ; // LOWERED-NEXT: [[OUTER_IF:%.+]]:2 = scf.if [[DONE]] -> (i1, i32) {
 ; // LOWERED-NEXT: [[ZERO:%.+]] = arith.constant 0 : i32
-; // LOWERED-NEXT: scf.while ([[N:%.+]] = [[OUTER_N]], [[ACC:%.+]] = [[ZERO]])
-; // LOWERED-SAME: : (i32, i32) -> (i32, i32) {
+; // LOWERED-NEXT: [[INNER:%.+]]:4 = scf.while ([[N:%.+]] = [[OUTER_N]], [[ACC:%.+]] = [[ZERO]])
+; // LOWERED-SAME: : (i32, i32) -> (i32, i32, i1, i32) {
 ; // LOWERED-NEXT: [[INNER_DONE:%.+]] = func.call @"::foo::is_zero_i32"([[N]])
-; // LOWERED-NEXT: [[INNER_IF:%.+]]:3 = scf.if [[INNER_DONE]] -> (i1, i32, i32) {
+; // LOWERED-NEXT: [[INNER_IF:%.+]]:5 = scf.if [[INNER_DONE]] -> (i1, i32, i32, i1, i32) {
 ; // LOWERED-NEXT: func.call @"::foo::accumulate_i32"([[ACC]], %arg1)
 ; // LOWERED-NEXT: [[FALSE:%.+]] = arith.constant false
-; // LOWERED-NEXT: scf.yield [[FALSE]], [[N]], [[ACC]] : i1, i32, i32
+; // LOWERED-NEXT: [[OUTER_FALSE:%.+]] = arith.constant false
+; // LOWERED-NEXT: scf.yield [[FALSE]], [[N]], [[ACC]], [[OUTER_FALSE]], [[OUTER_N]] : i1, i32, i32, i1, i32
 ; // LOWERED-NEXT: } else {
-; // LOWERED: scf.yield %true, {{%.+}}, {{%.+}} : i1, i32, i32
+; // LOWERED: scf.yield %true, {{%.+}}, {{%.+}}, %false, [[OUTER_N]] : i1, i32, i32, i1, i32
 ; // LOWERED-NEXT: }
-; // LOWERED-NEXT: scf.condition([[INNER_IF]]#0) [[INNER_IF]]#1, [[INNER_IF]]#2 : i32, i32
+; // LOWERED-NEXT: scf.condition([[INNER_IF]]#0) [[INNER_IF]]#1, [[INNER_IF]]#2, [[INNER_IF]]#3, [[INNER_IF]]#4 : i32, i32, i1, i32
 ; // LOWERED-NEXT: } do {
-; // LOWERED: }
-; // LOWERED-NEXT: %false = arith.constant false
-; // LOWERED-NEXT: scf.yield %false, [[OUTER_N]] : i1, i32
+; // LOWERED-NEXT: ^bb0({{%.+}}: i32, {{%.+}}: i32, {{%.+}}: i1, {{%.+}}: i32):
+; // LOWERED-NEXT: scf.yield {{%.+}}, {{%.+}} : i32, i32
+; // LOWERED-NEXT: }
+; // LOWERED-NEXT: scf.yield [[INNER]]#2, [[INNER]]#3 : i1, i32
 ; // LOWERED-NEXT: } else {
 ; // LOWERED-NEXT: [[NEXT_N:%.+]] = func.call @"::foo::add_one_i32"([[OUTER_N]])
 ; // LOWERED-NEXT: %true = arith.constant true

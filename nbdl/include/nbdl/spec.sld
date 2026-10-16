@@ -1110,7 +1110,7 @@
     ;; Define a generic function to receive a matched set of parameters.
     ;; All parameters are unresolved stores which may be matched within
     ;; the body (e.g. via match-params.)
-    ;; Inline self-recursive tail visits on a function as a loop.
+    ;; Inline recursive tail visits on a function as a loop.
     (define-syntax define-match-fn
       (syntax-rules ()
         ((define-match-fn Name (Arg ...) Body ...)
@@ -1145,6 +1145,16 @@
                              (verify-recursive-visits Op)
                              Op))))
              (make-named-fn SymName FuncOp)))))))
+
+    ;; Declare match-fns so a function may visit them before they are
+    ;; defined. (e.g. Define mutually recursive functions.)
+    (define-syntax declare-match-fn
+      (syntax-rules ()
+        ((declare-match-fn Name ...)
+         (begin
+           (define Name (%make-self-named-fn (top-level-name 'Name)
+                                             (syntax-source-loc Name)))
+           ...))))
 
     ;; Define a normal function whose parameter and result types are
     ;; mlir types where string-likes are lifted to C++ types.
@@ -1373,6 +1383,7 @@
     match-cond
     match-each
     match-if
+    declare-match-fn
     define-match-fn
     define-fn
     lift-store

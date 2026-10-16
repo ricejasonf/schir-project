@@ -94,6 +94,14 @@ struct ConversionTarget : mlir::ConversionTarget {
 //    scf.yield %next : T
 //  }
 //
+// Let a loop within the body of a parent loop also yield the flag and
+// values of the parent loop as results so its terminators may continue
+// the parent loop (ie the iteration values of every parent loop.)
+//  scf.while (%arg = %init) : (T) -> (T, i1, U) {
+//    ...
+//    scf.condition(%false) %arg, %true, %value : T, i1, U
+//  } do { ... }
+//
 // Get the scf.while of the loop that the terminator of the block of Op
 // ends an iteration of or a null op if it is not within a loop body.
 // Walk up through the scf.if (with results) of each lowered match_if.
@@ -112,19 +120,48 @@ scf::WhileOp getParentLoop(mlir::Operation* Op) {
   return While;
 }
 
-// End an iteration of a loop given the flag to continue and the
-// loop-carried values for the next iteration.
+// The attribute that marks the function of the loop of a scf.while
+// until the lowering is complete.
+constexpr llvm::StringLiteral LoopFnAttrName = "nbdl.loop_fn";
+
+// Get the types of the values that end an iteration of a loop
+// (ie the flag to continue and the results of the scf.while.)
+llvm::SmallVector<mlir::Type, 4> getIterationTypes(scf::WhileOp While) {
+  llvm::SmallVector<mlir::Type, 4> Ts{mlir::IntegerType::get(
+                                        While.getContext(), 1)};
+  llvm::append_range(Ts, While.getResultTypes());
+  return Ts;
+}
+
+// Append the values that end an iteration of a loop and continue the
+// loop Target (if any) with Args or exit every other loop.
+// Pass the current values to a loop that does not continue
+// since they are ignored.
+void appendIterationValues(mlir::ConversionPatternRewriter& R,
+                           mlir::Location Loc, scf::WhileOp While,
+                           scf::WhileOp Target, mlir::ValueRange Args,
+                           llvm::SmallVectorImpl<mlir::Value>& Values) {
+  bool IsTarget = While == Target;
+  Values.push_back(arith::ConstantIntOp::create(R, Loc, IsTarget, 1));
+  if (IsTarget)
+    llvm::append_range(Values, Args);
+  else
+    llvm::append_range(Values, While.getBeforeArguments());
+  if (scf::WhileOp Parent = getParentLoop(While))
+    appendIterationValues(R, Loc, Parent, IsTarget ? scf::WhileOp() : Target,
+                          Args, Values);
+}
+
+// End an iteration of a loop given the flag to continue and
+// the results of the scf.while.
 void createLoopTerminator(mlir::ConversionPatternRewriter& R,
-                          mlir::Operation* Op, mlir::Value Continue,
-                          mlir::ValueRange Values) {
+                          mlir::Operation* Op, mlir::ValueRange Values) {
   mlir::Location Loc = Op->getLoc();
   if (isa<scf::WhileOp>(Op->getParentOp())) {
-    scf::ConditionOp::create(R, Loc, Continue, Values);
+    scf::ConditionOp::create(R, Loc, Values.front(), Values.drop_front());
     return;
   }
-  llvm::SmallVector<mlir::Value, 4> Results{Continue};
-  Results.append(Values.begin(), Values.end());
-  scf::YieldOp::create(R, Loc, Results);
+  scf::YieldOp::create(R, Loc, Values);
 }
 
 // Create the terminator that replaces a terminating nbdl operation
@@ -133,9 +170,10 @@ void createTerminator(mlir::ConversionPatternRewriter& R,
                       mlir::Operation* Op) {
   mlir::Location Loc = Op->getLoc();
   if (scf::WhileOp While = getParentLoop(Op)) {
-    // Ignore the values for the next iteration.
-    mlir::Value False = arith::ConstantIntOp::create(R, Loc, 0, 1);
-    createLoopTerminator(R, Op, False, While.getBeforeArguments());
+    // Exit every loop.
+    llvm::SmallVector<mlir::Value, 4> Values;
+    appendIterationValues(R, Loc, While, scf::WhileOp(), {}, Values);
+    createLoopTerminator(R, Op, Values);
   } else if (isa<func::FuncOp>(Op->getParentOp())) {
     func::ReturnOp::create(R, Loc);
   } else {
@@ -250,14 +288,12 @@ struct LowerMatchIf : mlir::OpConversionPattern<nbdl_spec::MatchIfOp> {
     if (ThenBlock.getNumArguments() != 1 || ElseBlock.getNumArguments() != 0)
       return R.notifyMatchFailure(Op, "unexpected region arguments");
 
-    // Within a loop body, yield the flag to continue
-    // and the loop-carried values from each branch.
+    // Within a loop body, yield the values that
+    // end the iteration from each branch.
     scf::WhileOp While = getParentLoop(Op);
     llvm::SmallVector<mlir::Type, 4> ResultTs;
-    if (While) {
-      ResultTs.push_back(R.getI1Type());
-      llvm::append_range(ResultTs, While.getBefore().getArgumentTypes());
-    }
+    if (While)
+      ResultTs = getIterationTypes(While);
     auto If = scf::IfOp::create(R, Op.getLoc(), ResultTs, Cond,
                                 /*addThenBlock=*/false,
                                 /*addElseBlock=*/false);
@@ -270,8 +306,7 @@ struct LowerMatchIf : mlir::OpConversionPattern<nbdl_spec::MatchIfOp> {
     // nbdl.match_if is a terminator, but scf.if is not.
     R.setInsertionPointAfter(If);
     if (While)
-      createLoopTerminator(R, Op, If.getResult(0),
-                           If.getResults().drop_front());
+      createLoopTerminator(R, Op, If.getResults());
     else
       createTerminator(R, Op);
     R.eraseOp(Op);
@@ -349,7 +384,9 @@ struct LowerMatchEach : mlir::OpConversionPattern<nbdl_spec::MatchEachOp> {
 };
 
 // Lower a loop to a scf.while with the loop-carried values as its
-// iteration arguments. (See getParentLoop.)
+// iteration arguments. Within a parent loop, end the iteration of the
+// parent loop with the results that follow the loop-carried values.
+// (See getParentLoop.)
 struct LowerLoop : mlir::OpConversionPattern<nbdl_spec::LoopOp> {
   using Base::Base;
 
@@ -364,26 +401,39 @@ struct LowerLoop : mlir::OpConversionPattern<nbdl_spec::LoopOp> {
     mlir::Location Loc = Op.getLoc();
     mlir::ValueRange Inits = Adaptor.getInits();
     mlir::TypeRange Ts = Inits.getTypes();
-    llvm::SmallVector<mlir::Location, 4> Locs(Ts.size(), Loc);
-    auto While = scf::WhileOp::create(R, Loc, Ts, Inits);
+    scf::WhileOp Parent = getParentLoop(Op);
+    llvm::SmallVector<mlir::Type, 4> ResultTs(Ts);
+    if (Parent)
+      llvm::append_range(ResultTs, getIterationTypes(Parent));
+    auto While = scf::WhileOp::create(R, Loc, ResultTs, Inits);
+    While->setAttr(LoopFnAttrName, Op.getFnAttr());
 
     // Let the terminators of the body end each iteration.
-    mlir::Block* Before = R.createBlock(&While.getBefore(), {}, Ts, Locs);
+    llvm::SmallVector<mlir::Location, 4> Locs(ResultTs.size(), Loc);
+    mlir::Block* Before = R.createBlock(&While.getBefore(), {}, Ts,
+                                        llvm::ArrayRef(Locs).take_front(
+                                          Ts.size()));
     R.mergeBlocks(*BodyBlock, Before, Before->getArguments());
 
-    mlir::Block* After = R.createBlock(&While.getAfter(), {}, Ts, Locs);
-    scf::YieldOp::create(R, Loc, After->getArguments());
+    mlir::Block* After = R.createBlock(&While.getAfter(), {}, ResultTs,
+                                       Locs);
+    scf::YieldOp::create(R, Loc, After->getArguments().take_front(
+                                   Ts.size()));
 
     // Terminate the block since nbdl.loop is a terminator,
     // but scf.while is not.
     R.setInsertionPoint(Op);
-    createTerminator(R, Op);
+    if (Parent)
+      createLoopTerminator(R, Op, While.getResults().drop_front(Ts.size()));
+    else
+      createTerminator(R, Op);
     R.eraseOp(Op);
     return llvm::success();
   }
 };
 
-// Continue the loop with the loop-carried values for the next iteration.
+// Continue the loop with the loop-carried values for the next iteration
+// and exit each loop within it.
 struct LowerContinue : mlir::OpConversionPattern<nbdl_spec::ContinueOp> {
   using Base::Base;
 
@@ -391,14 +441,18 @@ struct LowerContinue : mlir::OpConversionPattern<nbdl_spec::ContinueOp> {
         nbdl_spec::ContinueOp Op, OpAdaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
     scf::WhileOp While = getParentLoop(Op);
-    if (!While)
+    scf::WhileOp Target = While;
+    while (Target && Target->getAttr(LoopFnAttrName) != Op.getFnAttr())
+      Target = getParentLoop(Target);
+    if (!Target)
       return R.notifyMatchFailure(Op, "loop is not lowered");
     mlir::ValueRange Args = Adaptor.getArgs();
-    if (Args.getTypes() != While.getBefore().getArgumentTypes())
+    if (Args.getTypes() != Target.getBefore().getArgumentTypes())
       return R.notifyMatchFailure(Op, "loop-carried type mismatch");
 
-    mlir::Value True = arith::ConstantIntOp::create(R, Op.getLoc(), 1, 1);
-    createLoopTerminator(R, Op, True, Args);
+    llvm::SmallVector<mlir::Value, 4> Values;
+    appendIterationValues(R, Op.getLoc(), While, Target, Args, Values);
+    createLoopTerminator(R, Op, Values);
     R.eraseOp(Op);
     return llvm::success();
   }
@@ -449,6 +503,8 @@ public:
     M.walk([](mlir::Operation* Op) {
       if (isa<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp>(Op) && Op->use_empty())
         Op->erase();
+      else if (isa<scf::WhileOp>(Op))
+        Op->removeAttr(LoopFnAttrName);
     });
   }
 };

@@ -58,13 +58,20 @@ void nbdl_spec::ScopeOp::build(::mlir::OpBuilder&,
   odsState.addRegion(std::move(body));
 }
 
-// Get the FuncNameOp that defines V looking through
-// a !nbdl.store<!nbdl.func_name> created by LiftStoreOp.
-// Return a null op if V is not a function name.
-static
-nbdl_spec::FuncNameOp getFuncName(mlir::Value V) {
+mlir::Value nbdl_spec::lookThroughLoopArgs(mlir::Value V) {
+  while (auto Arg = llvm::dyn_cast<mlir::BlockArgument>(V)) {
+    auto Loop = llvm::dyn_cast_or_null<LoopOp>(Arg.getOwner()->getParentOp());
+    if (!Loop)
+      break;
+    V = Loop.getInits()[Arg.getArgNumber()];
+  }
+  return V;
+}
+
+nbdl_spec::FuncNameOp nbdl_spec::getFuncName(mlir::Value V) {
+  V = lookThroughLoopArgs(V);
   if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
-    V = Op.getValue();
+    V = lookThroughLoopArgs(Op.getValue());
   return V.getDefiningOp<nbdl_spec::FuncNameOp>();
 }
 
@@ -129,13 +136,17 @@ llvm::LogicalResult nbdl_spec::LoopOp::verify() {
 }
 
 nbdl_spec::LoopOp nbdl_spec::ContinueOp::getLoop() {
-  return (*this)->getParentOfType<LoopOp>();
+  for (auto Loop = (*this)->getParentOfType<LoopOp>(); Loop;
+       Loop = Loop->getParentOfType<LoopOp>())
+    if (Loop.getFnAttr() == getFnAttr())
+      return Loop;
+  return {};
 }
 
 llvm::LogicalResult nbdl_spec::ContinueOp::verify() {
   LoopOp Loop = getLoop();
   if (!Loop)
-    return emitOpError("expecting a parent nbdl.loop");
+    return emitOpError("expecting a parent nbdl.loop of ") << getFnAttr();
   return verifyLoopCarriedTypes(*this, getArgs(), Loop.getBody().front());
 }
 

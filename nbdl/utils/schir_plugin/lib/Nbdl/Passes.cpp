@@ -2,6 +2,7 @@
 #include <nbdl_spec/TranslateCpp.h>
 #include <schir/MappableToCpp.h>
 #include <schir/SchirClang.h>
+#include <llvm/ADT/BitVector.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/SmallVector.h>
@@ -153,19 +154,234 @@ getVisitsOn(mlir::Operation* Root, mlir::func::FuncOp Fn) {
   return Visits;
 }
 
-// Check that a recursive visit is in tail position relative to Root.
+// Return true if a visit is in tail position relative to Root.
 // Allow only parent operations that are match operations selecting
-// a branch so the result is discarded as the terminator of every
-// parent block. (e.g. Reject a visit in a nbdl.scope.)
-llvm::LogicalResult checkTailVisit(nbdl_spec::VisitOp Op,
-                                   mlir::Operation* Root) {
+// a branch or loops so the result is discarded as the terminator of
+// every parent block. (e.g. Reject a visit in a nbdl.scope.)
+bool isTailVisit(nbdl_spec::VisitOp Op, mlir::Operation* Root) {
   bool IsTail = static_cast<bool>(getTailDiscard(Op));
   for (mlir::Operation* Parent = Op->getParentOp();
        IsTail && Parent != Root; Parent = Parent->getParentOp())
-    IsTail = isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp>(Parent);
-  if (!IsTail)
+    IsTail = isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp,
+                 nbdl_spec::LoopOp>(Parent);
+  return IsTail;
+}
+
+// Check that a recursive visit is in tail position relative to Root.
+llvm::LogicalResult checkTailVisit(nbdl_spec::VisitOp Op,
+                                   mlir::Operation* Root) {
+  if (!isTailVisit(Op, Root))
     return Op.emitError("recursive visit must be in tail position");
   return llvm::success();
+}
+
+// Get the nearest parent loop of Op of the function Fn
+// or a null op if there is none.
+nbdl_spec::LoopOp getParentLoopOf(mlir::Operation* Op,
+                                  mlir::FlatSymbolRefAttr Fn) {
+  for (auto Loop = Op->getParentOfType<nbdl_spec::LoopOp>(); Loop;
+       Loop = Loop->getParentOfType<nbdl_spec::LoopOp>())
+    if (Loop.getFnAttr() == Fn)
+      return Loop;
+  return {};
+}
+
+// Get the continues of a loop.
+llvm::SmallVector<nbdl_spec::ContinueOp, 4>
+getContinues(nbdl_spec::LoopOp Loop) {
+  llvm::SmallVector<nbdl_spec::ContinueOp, 4> Continues;
+  Loop.walk([&](nbdl_spec::ContinueOp C) {
+    if (C.getLoop() == Loop)
+      Continues.push_back(C);
+  });
+  return Continues;
+}
+
+// Return true if the flatten pass may inline a visit
+// (ie the callee is or may resolve to a function in the module.)
+bool mayInlineVisit(nbdl_spec::VisitOp Op) {
+  if (Op.getSfinae() || Op.getValidCppCrossMap())
+    return false;
+  if (mlir::func::FuncOp F = Op.lookupCallee())
+    return llvm::any_of(F.getArgumentTypes(),
+        [](mlir::Type T) { return isa<nbdl_spec::StoreType>(T); });
+  mlir::Type T = Op.getFn().getType();
+  if (mlir::Type AltT = getSingleAltT(T))
+    T = AltT;
+  return needsResolveT(T) || isa<nbdl_spec::FuncNameType>(T);
+}
+
+// Return true if no visit within a loop may be inlined so
+// no visit may become another continue of the loop.
+bool isSettledLoop(nbdl_spec::LoopOp Loop) {
+  return !Loop.walk([](nbdl_spec::VisitOp V) {
+    return mayInlineVisit(V) ? mlir::WalkResult::interrupt()
+                             : mlir::WalkResult::advance();
+  }).wasInterrupted();
+}
+
+// Get the name of a function name or member name
+// or a null attribute if V is neither.
+mlir::Attribute getNameAttr(mlir::Value V) {
+  if (nbdl_spec::FuncNameOp FN = nbdl_spec::getFuncName(V))
+    return FN.getNameAttr();
+  V = nbdl_spec::lookThroughLoopArgs(V);
+  if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
+    V = nbdl_spec::lookThroughLoopArgs(Op.getValue());
+  if (auto MN = V.getDefiningOp<nbdl_spec::MemberNameOp>())
+    return MN.getNameAttr();
+  return {};
+}
+
+// Return true if a value is a function name or member name
+// which only exists at compile time.
+bool isNameType(mlir::Type T) {
+  if (mlir::Type AltT = getSingleAltT(T))
+    T = AltT;
+  return isa<nbdl_spec::FuncNameType, nbdl_spec::MemberNameType>(T);
+}
+
+// Return true if every continue of a loop passes a value to the
+// block argument that is the same in every iteration. (ie the block
+// argument itself, the initial value, or the same name.)
+bool isInvariantLoopArg(nbdl_spec::LoopOp Loop, mlir::BlockArgument Arg,
+                        llvm::ArrayRef<nbdl_spec::ContinueOp> Continues) {
+  mlir::Value Init = Loop.getInits()[Arg.getArgNumber()];
+  mlir::Attribute InitName = getNameAttr(Init);
+  return llvm::all_of(Continues, [&](nbdl_spec::ContinueOp C) {
+    mlir::Value V = C.getArgs()[Arg.getArgNumber()];
+    return V == Arg || V == Init || (InitName && getNameAttr(V) == InitName);
+  });
+}
+
+// Inline the body of a loop with no continues or remove each block
+// argument of a loop that is invariant. Return failure if nothing
+// changes.
+llvm::LogicalResult simplifyLoop(nbdl_spec::LoopOp Loop,
+                                 mlir::RewriterBase& Rewriter) {
+  llvm::SmallVector<nbdl_spec::ContinueOp, 4> Continues = getContinues(Loop);
+  mlir::Block& Body = Loop.getBody().front();
+  if (Continues.empty()) {
+    // The body has its own terminator that replaces the loop.
+    Rewriter.inlineBlockBefore(&Body, Loop, Loop.getInits());
+    Rewriter.eraseOp(Loop);
+    return llvm::success();
+  }
+
+  llvm::BitVector Invariant(Body.getNumArguments());
+  for (mlir::BlockArgument Arg : Body.getArguments())
+    Invariant[Arg.getArgNumber()] =
+      isInvariantLoopArg(Loop, Arg, Continues);
+  if (Invariant.none())
+    return llvm::failure();
+
+  for (int I = Invariant.find_last(); I >= 0; I = Invariant.find_prev(I)) {
+    Rewriter.replaceAllUsesWith(Body.getArgument(I), Loop.getInits()[I]);
+    Rewriter.modifyOpInPlace(Loop, [&] { Loop.getInitsMutable().erase(I); });
+    for (nbdl_spec::ContinueOp C : Continues)
+      Rewriter.modifyOpInPlace(C, [&] { C.getArgsMutable().erase(I); });
+  }
+  Rewriter.modifyOpInPlace(Loop, [&] { Body.eraseArguments(Invariant); });
+  return llvm::success();
+}
+
+// Simplify a loop once no visit within it may become a continue.
+struct SimplifySettledLoop : mlir::OpRewritePattern<nbdl_spec::LoopOp> {
+  using mlir::OpRewritePattern<nbdl_spec::LoopOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::LoopOp Op, mlir::PatternRewriter& Rewriter) const override {
+    if (!isSettledLoop(Op))
+      return Rewriter.notifyMatchFailure(Op, "loop may get a continue");
+    return simplifyLoop(Op, Rewriter);
+  }
+};
+
+// Infer the type of each block argument of a loop from its initial value.
+struct InferLoopArgType : mlir::OpRewritePattern<nbdl_spec::LoopOp> {
+  using mlir::OpRewritePattern<nbdl_spec::LoopOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::LoopOp Op, mlir::PatternRewriter& Rewriter) const override {
+    auto IsInferable = [](auto Pair) {
+      auto [Init, Arg] = Pair;
+      return needsResolve(Arg) && !needsResolve(Init);
+    };
+    auto Pairs = llvm::zip(Op.getInits(), Op.getBody().getArguments());
+    if (llvm::none_of(Pairs, IsInferable))
+      return Rewriter.notifyMatchFailure(Op, "no type to infer");
+    Rewriter.modifyOpInPlace(Op, [&] {
+      for (auto Pair : Pairs)
+        if (IsInferable(Pair))
+          std::get<1>(Pair).setType(std::get<0>(Pair).getType());
+    });
+    return llvm::success();
+  }
+};
+
+// Return true if a path through the block may end the loop without
+// continuing it or a loop within it (ie a branch through match
+// operations and loops has a base case or continues a parent loop.)
+bool hasLoopExit(mlir::Block& Block, nbdl_spec::LoopOp Loop) {
+  if (Block.empty())
+    return true;
+  mlir::Operation* Terminator = &Block.back();
+  if (auto Continue = dyn_cast<nbdl_spec::ContinueOp>(Terminator))
+    return Continue.getLoop()->isProperAncestor(Loop);
+  if (!isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp,
+           nbdl_spec::LoopOp>(Terminator))
+    return true;
+  return llvm::any_of(Terminator->getRegions(), [&](mlir::Region& R) {
+    return R.empty() || hasLoopExit(R.front(), Loop);
+  });
+}
+
+// Simplify every loop (inner loops first) and check the remaining
+// loops after the inference passes.
+llvm::LogicalResult finalizeLoops(mlir::Operation* Root) {
+  llvm::SmallVector<nbdl_spec::LoopOp, 8> Loops;
+  Root->walk([&](nbdl_spec::LoopOp Loop) { Loops.push_back(Loop); });
+
+  bool HasError = false;
+  mlir::IRRewriter Rewriter(Root->getContext());
+  for (nbdl_spec::LoopOp Loop : Loops) {
+    llvm::SmallVector<nbdl_spec::ContinueOp, 4> Continues =
+      getContinues(Loop);
+    bool IsValid = true;
+    for (mlir::BlockArgument Arg : Loop.getBody().getArguments()) {
+      // A function or member name has no value to carry.
+      if (!isNameType(Arg.getType()))
+        continue;
+      for (nbdl_spec::ContinueOp C : Continues) {
+        if (isInvariantLoopArg(Loop, Arg, C))
+          continue;
+        C.emitError("recursive visit must pass the same function "
+                    "or member name as argument ")
+          << Arg.getArgNumber();
+        IsValid = false;
+      }
+    }
+    if (IsValid)
+      (void)simplifyLoop(Loop, Rewriter);
+    else
+      HasError = true;
+  }
+  if (HasError)
+    return llvm::failure();
+
+  Root->walk([&](nbdl_spec::LoopOp Loop) {
+    if (!hasLoopExit(Loop.getBody().front(), Loop)) {
+      Loop.emitError("recursive visit has no base case "
+                     "(ie every branch continues a loop)");
+      HasError = true;
+    }
+    Loop.walk([&](nbdl_spec::ReturnOp Return) {
+      Return.emitError("nbdl.return in a function that is visited "
+                       "recursively is not supported");
+      HasError = true;
+    });
+  });
+  return llvm::failure(HasError);
 }
 
 // Return true if a path through the block may end without a recursive
@@ -186,6 +402,10 @@ bool hasBaseCase(mlir::Block& Block, mlir::func::FuncOp Fn) {
     return R.empty() || hasBaseCase(R.front(), Fn);
   });
 }
+
+// The attribute that marks a recursive visit with an emitted error.
+constexpr llvm::StringLiteral InvalidRecursionAttrName =
+  "nbdl.invalid_recursion";
 
 constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
   mlir::Type T = V.getType();
@@ -330,8 +550,10 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     return false;
   }
 
-  // Replace the tail call to a function with store type
-  // params with the body of that function.
+  // Replace the tail call to a function with store type params with a
+  // nbdl.loop of that function whose body is the body of that function.
+  // Replace a visit on a function within a loop of that function with a
+  // nbdl.continue of that loop. (ie Inline a recursive visit as a loop.)
   llvm::LogicalResult inlineVisit(nbdl_spec::VisitOp Op,
                                   mlir::func::FuncOp CalleeFn,
                                   mlir::PatternRewriter& Rewriter) const {
@@ -344,18 +566,25 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (CalleeFn.getNumResults() != 0)
       return Rewriter.notifyMatchFailure(Op, "callee has results");
     nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
+    auto Fn = mlir::FlatSymbolRefAttr::get(CalleeFn.getSymNameAttr());
+    nbdl_spec::LoopOp ParentLoop = getParentLoopOf(Op, Fn);
+    if (ParentLoop && !isTailVisit(Op, ParentLoop)) {
+      // Inlining the visit would never end.
+      if (Op->hasAttr(InvalidRecursionAttrName))
+        return Rewriter.notifyMatchFailure(Op, "invalid recursive visit");
+      Op.emitError("recursive visit must be in tail position")
+        .attachNote(ParentLoop.getLoc())
+          << "the function is visited here";
+      // Mark the visit so the error is emitted once.
+      Rewriter.modifyOpInPlace(Op, [&] {
+        Op->setAttr(InvalidRecursionAttrName, Rewriter.getUnitAttr());
+      });
+      return llvm::success();
+    }
     if (!Discard)
       return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
 
-    llvm::SmallVector<nbdl_spec::VisitOp, 4> RecursiveVisits =
-      getVisitsOn(CalleeFn, CalleeFn);
-    if (!RecursiveVisits.empty() &&
-        llvm::failed(checkRecursiveCallee(Op, CalleeFn, RecursiveVisits,
-                                          Rewriter)))
-      return llvm::failure();
-
     mlir::Block& CalleeBody = CalleeFn.getBody().front();
-    mlir::IRMapping Mapping;
     Rewriter.setInsertionPoint(Discard);
 
     llvm::SmallVector<mlir::Value, 8> MappedArgs;
@@ -363,18 +592,23 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
                                        Op.getArgs()))
       MappedArgs.push_back(liftArg(Rewriter, Param.getType(), Arg));
 
-    if (!RecursiveVisits.empty())
-      return inlineRecursiveVisit(Op, CalleeFn, RecursiveVisits,
-                                  MappedArgs, Rewriter);
+    if (ParentLoop) {
+      nbdl_spec::ContinueOp::create(Rewriter, Op.getLoc(), Fn, MappedArgs);
+    } else {
+      auto Loop = nbdl_spec::LoopOp::create(Rewriter, Op.getLoc(), Fn,
+                                            MappedArgs);
+      mlir::Block* LoopBody = Rewriter.createBlock(&Loop.getBody());
+      mlir::IRMapping Mapping;
+      for (auto [Param, Mapped] : llvm::zip(CalleeBody.getArguments(),
+                                            MappedArgs))
+        Mapping.map(Param, LoopBody->addArgument(Mapped.getType(),
+                                                 Mapped.getLoc()));
 
-    for (auto [Param, Mapped] : llvm::zip(CalleeBody.getArguments(),
-                                          MappedArgs))
-      Mapping.map(Param, Mapped);
-
-    // The callee body has its own terminator so it
-    // replaces both the visit and the discard.
-    for (mlir::Operation& CalleeOp : CalleeBody)
-      Rewriter.clone(CalleeOp, Mapping);
+      // The callee body has its own terminator so it
+      // replaces both the visit and the discard.
+      for (mlir::Operation& CalleeOp : CalleeBody)
+        Rewriter.clone(CalleeOp, Mapping);
+    }
 
     Rewriter.eraseOp(Discard);
     Rewriter.eraseOp(Op);
@@ -394,83 +628,6 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       : nbdl_spec::StoreType::get(Ctx, mlir::TypeAttr::get(Arg.getType()));
     return nbdl_spec::LiftStoreOp::create(Rewriter, Arg.getLoc(),
                                           LiftedT, Arg);
-  }
-
-  // Check that a visit on a function that visits itself
-  // can be inlined as a loop.
-  static llvm::LogicalResult checkRecursiveCallee(
-      nbdl_spec::VisitOp Op, mlir::func::FuncOp CalleeFn,
-      llvm::ArrayRef<nbdl_spec::VisitOp> RecursiveVisits,
-      mlir::PatternRewriter& Rewriter) {
-    // Require the loop-carried values to have known types.
-    if (llvm::any_of(Op.getArgs(), needsResolve))
-      return Rewriter.notifyMatchFailure(Op,
-          "args of visit on recursive callee are not resolved");
-    mlir::WalkResult HasReturn = CalleeFn.walk([](nbdl_spec::ReturnOp) {
-      return mlir::WalkResult::interrupt();
-    });
-    if (HasReturn.wasInterrupted())
-      return Op.emitError("visit on a recursive function with a "
-                          "nbdl.return is not supported");
-    for (nbdl_spec::VisitOp V : RecursiveVisits)
-      if (llvm::failed(checkTailVisit(V, CalleeFn)))
-        return llvm::failure();
-    return llvm::success();
-  }
-
-  // Replace the tail call to a function that visits itself
-  // with a nbdl.loop whose body is the body of that function.
-  // Replace each recursive visit with a nbdl.continue.
-  // Do not carry a parameter that every recursive visit passes
-  // unchanged since it is the same in every iteration.
-  llvm::LogicalResult inlineRecursiveVisit(
-      nbdl_spec::VisitOp Op, mlir::func::FuncOp CalleeFn,
-      llvm::ArrayRef<nbdl_spec::VisitOp> RecursiveVisits,
-      llvm::ArrayRef<mlir::Value> MappedArgs,
-      mlir::PatternRewriter& Rewriter) const {
-    mlir::Block& CalleeBody = CalleeFn.getBody().front();
-    nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
-
-    auto IsInvariant = [&](mlir::BlockArgument Param) {
-      return llvm::all_of(RecursiveVisits, [&](nbdl_spec::VisitOp V) {
-        return V.getArgs()[Param.getArgNumber()] == Param;
-      });
-    };
-    llvm::SmallVector<mlir::Value, 8> Inits;
-    for (mlir::BlockArgument Param : CalleeBody.getArguments())
-      if (!IsInvariant(Param))
-        Inits.push_back(MappedArgs[Param.getArgNumber()]);
-
-    auto Loop = nbdl_spec::LoopOp::create(Rewriter, Op.getLoc(), Inits);
-    mlir::Block* LoopBody = Rewriter.createBlock(&Loop.getBody());
-    mlir::IRMapping Mapping;
-    for (mlir::BlockArgument Param : CalleeBody.getArguments()) {
-      mlir::Value Mapped = MappedArgs[Param.getArgNumber()];
-      if (!IsInvariant(Param))
-        Mapped = LoopBody->addArgument(Mapped.getType(), Mapped.getLoc());
-      Mapping.map(Param, Mapped);
-    }
-
-    for (mlir::Operation& CalleeOp : CalleeBody)
-      Rewriter.clone(CalleeOp, Mapping);
-
-    // Replace each recursive visit (and its discard) with a continue.
-    for (nbdl_spec::VisitOp V : getVisitsOn(Loop, CalleeFn)) {
-      nbdl_spec::DiscardOp VDiscard = getTailDiscard(V);
-      Rewriter.setInsertionPoint(VDiscard);
-      llvm::SmallVector<mlir::Value, 8> Args;
-      for (mlir::BlockArgument Param : CalleeBody.getArguments())
-        if (!IsInvariant(Param))
-          Args.push_back(liftArg(Rewriter, Param.getType(),
-                                 V.getArgs()[Param.getArgNumber()]));
-      nbdl_spec::ContinueOp::create(Rewriter, V.getLoc(), Args);
-      Rewriter.eraseOp(VDiscard);
-      Rewriter.eraseOp(V);
-    }
-
-    Rewriter.eraseOp(Discard);
-    Rewriter.eraseOp(Op);
-    return llvm::success();
   }
 
   // Lower to a func.call where arguments that are stores
@@ -612,7 +769,8 @@ struct InferMatchIfThenArgType
 
     // Implicitly unwrap a `sfinae_result`
     llvm::StringRef CondTypeStr = getCppTypename(Cond);
-    auto VOp = Cond.getDefiningOp<nbdl_spec::VisitOp>();
+    auto VOp = nbdl_spec::lookThroughLoopArgs(Cond)
+                 .getDefiningOp<nbdl_spec::VisitOp>();
     if (VOp && VOp.getSfinae() && !CondTypeStr.empty()) {
       CondTypeStr.consume_front("::");
       llvm::StringRef Prefix = "nbdl::detail::sfinae_result<";
@@ -723,8 +881,8 @@ struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
     std::string Expr;
     if (Op.hasUnitKey()) {
       Expr = "::nbdl::get(" + StoreExpr + ")";
-    } else if (auto MemberName =
-                   Op.getKey().getDefiningOp<nbdl_spec::MemberNameOp>()) {
+    } else if (auto MemberName = nbdl_spec::lookThroughLoopArgs(Op.getKey())
+                     .getDefiningOp<nbdl_spec::MemberNameOp>()) {
       Expr = (llvm::Twine(StoreExpr) + "." + MemberName.getName()).str();
     } else {
       llvm::StringRef KeyTypeStr = getCppTypename(Op.getKey());
@@ -1102,6 +1260,8 @@ public:
     PS.add<InferConstexprType>(SchirClangOpt.get(), Ctx);
     PS.add<InferMatchOverloadType>(SchirClangOpt.get(), Ctx);
     PS.add<InferFuncResultType>(Ctx);
+    PS.add<InferLoopArgType>(Ctx);
+    PS.add<SimplifySettledLoop>(Ctx);
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
@@ -1222,7 +1382,9 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
       << FuncOp.getSymName();
     HasError = true;
   });
-  return llvm::failure(HasError);
+  if (HasError)
+    return llvm::failure();
+  return finalizeLoops(Op);
 }
 
 } // namespace nbdl_spec
