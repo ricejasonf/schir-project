@@ -41,6 +41,8 @@
       (load-builtin "nbdl_spec_type_to_cpp_type"))
     (define nbdl_spec_cpp_alias_type
       (load-builtin "nbdl_spec_cpp_alias_type"))
+    (define verify-recursive-visits
+      (load-builtin "nbdl_spec_verify_recursive_visits"))
 
     ;; Create a !nbdl.cpp_alias type with a C++ typename as written.
     ;; The flatten pass replaces it with a !nbdl.cpp type
@@ -175,11 +177,20 @@
                          (lambda (Op) (memq Op %lower-to-llvm-ops))
                          lower-to-llvm)
       (when llvm-module
-        (apply run-passes llvm-module "nbdl-lower"
-               (append %lowering-passes
-                       (list "nbdl-to-llvm" "nbdl-c-adapter")))
+        (apply run-passes llvm-module "nbdl-lower" %lowering-passes)
+        (when %write-lowered-module?
+          (write llvm-module)
+          (newline))
+        (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
         (inject-module llvm-module)
         (set! llvm-module #f)))
+
+    (define %write-lowered-module? #f)
+
+    ;; Write the module of functions lowered by finalize-module
+    ;; before lowering it to an exit dialect (for debugging and testing.)
+    (define (write-lowered-module)
+      (set! %write-lowered-module? #t))
 
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
@@ -584,18 +595,23 @@
 
     ;; A 'named-fn' can be used in an expr+
     (define (make-named-fn SymbolName FuncOp)
-      (list %named-fn SymbolName FuncOp))
+      (list %named-fn SymbolName FuncOp (source-loc FuncOp)))
+
+    ;; Let a function refer to itself within its own body before the
+    ;; FuncOp exists.
+    (define (%make-self-named-fn SymbolName Loc)
+      (list %named-fn SymbolName #f Loc))
 
     (define (named-fn? Value)
       (and (pair? Value)
            (eq? %named-fn (car Value))))
 
     (define (build-func-name NamedFn)
-      (define-values (_ Name FuncOp)
+      (define-values (_ Name FuncOp Loc)
         (apply values NamedFn))
       (result (create-op
                 "nbdl.func_name"
-                (loc: (source-loc FuncOp))
+                (loc: Loc)
                 (operands:)
                 (attributes:
                   ("name" (flat-symbolref-attr Name)))
@@ -1094,6 +1110,7 @@
     ;; Define a generic function to receive a matched set of parameters.
     ;; All parameters are unresolved stores which may be matched within
     ;; the body (e.g. via match-params.)
+    ;; Inline self-recursive tail visits on a function as a loop.
     (define-syntax define-match-fn
       (syntax-rules ()
         ((define-match-fn Name (Arg ...) Body ...)
@@ -1103,23 +1120,30 @@
                            (syntax-source-loc Name)
                            'Name
                            (lambda (SymName_)
+                             (define Op
+                               ;; Let Name refer to the function in its body.
+                               (let ((Name (%make-self-named-fn
+                                             SymName_
+                                             (syntax-source-loc Name))))
+                                 (create-op
+                                   "func.func"
+                                   (loc: (syntax-source-loc Name))
+                                   (operands:)
+                                   (attributes:
+                                     ("sym_name" (string-attr SymName_))
+                                     ("function_type"
+                                      (type-attr
+                                        (%function-type
+                                          (make-vector
+                                            (length '(Arg ...))
+                                            (!nbdl.store))
+                                          #()))))
+                                   (result-types:)
+                                   (region: "body" ((Arg : (!nbdl.store)) ...)
+                                            Body ...))))
                              (set! SymName SymName_)
-                             (create-op
-                               "func.func"
-                               (loc: (syntax-source-loc Name))
-                               (operands:)
-                               (attributes:
-                                 ("sym_name" (string-attr SymName))
-                                 ("function_type"
-                                  (type-attr
-                                    (%function-type
-                                      (make-vector
-                                        (length '(Arg ...))
-                                        (!nbdl.store))
-                                      #()))))
-                               (result-types:)
-                               (region: "body" ((Arg : (!nbdl.store)) ...)
-                                        Body ...))))))
+                             (verify-recursive-visits Op)
+                             Op))))
              (make-named-fn SymName FuncOp)))))))
 
     ;; Define a normal function whose parameter and result types are
@@ -1235,7 +1259,7 @@
         (cond
           ((named-fn? Name)
             (let ()
-              (define-values (_ _ FuncOp)
+              (define-values (_ _ FuncOp _)
                 (apply values Name))
               FuncOp))
           ((named-store? Name)
@@ -1363,6 +1387,7 @@
     export-c
     export-c-internal
     finalize-module
+    write-lowered-module
 
     ;; Reexport some base stuff
     define

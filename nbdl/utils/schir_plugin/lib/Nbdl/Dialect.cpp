@@ -96,6 +96,49 @@ llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
   return llvm::success();
 }
 
+// Return true if T is not yet inferred (ie a placeholder or
+// a !nbdl.store with no resolved alternatives.)
+static bool needsResolveT(mlir::Type T) {
+  if (schir::isPlaceholder(T))
+    return true;
+  auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(T);
+  return ST && ST.getAlts().empty();
+}
+
+// Check that each value has the type of the corresponding
+// block argument unless either is not yet inferred.
+static llvm::LogicalResult verifyLoopCarriedTypes(mlir::Operation* Op,
+                                                  mlir::ValueRange Values,
+                                                  mlir::Block& Body) {
+  if (Values.size() != Body.getNumArguments())
+    return Op->emitOpError("expecting ") << Body.getNumArguments()
+      << " loop-carried values but got " << Values.size();
+  for (auto [I, V, Arg] : llvm::enumerate(Values, Body.getArguments())) {
+    mlir::Type T = V.getType();
+    if (T != Arg.getType() && !needsResolveT(T) &&
+        !needsResolveT(Arg.getType()))
+      return Op->emitOpError("type of loop-carried value ") << I << " ("
+        << T << ") does not match the type of the loop argument ("
+        << Arg.getType() << ")";
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult nbdl_spec::LoopOp::verify() {
+  return verifyLoopCarriedTypes(*this, getInits(), getBody().front());
+}
+
+nbdl_spec::LoopOp nbdl_spec::ContinueOp::getLoop() {
+  return (*this)->getParentOfType<LoopOp>();
+}
+
+llvm::LogicalResult nbdl_spec::ContinueOp::verify() {
+  LoopOp Loop = getLoop();
+  if (!Loop)
+    return emitOpError("expecting a parent nbdl.loop");
+  return verifyLoopCarriedTypes(*this, getArgs(), Loop.getBody().front());
+}
+
 std::string nbdl_spec::getCAdapterName(llvm::StringRef SymName) {
   // TODO Consider using schir::Mangle. (It requires schir::Context.)
   std::string Result = "nbdl_c_";

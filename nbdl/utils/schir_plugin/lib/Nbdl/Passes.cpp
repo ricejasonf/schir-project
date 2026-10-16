@@ -129,6 +129,64 @@ llvm::StringRef getCppTypename(mlir::Value V) {
   return getCppTypenameT(V.getType());
 }
 
+// Get the discard op if the result of the visit is discarded
+// as the terminator of its block (ie it is in tail position.)
+nbdl_spec::DiscardOp getTailDiscard(nbdl_spec::VisitOp Op) {
+  mlir::Value Result = Op.getResult();
+  if (!Result.hasOneUse())
+    return {};
+  auto Discard = dyn_cast<nbdl_spec::DiscardOp>(*Result.user_begin());
+  if (!Discard || Discard->getBlock() != Op->getBlock() ||
+      Discard->getNextNode() != nullptr)
+    return {};
+  return Discard;
+}
+
+// Get the visits on Fn within Root (ie recursive visits if Root is Fn.)
+llvm::SmallVector<nbdl_spec::VisitOp, 4>
+getVisitsOn(mlir::Operation* Root, mlir::func::FuncOp Fn) {
+  llvm::SmallVector<nbdl_spec::VisitOp, 4> Visits;
+  Root->walk([&](nbdl_spec::VisitOp Op) {
+    if (Op.lookupCallee() == Fn)
+      Visits.push_back(Op);
+  });
+  return Visits;
+}
+
+// Check that a recursive visit is in tail position relative to Root.
+// Allow only parent operations that are match operations selecting
+// a branch so the result is discarded as the terminator of every
+// parent block. (e.g. Reject a visit in a nbdl.scope.)
+llvm::LogicalResult checkTailVisit(nbdl_spec::VisitOp Op,
+                                   mlir::Operation* Root) {
+  bool IsTail = static_cast<bool>(getTailDiscard(Op));
+  for (mlir::Operation* Parent = Op->getParentOp();
+       IsTail && Parent != Root; Parent = Parent->getParentOp())
+    IsTail = isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp>(Parent);
+  if (!IsTail)
+    return Op.emitError("recursive visit must be in tail position");
+  return llvm::success();
+}
+
+// Return true if a path through the block may end without a recursive
+// visit on Fn. Treat a match operation as having a base case if any of
+// its regions has one, and treat any other terminator as ending the
+// function.
+bool hasBaseCase(mlir::Block& Block, mlir::func::FuncOp Fn) {
+  if (Block.empty())
+    return true;
+  mlir::Operation* Terminator = &Block.back();
+  if (auto Discard = dyn_cast<nbdl_spec::DiscardOp>(Terminator)) {
+    auto V = Discard.getArg().getDefiningOp<nbdl_spec::VisitOp>();
+    return !V || V.lookupCallee() != Fn;
+  }
+  if (!isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp>(Terminator))
+    return true;
+  return llvm::any_of(Terminator->getRegions(), [&](mlir::Region& R) {
+    return R.empty() || hasBaseCase(R.front(), Fn);
+  });
+}
+
 constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
   mlir::Type T = V.getType();
   return isa<nbdl_spec::MemberNameType, nbdl_spec::FuncNameType>(T) ||
@@ -272,19 +330,6 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     return false;
   }
 
-  // Get the discard op if the result of the visit is discarded
-  // as the terminator of its block (ie it is in tail position.)
-  static nbdl_spec::DiscardOp getTailDiscard(nbdl_spec::VisitOp Op) {
-    mlir::Value Result = Op.getResult();
-    if (!Result.hasOneUse())
-      return {};
-    auto Discard = dyn_cast<nbdl_spec::DiscardOp>(*Result.user_begin());
-    if (!Discard || Discard->getBlock() != Op->getBlock() ||
-        Discard->getNextNode() != nullptr)
-      return {};
-    return Discard;
-  }
-
   // Replace the tail call to a function with store type
   // params with the body of that function.
   llvm::LogicalResult inlineVisit(nbdl_spec::VisitOp Op,
@@ -302,31 +347,126 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!Discard)
       return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
 
+    llvm::SmallVector<nbdl_spec::VisitOp, 4> RecursiveVisits =
+      getVisitsOn(CalleeFn, CalleeFn);
+    if (!RecursiveVisits.empty() &&
+        llvm::failed(checkRecursiveCallee(Op, CalleeFn, RecursiveVisits,
+                                          Rewriter)))
+      return llvm::failure();
+
     mlir::Block& CalleeBody = CalleeFn.getBody().front();
     mlir::IRMapping Mapping;
     Rewriter.setInsertionPoint(Discard);
 
-    // Lift arguments that are not stores for store type parameters.
+    llvm::SmallVector<mlir::Value, 8> MappedArgs;
     for (auto [Param, Arg] : llvm::zip(CalleeBody.getArguments(),
-                                       Op.getArgs())) {
-      mlir::Value Mapped = Arg;
-      if (isa<nbdl_spec::StoreType>(Param.getType()) &&
-          !isa<nbdl_spec::StoreType>(Arg.getType())) {
-        // An unknown argument lifts to an unresolved store.
-        auto LiftedT = needsResolve(Arg)
-          ? nbdl_spec::StoreType::get(Op.getContext())
-          : nbdl_spec::StoreType::get(Op.getContext(),
-                                      mlir::TypeAttr::get(Arg.getType()));
-        Mapped = nbdl_spec::LiftStoreOp::create(Rewriter, Arg.getLoc(),
-                                                LiftedT, Arg);
-      }
+                                       Op.getArgs()))
+      MappedArgs.push_back(liftArg(Rewriter, Param.getType(), Arg));
+
+    if (!RecursiveVisits.empty())
+      return inlineRecursiveVisit(Op, CalleeFn, RecursiveVisits,
+                                  MappedArgs, Rewriter);
+
+    for (auto [Param, Mapped] : llvm::zip(CalleeBody.getArguments(),
+                                          MappedArgs))
       Mapping.map(Param, Mapped);
-    }
 
     // The callee body has its own terminator so it
     // replaces both the visit and the discard.
     for (mlir::Operation& CalleeOp : CalleeBody)
       Rewriter.clone(CalleeOp, Mapping);
+
+    Rewriter.eraseOp(Discard);
+    Rewriter.eraseOp(Op);
+    return llvm::success();
+  }
+
+  // Lift an argument that is not a store for a store type parameter.
+  static mlir::Value liftArg(mlir::PatternRewriter& Rewriter,
+                             mlir::Type ParamT, mlir::Value Arg) {
+    if (!isa<nbdl_spec::StoreType>(ParamT) ||
+        isa<nbdl_spec::StoreType>(Arg.getType()))
+      return Arg;
+    // Lift an unknown argument to an unresolved store.
+    mlir::MLIRContext* Ctx = Arg.getContext();
+    auto LiftedT = needsResolve(Arg)
+      ? nbdl_spec::StoreType::get(Ctx)
+      : nbdl_spec::StoreType::get(Ctx, mlir::TypeAttr::get(Arg.getType()));
+    return nbdl_spec::LiftStoreOp::create(Rewriter, Arg.getLoc(),
+                                          LiftedT, Arg);
+  }
+
+  // Check that a visit on a function that visits itself
+  // can be inlined as a loop.
+  static llvm::LogicalResult checkRecursiveCallee(
+      nbdl_spec::VisitOp Op, mlir::func::FuncOp CalleeFn,
+      llvm::ArrayRef<nbdl_spec::VisitOp> RecursiveVisits,
+      mlir::PatternRewriter& Rewriter) {
+    // Require the loop-carried values to have known types.
+    if (llvm::any_of(Op.getArgs(), needsResolve))
+      return Rewriter.notifyMatchFailure(Op,
+          "args of visit on recursive callee are not resolved");
+    mlir::WalkResult HasReturn = CalleeFn.walk([](nbdl_spec::ReturnOp) {
+      return mlir::WalkResult::interrupt();
+    });
+    if (HasReturn.wasInterrupted())
+      return Op.emitError("visit on a recursive function with a "
+                          "nbdl.return is not supported");
+    for (nbdl_spec::VisitOp V : RecursiveVisits)
+      if (llvm::failed(checkTailVisit(V, CalleeFn)))
+        return llvm::failure();
+    return llvm::success();
+  }
+
+  // Replace the tail call to a function that visits itself
+  // with a nbdl.loop whose body is the body of that function.
+  // Replace each recursive visit with a nbdl.continue.
+  // Do not carry a parameter that every recursive visit passes
+  // unchanged since it is the same in every iteration.
+  llvm::LogicalResult inlineRecursiveVisit(
+      nbdl_spec::VisitOp Op, mlir::func::FuncOp CalleeFn,
+      llvm::ArrayRef<nbdl_spec::VisitOp> RecursiveVisits,
+      llvm::ArrayRef<mlir::Value> MappedArgs,
+      mlir::PatternRewriter& Rewriter) const {
+    mlir::Block& CalleeBody = CalleeFn.getBody().front();
+    nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
+
+    auto IsInvariant = [&](mlir::BlockArgument Param) {
+      return llvm::all_of(RecursiveVisits, [&](nbdl_spec::VisitOp V) {
+        return V.getArgs()[Param.getArgNumber()] == Param;
+      });
+    };
+    llvm::SmallVector<mlir::Value, 8> Inits;
+    for (mlir::BlockArgument Param : CalleeBody.getArguments())
+      if (!IsInvariant(Param))
+        Inits.push_back(MappedArgs[Param.getArgNumber()]);
+
+    auto Loop = nbdl_spec::LoopOp::create(Rewriter, Op.getLoc(), Inits);
+    mlir::Block* LoopBody = Rewriter.createBlock(&Loop.getBody());
+    mlir::IRMapping Mapping;
+    for (mlir::BlockArgument Param : CalleeBody.getArguments()) {
+      mlir::Value Mapped = MappedArgs[Param.getArgNumber()];
+      if (!IsInvariant(Param))
+        Mapped = LoopBody->addArgument(Mapped.getType(), Mapped.getLoc());
+      Mapping.map(Param, Mapped);
+    }
+
+    for (mlir::Operation& CalleeOp : CalleeBody)
+      Rewriter.clone(CalleeOp, Mapping);
+
+    // Replace each recursive visit (and its discard) with a continue.
+    for (nbdl_spec::VisitOp V : getVisitsOn(Loop, CalleeFn)) {
+      nbdl_spec::DiscardOp VDiscard = getTailDiscard(V);
+      Rewriter.setInsertionPoint(VDiscard);
+      llvm::SmallVector<mlir::Value, 8> Args;
+      for (mlir::BlockArgument Param : CalleeBody.getArguments())
+        if (!IsInvariant(Param))
+          Args.push_back(liftArg(Rewriter, Param.getType(),
+                                 V.getArgs()[Param.getArgNumber()]));
+      nbdl_spec::ContinueOp::create(Rewriter, V.getLoc(), Args);
+      Rewriter.eraseOp(VDiscard);
+      Rewriter.eraseOp(V);
+    }
 
     Rewriter.eraseOp(Discard);
     Rewriter.eraseOp(Op);
@@ -997,6 +1137,29 @@ namespace nbdl_spec {
 #define GEN_PASS_REGISTRATION_LOWERTOLLVMPASS
 #define GEN_PASS_REGISTRATION_CADAPTERPASS
 #include "nbdl_spec/NbdlPasses.h.inc"
+
+llvm::LogicalResult verifyRecursiveVisits(mlir::func::FuncOp Fn) {
+  llvm::SmallVector<VisitOp, 4> Visits = getVisitsOn(Fn, Fn);
+  if (Visits.empty())
+    return llvm::success();
+
+  bool HasError = false;
+  for (VisitOp V : Visits) {
+    if (llvm::failed(checkTailVisit(V, Fn))) {
+      HasError = true;
+    } else if (V->getParentOp() == Fn.getOperation()) {
+      V.emitError("recursive visit must be in a match or match_if "
+                  "to have a base case");
+      HasError = true;
+    }
+  }
+  if (HasError)
+    return llvm::failure();
+  if (Fn.getBody().empty() || !hasBaseCase(Fn.getBody().front(), Fn))
+    return Fn.emitError("recursive function has no base case "
+                        "(ie every branch visits the function)");
+  return llvm::success();
+}
 
 void registerPasses() {
   registerLowerPass();

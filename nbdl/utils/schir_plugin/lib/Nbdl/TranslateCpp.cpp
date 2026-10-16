@@ -11,6 +11,7 @@
 #include <schir/Source.h>
 #include <schir/Value.h>
 #include <llvm/ADT/APFloat.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/ScopedHashTable.h>
 #include <llvm/ADT/ScopeExit.h>
 #include <llvm/ADT/SmallString.h>
@@ -443,6 +444,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   bool IsDeclaration = false;
   // Write a function that calls a lowered function via its C adapter.
   bool IsLoweredWrapper = false;
+  // Map each loop to the name of its recursive lambda.
+  llvm::DenseMap<mlir::Operation*, std::string> LoopNames;
 
   void Visit(mlir::Operation* Op) {
     Flush();
@@ -458,6 +461,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<NoOp>(Op))           return Visit(cast<NoOp>(Op));
     else if (isa<MatchIfOp>(Op))      return Visit(cast<MatchIfOp>(Op));
     else if (isa<MatchEachOp>(Op))    return Visit(cast<MatchEachOp>(Op));
+    else if (isa<LoopOp>(Op))         return Visit(cast<LoopOp>(Op));
+    else if (isa<ContinueOp>(Op))     return Visit(cast<ContinueOp>(Op));
     else if (isa<FuncOp>(Op))         return Visit(cast<FuncOp>(Op));
     else if (isa<ReturnOp>(Op))       return Visit(cast<ReturnOp>(Op));
     else if (isa<CallOp>(Op))         return Visit(cast<CallOp>(Op));
@@ -995,6 +1000,47 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ") {\n";
     VisitRegion(Body);
     OS << "});\n";
+  }
+
+  // Write a loop as a recursive lambda invoked with the initial values.
+  // Bind each loop-carried value to a parameter so any temporary passed
+  // to a continue outlives the iteration that it is passed to.
+  //  [&](this auto&& loop_0, auto&& arg_1) -> void {
+  //    ...
+  //    loop_0(next_arg);
+  //  }(init_arg);
+  void Visit(LoopOp Op) {
+    mlir::Region& Body = Op.getBody();
+    std::string LoopName = ("loop_" +
+                            llvm::Twine(CurrentAnonVarCount++)).str();
+    LoopNames[Op] = LoopName;
+    {
+      ValueMapScope Scope(ValueMap);
+      OS << "[&](this auto&& " << LoopName;
+      for (mlir::BlockArgument Arg : Body.getArguments())
+        OS << ", [[maybe_unused]] auto&& " << SetLocalVarName(Arg, "arg_");
+      OS << ") -> void {\n";
+      VisitRegion(Body);
+      OS << '}';
+    }
+    OS << '(';
+    llvm::interleaveComma(Op.getInits(), OS,
+        [&](mlir::Value V) {
+          WriteExpr(V);
+        });
+    OS << ");\n";
+  }
+
+  void Visit(ContinueOp Op) {
+    auto Itr = LoopNames.find(Op.getLoop());
+    if (Itr == LoopNames.end())
+      return SetError("expecting a parent loop", Op);
+    OS << Itr->second << '(';
+    llvm::interleaveComma(Op.getArgs(), OS,
+        [&](mlir::Value V) {
+          WriteExpr(V);
+        });
+    OS << ");\n";
   }
 
   void Visit(MemberNameOp) {

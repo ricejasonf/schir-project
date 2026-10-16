@@ -249,6 +249,24 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
+// Check the recursive visits of a function within its own body.
+// Usage: (verify-recursive-visits op)
+void nbdl_spec_verify_recursive_visits(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  auto* Op = dyn_cast<mlir::Operation>(Args[0]);
+  auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(Op);
+  if (!FuncOp)
+    return C.RaiseError("expecting func.func: {}", Args[0]);
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, schir::Value(Op).getSourceLocation(),
+    [&] { return nbdl_spec::verifyRecursiveVisits(FuncOp); },
+    "invalid recursive visit");
+  if (llvm::failed(Result))
+    return;
+  C.Cont();
+}
+
 // Register the Nbdl MLIR dialect.
 void nbdl_spec_register_nbdl_dialect(schir::Context& C,
                                      schir::ValueRefs Args) {

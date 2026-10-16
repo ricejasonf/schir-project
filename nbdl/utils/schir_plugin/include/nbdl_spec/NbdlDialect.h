@@ -36,6 +36,11 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
 llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,
         schir::SchirClangImpl* SchirClangImpl);
 
+// Check that each visit on a function within its own body (ie a
+// recursive visit) is in tail position and that there is a base case.
+// Let the flatten pass inline a visit on such a function as a nbdl.loop.
+llvm::LogicalResult verifyRecursiveVisits(mlir::func::FuncOp Fn);
+
 // Register passes that can be run via a pass pipeline string.
 void registerPasses();
 
