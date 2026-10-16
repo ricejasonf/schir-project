@@ -19,10 +19,11 @@
 #include <nbdl/tags.hpp>
 #include <nbdl/variant.hpp>
 #include <nbdl/variant_holder.hpp>
+#include <boost/hana/ext/std/pair.hpp>
 #include <boost/hana/functional/overload.hpp>
 #include <algorithm>
 #include <concepts>
-#include <ranges>
+#include <iterator>
 #include <type_traits>
 #include <utility>
 

@@ -7,8 +7,6 @@
 #ifndef NBDL_VARIANT_HPP
 #define NBDL_VARIANT_HPP
 
-#include <mpdef/map.hpp>
-#include <mpdef/pair.hpp>
 #include <nbdl/concept/Store.hpp>
 #include <nbdl/detail/common_type.hpp>
 #include <nbdl/fwd/bind_variant.hpp>
@@ -16,7 +14,13 @@
 #include <nbdl/strong_alias.hpp>
 #include <nbdl/tags.hpp>
 
-#include <boost/hana.hpp>
+#include <boost/hana/at.hpp>
+#include <boost/hana/core/tag_of.hpp>
+#include <boost/hana/equal.hpp>
+#include <boost/hana/functional/overload_linearly.hpp>
+#include <boost/hana/index_if.hpp>
+#include <boost/hana/optional.hpp>
+#include <boost/hana/type.hpp>
 #include <boost/hana/experimental/types.hpp>
 #include <boost/mp11/algorithm.hpp>
 #include <type_traits>

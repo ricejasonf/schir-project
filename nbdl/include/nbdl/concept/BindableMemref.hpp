@@ -14,6 +14,7 @@
 #include <boost/hana/core/tag_of.hpp>
 #include <cstdint>
 #include <ranges>
+#include <type_traits>
 #include <utility>
 
 namespace nbdl {
@@ -21,6 +22,11 @@ namespace nbdl {
 
   template <typename Tag>
   struct bind_memref_impl;
+
+  template <typename T>
+  concept SizedContiguousRange =
+       std::ranges::contiguous_range<std::remove_cvref_t<T>>
+    && std::ranges::sized_range<std::remove_cvref_t<T>>;
 
   template <typename T>
   concept BindableMemref = HasImpl<T, nbdl::bind_memref_impl>

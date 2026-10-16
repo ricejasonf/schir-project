@@ -8,7 +8,6 @@
 #define NBDL_SPEC_MLIR_HPP
 
 #include <nbdl/memref.hpp>
-#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -40,7 +39,7 @@ constexpr auto mlir_type_name() {
   constexpr std::size_t size = get_mlir_type<T>::apply().size();
   std::array<char, size> result{};
   std::string str = get_mlir_type<T>::apply();
-  std::copy(str.begin(), str.end(), result.begin());
+  str.copy(result.data(), size);
   return result;
 }
 } // namespace detail

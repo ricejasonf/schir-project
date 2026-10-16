@@ -15,6 +15,7 @@
 #include <boost/hana/not_equal.hpp>
 #include <schir/SCHIR_ASSERT.h>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace {

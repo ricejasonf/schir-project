@@ -12,11 +12,14 @@
 #include <nbdl/concept/State.hpp>
 
 #include <boost/hana/at_key.hpp>
+#include <boost/hana/concept/product.hpp>
 #include <boost/hana/concept/searchable.hpp>
 #include <boost/hana/core/default.hpp>
 #include <boost/hana/index_if.hpp>
 #include <boost/hana/equal.hpp>
+#include <boost/hana/first.hpp>
 #include <boost/hana/functional/compose.hpp>
+#include <boost/hana/second.hpp>
 #include <functional>
 #include <utility>
 

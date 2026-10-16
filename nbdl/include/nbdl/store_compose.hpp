@@ -7,7 +7,7 @@
 #ifndef NBDL_STORE_COMPOSE_HPP
 #define NBDL_STORE_COMPOSE_HPP
 
-#include <nbdl/apply_action.hpp>
+#include <nbdl/fwd/apply_action.hpp>
 #include <nbdl/concept/Store.hpp>
 #include <nbdl/fwd/store_compose.hpp>
 #include <nbdl/match.hpp>

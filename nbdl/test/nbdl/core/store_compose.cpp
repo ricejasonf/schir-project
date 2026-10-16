@@ -5,6 +5,7 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 //
 
+#include <nbdl/apply_action.hpp>
 #include <nbdl/store_compose.hpp>
 
 #include <boost/hana.hpp>
