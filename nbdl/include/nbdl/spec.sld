@@ -196,6 +196,22 @@
     ;; a new top level operation using the current module builder.
     ;; Initial passes and C++ translation are deferred to finalize-module.
     (define (top-level-op Loc Name Thunk)
+      (%check-exports Loc Name)
+      (let ((TopLevelOp (%create-top-level-op (top-level-name Name) Thunk)))
+        (cond
+          ((memq Name export-cpp-names)
+           (set! export-cpp-ops
+             (%add-export-op Loc export-cpp-ops Name TopLevelOp)))
+          ((memq Name export-c-names)
+           (set! export-c-ops
+             (%add-export-op Loc export-c-ops Name TopLevelOp)))
+          ((memq Name export-c-internal-names)
+           (set! export-c-internal-ops
+             (%add-export-op Loc export-c-internal-ops Name TopLevelOp))))
+        TopLevelOp))
+
+    ;; Raise an error if Name is exported in conflicting ways.
+    (define (%check-exports Loc Name)
       (when (and (memq Name export-cpp-names)
                  (memq Name export-c-names))
         (error-with-loc Loc "name cannot be exported to both C++ and C: {}"
@@ -204,24 +220,35 @@
                  (or (memq Name export-cpp-names)
                      (memq Name export-c-names)))
         (error-with-loc Loc "internal name cannot also be exported: {}"
-                        Name))
+                        Name)))
+
+    ;; Create and verify a top level operation via Thunk
+    ;; which receives the symbol name.
+    (define (%create-top-level-op SymName Thunk)
       (with-module-builder
         main-module
         (lambda ()
-          (define TopLevelOp (Thunk (top-level-name Name)))
+          (define TopLevelOp (Thunk SymName))
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
-          (cond
-            ((memq Name export-cpp-names)
-             (set! export-cpp-ops
-               (%add-export-op Loc export-cpp-ops Name TopLevelOp)))
-            ((memq Name export-c-names)
-             (set! export-c-ops
-               (%add-export-op Loc export-c-ops Name TopLevelOp)))
-            ((memq Name export-c-internal-names)
-             (set! export-c-internal-ops
-               (%add-export-op Loc export-c-internal-ops Name TopLevelOp))))
           TopLevelOp)))
+
+    ;; Create the symbol name for a match-fn.
+    ;; Suffix the name of a match-fn exported to C++ so it is
+    ;; distinct from the name of its wrapper. (see define-match-fn)
+    (define (%match-fn-name Name)
+      (if (memq Name export-cpp-names)
+        (string-append (namespace-prefix Name) ".match_fn")
+        Name))
+
+    ;; Create a nbdl.define_match_fn as a top level operation
+    ;; via Thunk which receives the symbol name.
+    (define (%top-level-match-fn Loc Name Thunk)
+      (%check-exports Loc Name)
+      (when (or (memq Name export-c-names)
+                (memq Name export-c-internal-names))
+        (error-with-loc Loc "match-fn cannot be exported to C: {}" Name))
+      (%create-top-level-op (%match-fn-name Name) Thunk))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.func_name (type "!nbdl.func_name"))
@@ -594,11 +621,12 @@
     (define %named-fn '%named-fn)
 
     ;; A 'named-fn' can be used in an expr+
-    (define (make-named-fn SymbolName FuncOp)
-      (list %named-fn SymbolName FuncOp (source-loc FuncOp)))
+    ;; where FnOp is a func.func or nbdl.define_match_fn.
+    (define (make-named-fn SymbolName FnOp)
+      (list %named-fn SymbolName FnOp (source-loc FnOp)))
 
     ;; Let a function refer to itself within its own body before the
-    ;; FuncOp exists.
+    ;; FnOp exists.
     (define (%make-self-named-fn SymbolName Loc)
       (list %named-fn SymbolName #f Loc))
 
@@ -1110,41 +1138,59 @@
     ;; Define a generic function to receive a matched set of parameters.
     ;; All parameters are unresolved stores which may be matched within
     ;; the body (e.g. via match-params.)
-    ;; Inline recursive tail visits on a function as a loop.
+    ;; Inline every visit on the function and inline recursive tail
+    ;; visits as a loop.
+    ;; If Name is exported to C++, define a wrapper function with
+    ;; the exported name that visits the match-fn with each raw
+    ;; parameter lifted to a store.
     (define-syntax define-match-fn
       (syntax-rules ()
         ((define-match-fn Name (Arg ...) Body ...)
          (define Name
-           (let ((SymName #f))
-            (let ((FuncOp (top-level-op
-                           (syntax-source-loc Name)
-                           'Name
-                           (lambda (SymName_)
-                             (define Op
-                               ;; Let Name refer to the function in its body.
-                               (let ((Name (%make-self-named-fn
-                                             SymName_
-                                             (syntax-source-loc Name))))
-                                 (create-op
-                                   "func.func"
-                                   (loc: (syntax-source-loc Name))
-                                   (operands:)
-                                   (attributes:
-                                     ("sym_name" (string-attr SymName_))
-                                     ("function_type"
-                                      (type-attr
-                                        (%function-type
-                                          (make-vector
-                                            (length '(Arg ...))
-                                            (!nbdl.store))
-                                          #()))))
-                                   (result-types:)
-                                   (region: "body" ((Arg : (!nbdl.store)) ...)
-                                            Body ...))))
-                             (set! SymName SymName_)
-                             (verify-recursive-visits Op)
-                             Op))))
-             (make-named-fn SymName FuncOp)))))))
+           (let ()
+            (define Loc (syntax-source-loc Name))
+            (define SymName (%match-fn-name 'Name))
+            (define MatchFn
+              (make-named-fn
+                SymName
+                (%top-level-match-fn
+                  Loc
+                  'Name
+                  (lambda (SymName_)
+                    (define Op
+                      ;; Let Name refer to the function in its body.
+                      (let ((Name (%make-self-named-fn SymName_ Loc)))
+                        (create-op
+                          "nbdl.define_match_fn"
+                          (loc: Loc)
+                          (operands:)
+                          (attributes:
+                            ("sym_name" (string-attr SymName_)))
+                          (result-types:)
+                          (region: "body" ((Arg : (!nbdl.store)) ...)
+                                   Body ...))))
+                    (verify-recursive-visits Op)
+                    Op))))
+            (when (memq 'Name export-cpp-names)
+              (top-level-op
+                Loc
+                'Name
+                (lambda (WrapperName)
+                  (create-op
+                    "func.func"
+                    (loc: Loc)
+                    (operands:)
+                    (attributes:
+                      ("sym_name" (string-attr WrapperName))
+                      ("function_type"
+                       (type-attr
+                         (%function-type
+                           (make-vector (length '(Arg ...)) !nbdl.unknown)
+                           #()))))
+                    (result-types:)
+                    (region: "body" ((Arg : !nbdl.unknown) ...)
+                             (visit MatchFn (lift-store Arg) ...))))))
+            MatchFn)))))
 
     ;; Declare match-fns so a function may visit them before they are
     ;; defined. (e.g. Define mutually recursive functions.)
@@ -1152,7 +1198,7 @@
       (syntax-rules ()
         ((declare-match-fn Name ...)
          (begin
-           (define Name (%make-self-named-fn (top-level-name 'Name)
+           (define Name (%make-self-named-fn (%match-fn-name 'Name)
                                              (syntax-source-loc Name)))
            ...))))
 

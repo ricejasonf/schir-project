@@ -7,6 +7,9 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -DTEST_INTERNAL_EXPORTED -fsyntax-only -Xclang -verify %s
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_MATCH_FN_EXPORTED_TO_C -fsyntax-only -Xclang -verify %s
 
 #include <nbdl/spec.hpp>
 
@@ -45,6 +48,17 @@
 (import (nbdl spec))
 (export-c foo)
 (export-c-internal foo)
+(define-match-fn foo (Store Fn)
+  (visit Fn Store))
+}
+#endif
+
+#ifdef TEST_MATCH_FN_EXPORTED_TO_C
+// expected-error@+5 {{match-fn cannot be exported to C: foo}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-c foo)
 (define-match-fn foo (Store Fn)
   (visit Fn Store))
 }

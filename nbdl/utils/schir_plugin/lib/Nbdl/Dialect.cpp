@@ -75,12 +75,62 @@ nbdl_spec::FuncNameOp nbdl_spec::getFuncName(mlir::Value V) {
   return V.getDefiningOp<nbdl_spec::FuncNameOp>();
 }
 
-mlir::func::FuncOp nbdl_spec::VisitOp::lookupCallee() {
-  nbdl_spec::FuncNameOp FN = getFuncName(getFn());
-  auto M = (*this)->getParentOfType<mlir::ModuleOp>();
+// Look up the function in the parent module of a visit
+// if the callee is a function name.
+static mlir::Operation* lookupCalleeSymbol(nbdl_spec::VisitOp Op) {
+  nbdl_spec::FuncNameOp FN = nbdl_spec::getFuncName(Op.getFn());
+  auto M = Op->getParentOfType<mlir::ModuleOp>();
   if (!FN || !M)
-    return {};
-  return M.lookupSymbol<mlir::func::FuncOp>(FN.getName());
+    return nullptr;
+  return M.lookupSymbol(FN.getNameAttr());
+}
+
+mlir::func::FuncOp nbdl_spec::VisitOp::lookupCallee() {
+  return llvm::dyn_cast_or_null<mlir::func::FuncOp>(lookupCalleeSymbol(*this));
+}
+
+nbdl_spec::DefineMatchFnOp nbdl_spec::VisitOp::lookupMatchFn() {
+  return llvm::dyn_cast_or_null<DefineMatchFnOp>(lookupCalleeSymbol(*this));
+}
+
+// Print the symbol name and parameters like func.func.
+//  nbdl.define_match_fn @name(%arg0: !nbdl.store, ...) attributes {...} {
+//    ...
+//  }
+void nbdl_spec::DefineMatchFnOp::print(mlir::OpAsmPrinter& P) {
+  P << ' ';
+  P.printSymbolName(getSymName());
+  P << '(';
+  llvm::interleaveComma(getBody().getArguments(), P,
+      [&](mlir::BlockArgument Arg) { P.printRegionArgument(Arg); });
+  P << ')';
+  P.printOptionalAttrDictWithKeyword((*this)->getAttrs(),
+                                     {getSymNameAttrName()});
+  P << ' ';
+  P.printRegion(getBody(), /*printEntryBlockArgs=*/false);
+}
+
+mlir::ParseResult nbdl_spec::DefineMatchFnOp::parse(
+    mlir::OpAsmParser& Parser, mlir::OperationState& Result) {
+  mlir::StringAttr SymName;
+  llvm::SmallVector<mlir::OpAsmParser::Argument, 4> Args;
+  if (Parser.parseSymbolName(SymName) ||
+      Parser.parseArgumentList(Args, mlir::OpAsmParser::Delimiter::Paren,
+                               /*allowType=*/true) ||
+      Parser.parseOptionalAttrDictWithKeyword(Result.attributes))
+    return mlir::failure();
+  Result.addAttribute(getSymNameAttrName(Result.name), SymName);
+  return Parser.parseRegion(*Result.addRegion(), Args);
+}
+
+llvm::LogicalResult nbdl_spec::DefineMatchFnOp::verify() {
+  if (getBody().empty())
+    return emitOpError("expecting a body");
+  for (mlir::BlockArgument Arg : getBody().getArguments())
+    if (!llvm::isa<nbdl_spec::StoreType>(Arg.getType()))
+      return emitOpError("parameter ") << Arg.getArgNumber()
+        << " should be a store (" << Arg.getType() << ")";
+  return llvm::success();
 }
 
 // A return may be nested in the regions of match operations

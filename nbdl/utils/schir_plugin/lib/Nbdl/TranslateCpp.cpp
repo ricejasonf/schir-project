@@ -217,12 +217,6 @@ public:
    *********** Expr Printing **********
    ************************************/
 
-  // Return true if T is a !nbdl.store with no resolved alternatives.
-  static bool needsResolveT(mlir::Type T) {
-    auto ST = dyn_cast<nbdl_spec::StoreType>(T);
-    return ST && ST.getAlts().empty();
-  }
-
   // Indicate if the value is printed directly or bound to variable.
   // The C++ object of a store with a single alternative
   // is its contained value so lifting and unwrapping
@@ -422,18 +416,6 @@ public:
     llvm::StringRef ArgStr = GetLocalVal(Arg);
     OS << "::nbdl::SameAs<decltype(" << ArgStr << "), " << TypeStr << "> ";
   }
-
-  // Get the C++ typename of the single alternative of a store type.
-  // Return false if there is not exactly one alternative
-  // or it is not mappable to C++.
-  static bool GetSingleAltCppTypename(mlir::Type T,
-                                      llvm::SmallVectorImpl<char>& Result) {
-    auto ST = dyn_cast<nbdl_spec::StoreType>(T);
-    if (!ST || ST.getAlts().size() != 1)
-      return false;
-    return schir::MappableToCpp::lookup(ST.getAlts().front().getValue(),
-                                        Result);
-  }
 };
 
 class FuncWriter : public NbdlSpecWriter<FuncWriter> {
@@ -488,16 +470,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       Visit(&Op);
   }
 
-  // A FuncOp with store type parameters is written as an invocable object.
-  // Otherwise it is a normal function.
-  //  // Forward declaration
-  //  struct name_fn {
-  //    constexpr auto operator()(auto&& arg_0) const -> R requires ...;
-  //  };
-  //  [[maybe_unused]] inline constexpr name_fn name{};
-  //  // Definition
-  //  constexpr auto name_fn::operator()(auto&& arg_0) const -> R
-  //  requires ... { ... }
+  // Write a FuncOp as a normal function.
   void Visit(FuncOp Op) {
     mlir::FunctionType FT = Op.getFunctionType();
     llvm::StringRef Name = Op.getSymName();
@@ -510,68 +483,9 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     if (Body.empty())
       return SetError("empty function body", Op);
 
-    auto IsStoreT = [](mlir::Type T) { return isa<StoreType>(T); };
     if (IsLoweredWrapper)
       return WriteLoweredWrapper(Op, Name);
-    if (llvm::none_of(FT.getInputs(), IsStoreT) &&
-        llvm::none_of(FT.getResults(), IsStoreT))
-      return VisitNormalFunc(Op, Name);
-
-    std::string ClassName = (Name + "_fn").str();
-    ValueMapScope Scope(ValueMap);
-    if (IsDeclaration) {
-      OS << "struct " << ClassName << " {\n";
-      WriteCallOperatorSignature(Op, "operator()");
-      OS << ";\n};\n";
-      OS << "[[maybe_unused]] inline constexpr " << ClassName << ' '
-         << Name << "{};";
-      return;
-    }
-
-    WriteCallOperatorSignature(Op, ClassName + "::operator()");
-    OS << " {\n";
-    VisitRegion(Body);
-    OS << "}";
-  }
-
-  // Write the signature of the member function template operator()
-  // where FuncName may be qualified for an out of line definition.
-  void WriteCallOperatorSignature(FuncOp Op, llvm::StringRef FuncName) {
-    mlir::FunctionType FT = Op.getFunctionType();
-    mlir::Region& Body = Op.getBody();
-
-    // Write parameters.
-    OS << "constexpr auto " << FuncName << '(';
-    llvm::interleaveComma(Body.getArguments(), OS,
-        [&](mlir::BlockArgument const& Arg) {
-          OS << "auto&& " << SetLocalVarName(Arg, "arg_");
-        });
-    OS << ") const";
-
-    // Write the return type.
-    if (FT.getNumResults() == 0) {
-      OS << " -> void";
-    } else if (needsResolveT(FT.getResult(0))) {
-      OS << " -> decltype(auto)";
-    } else {
-      llvm::SmallString<64> ResultTypename;
-      if (!GetSingleAltCppTypename(FT.getResult(0), ResultTypename))
-        return SetError("result type is not mappable to C++", Op);
-      OS << " -> " << ResultTypename;
-    }
-
-    // Constrain parameters with concrete types.
-    bool IsFirstConstraint = true;
-    for (mlir::BlockArgument Arg : Body.getArguments()) {
-      if (needsResolveT(Arg.getType()))
-        continue;
-      llvm::SmallString<64> ArgTypename;
-      if (!GetSingleAltCppTypename(Arg.getType(), ArgTypename))
-        return SetError("parameter type is not mappable to C++", Op);
-      OS << (IsFirstConstraint ? "\nrequires " : "&& ");
-      PrintSameAsConstraint(Arg, ArgTypename);
-      IsFirstConstraint = false;
-    }
+    VisitNormalFunc(Op, Name);
   }
 
   // Write a normal function for a FuncOp
@@ -752,10 +666,12 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       // Make a sfinae thunk callable wrapper.
       mlir::Value Fn = Op.getFn();
       mlir::OperandRange Args = Op.getArgs();
+      // Map the values that are written (ie without store casts.)
       llvm::SmallVector<mlir::Value, 8> WrapperArgs;
       if (!Fn.getDefiningOp<nbdl_spec::MemberNameOp>())
-        WrapperArgs.push_back(Fn);
-      WrapperArgs.append(Args.begin(), Args.end());
+        WrapperArgs.push_back(StripStoreCasts(Fn));
+      for (mlir::Value Arg : Args)
+        WrapperArgs.push_back(StripStoreCasts(Arg));
       // Remove constant values that are written directly.
       llvm::erase_if(WrapperArgs, IsConstantLike);
       bool IsMemberCall = Fn.getDefiningOp<nbdl_spec::MemberNameOp>();

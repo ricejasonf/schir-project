@@ -46,6 +46,10 @@ struct NbdlMappableToCpp : schir::MappableToCpp {
       OS << CT.getCppTypename();
     else if (isa<nbdl_spec::StringType>(T))
       OS << "::std::string_view";
+    // Map a placeholder to a forwarding reference
+    // (ie a parameter of an abbreviated function template.)
+    else if (isa<nbdl_spec::UnknownType>(T))
+      OS << "auto&&";
     else
       return false;
     return true;
@@ -249,18 +253,18 @@ void nbdl_spec_close_previous_scope(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
-// Check the recursive visits of a function within its own body.
+// Check the recursive visits of a match-fn within its own body.
 // Usage: (verify-recursive-visits op)
 void nbdl_spec_verify_recursive_visits(Context& C, ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
   auto* Op = dyn_cast<mlir::Operation>(Args[0]);
-  auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(Op);
-  if (!FuncOp)
-    return C.RaiseError("expecting func.func: {}", Args[0]);
+  auto MatchFn = dyn_cast_or_null<nbdl_spec::DefineMatchFnOp>(Op);
+  if (!MatchFn)
+    return C.RaiseError("expecting nbdl.define_match_fn: {}", Args[0]);
   llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
     C, schir::Value(Op).getSourceLocation(),
-    [&] { return nbdl_spec::verifyRecursiveVisits(FuncOp); },
+    [&] { return nbdl_spec::verifyRecursiveVisits(MatchFn); },
     "invalid recursive visit");
   if (llvm::failed(Result))
     return;

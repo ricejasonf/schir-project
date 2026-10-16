@@ -80,7 +80,7 @@ struct int_sink {
 ; // Visit the function recursively in tail position within match-if
 ; // whose then region is the base case.
 ; // Expect the match-fn itself to be unchanged.
-; // CHECK-LABEL: func.func @sum_down(
+; // CHECK-LABEL: @sum_down(
 ; // CHECK: "nbdl.match_if"
 ; // CHECK: [[SELF:%[0-9]+]] = "nbdl.func_name"() <{name = @sum_down}>
 ; // CHECK: [[RESULT:%[0-9]+]] = "nbdl.visit"([[SELF]],
@@ -123,6 +123,16 @@ struct int_sink {
   (return))
 
 ; // Do the same with C++ types to translate the loop to C++.
+; // Define a wrapper with the exported name that inlines the match-fn
+; // with each parameter lifted to a store.
+; // CHECK-LABEL: @"::foo::sum_down_int.match_fn"(
+; // CHECK-LABEL: func.func @"::foo::sum_down_int"
+; // CHECK-SAME: (%arg0: !nbdl.unknown, %arg1: !nbdl.unknown, %arg2: !nbdl.unknown) {
+; // CHECK-NEXT: [[N:%[0-9]+]] = "nbdl.lift_store"(%arg0) : (!nbdl.unknown) -> !nbdl.store
+; // CHECK-NEXT: [[ACC:%[0-9]+]] = "nbdl.lift_store"(%arg1) : (!nbdl.unknown) -> !nbdl.store
+; // CHECK-NEXT: "nbdl.lift_store"(%arg2) : (!nbdl.unknown) -> !nbdl.store
+; // CHECK-NEXT: "nbdl.loop"([[N]], [[ACC]]) <{fn = @"::foo::sum_down_int.match_fn"}>
+; // CHECK: "nbdl.continue"({{.*}}) <{fn = @"::foo::sum_down_int.match_fn"}>
 (define-match-fn sum_down_int (N Acc Fn)
   (match-if (visit '|std::equal_to<int>{}| N '|int{0}|)
     (visit Fn Acc)
@@ -131,10 +141,10 @@ struct int_sink {
                         Fn)))
 
 ; // CHECK-LABEL: func.func @"::foo::sum_to_int"
-; // CHECK: "nbdl.loop"({{.*}}) <{fn = @"::foo::sum_down_int"}>
+; // CHECK: "nbdl.loop"({{.*}}) <{fn = @"::foo::sum_down_int.match_fn"}>
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>,
 ; // CHECK-SAME: {{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
-; // CHECK: "nbdl.continue"({{.*}}) <{fn = @"::foo::sum_down_int"}>
+; // CHECK: "nbdl.continue"({{.*}}) <{fn = @"::foo::sum_down_int.match_fn"}>
 (define-fn sum_to_int ((N : 'int) (Sink : 'foo::int_sink)) -> ()
   (visit sum_down_int N '|int{0}| Sink)
   (return))

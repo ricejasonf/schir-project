@@ -114,7 +114,7 @@ struct int_sink {
 ; // Continue the loop of is_even from the inlined body of is_odd.
 ; // Expect no loop of is_odd since nothing continues it.
 ; // (Skip the lowered module.)
-; // CHECK-LABEL: func.func @is_odd(
+; // CHECK-LABEL: @is_odd(
 ; // CHECK-LABEL: func.func @"::foo::is_even_i32"
 ; // CHECK-NOT: fn = @is_odd
 ; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @is_even}> ({

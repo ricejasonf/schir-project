@@ -123,7 +123,7 @@ struct int_sink {
 
 ; // Visit a define-fn within a match-fn.
 ; // This is not exported since it is only inlined via store_sum.
-; // CHECK-LABEL: func.func @sum_foo_bar(
+; // CHECK-LABEL: @sum_foo_bar(
 ; // CHECK: "nbdl.visit"
 ; // CHECK-SAME: -> !nbdl.cpp<"int">
 (define-match-fn sum_foo_bar (Ctx Fn)

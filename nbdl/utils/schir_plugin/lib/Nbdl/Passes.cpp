@@ -145,10 +145,10 @@ nbdl_spec::DiscardOp getTailDiscard(nbdl_spec::VisitOp Op) {
 
 // Get the visits on Fn within Root (ie recursive visits if Root is Fn.)
 llvm::SmallVector<nbdl_spec::VisitOp, 4>
-getVisitsOn(mlir::Operation* Root, mlir::func::FuncOp Fn) {
+getVisitsOn(mlir::Operation* Root, nbdl_spec::DefineMatchFnOp Fn) {
   llvm::SmallVector<nbdl_spec::VisitOp, 4> Visits;
   Root->walk([&](nbdl_spec::VisitOp Op) {
-    if (Op.lookupCallee() == Fn)
+    if (Op.lookupMatchFn() == Fn)
       Visits.push_back(Op);
   });
   return Visits;
@@ -198,13 +198,14 @@ getContinues(nbdl_spec::LoopOp Loop) {
 }
 
 // Return true if the flatten pass may inline a visit
-// (ie the callee is or may resolve to a function in the module.)
+// (ie the callee is or may resolve to a match-fn in the module.)
 bool mayInlineVisit(nbdl_spec::VisitOp Op) {
   if (Op.getSfinae() || Op.getValidCppCrossMap())
     return false;
-  if (mlir::func::FuncOp F = Op.lookupCallee())
-    return llvm::any_of(F.getArgumentTypes(),
-        [](mlir::Type T) { return isa<nbdl_spec::StoreType>(T); });
+  if (Op.lookupMatchFn())
+    return true;
+  if (Op.lookupCallee())
+    return false;
   mlir::Type T = Op.getFn().getType();
   if (mlir::Type AltT = getSingleAltT(T))
     T = AltT;
@@ -388,13 +389,13 @@ llvm::LogicalResult finalizeLoops(mlir::Operation* Root) {
 // visit on Fn. Treat a match operation as having a base case if any of
 // its regions has one, and treat any other terminator as ending the
 // function.
-bool hasBaseCase(mlir::Block& Block, mlir::func::FuncOp Fn) {
+bool hasBaseCase(mlir::Block& Block, nbdl_spec::DefineMatchFnOp Fn) {
   if (Block.empty())
     return true;
   mlir::Operation* Terminator = &Block.back();
   if (auto Discard = dyn_cast<nbdl_spec::DiscardOp>(Terminator)) {
     auto V = Discard.getArg().getDefiningOp<nbdl_spec::VisitOp>();
-    return !V || V.lookupCallee() != Fn;
+    return !V || V.lookupMatchFn() != Fn;
   }
   if (!isa<nbdl_spec::MatchOp, nbdl_spec::MatchIfOp>(Terminator))
     return true;
@@ -413,9 +414,8 @@ constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
          !getCppTypename(V).empty();
 };
 
-// Check visit argument types and inline any calls
-// on FuncOps with store type params or lower to
-// raw func.call.
+// Inline a visit on a match-fn, or check the argument types
+// of a visit on a FuncOp and lower it to a func.call.
 struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   using Base::Base;
 
@@ -439,11 +439,19 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (Op.getSfinae())
       return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
 
+    mlir::ValueRange Args = Op.getArgs();
+    if (nbdl_spec::DefineMatchFnOp MatchFn = Op.lookupMatchFn()) {
+      if (Args.size() != MatchFn.getBody().getNumArguments()) {
+        Op.emitError("invalid visit arity");
+        return llvm::failure();
+      }
+      return inlineVisit(Op, MatchFn, Rewriter);
+    }
+
     mlir::func::FuncOp CalleeFn = Op.lookupCallee();
     if (!CalleeFn)
-      return Rewriter.notifyMatchFailure(Op, "callee is not a func");
+      return Rewriter.notifyMatchFailure(Op, "callee is not a function");
 
-    mlir::ValueRange Args = Op.getArgs();
     llvm::ArrayRef<mlir::Type> ParamTs = CalleeFn.getArgumentTypes();
     if (Args.size() != ParamTs.size()) {
       Op.emitError("invalid visit arity");
@@ -518,19 +526,12 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       }
     }
 
-    if (IsCppToMlir) {
-      // Add an attribute to certify the cpp to mlir mappings
-      // since that information is not available in the IR.
-      Rewriter.modifyOpInPlace(Op, [&] { Op.setValidCppCrossMap(true); });
-    } else if (llvm::any_of(ParamTs,
-          [](mlir::Type T) { return isa<nbdl_spec::StoreType>(T); })) {
-      // Inline the function visit call.
-      return inlineVisit(Op, CalleeFn, Rewriter);
-    } else {
-      // Store types should "unwrap" to their contained type.
+    if (!IsCppToMlir)
       return lowerToCall(Op, CalleeFn, Rewriter);
-    }
 
+    // Add an attribute to certify the cpp to mlir mappings
+    // since that information is not available in the IR.
+    Rewriter.modifyOpInPlace(Op, [&] { Op.setValidCppCrossMap(true); });
     return llvm::success();
   }
 
@@ -550,21 +551,15 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     return false;
   }
 
-  // Replace the tail call to a function with store type params with a
-  // nbdl.loop of that function whose body is the body of that function.
-  // Replace a visit on a function within a loop of that function with a
+  // Replace the tail call to a match-fn with a nbdl.loop of that
+  // match-fn whose body is the body of that match-fn.
+  // Replace a visit on a match-fn within a loop of that match-fn with a
   // nbdl.continue of that loop. (ie Inline a recursive visit as a loop.)
   llvm::LogicalResult inlineVisit(nbdl_spec::VisitOp Op,
-                                  mlir::func::FuncOp CalleeFn,
+                                  nbdl_spec::DefineMatchFnOp CalleeFn,
                                   mlir::PatternRewriter& Rewriter) const {
-    if (CalleeFn.isExternal())
-      return Rewriter.notifyMatchFailure(Op, "callee has no body");
-    if (!CalleeFn.getBody().hasOneBlock())
-      return Rewriter.notifyMatchFailure(Op, "callee has multiple blocks");
     if (CalleeFn->isAncestor(Op))
       return Rewriter.notifyMatchFailure(Op, "recursive visit");
-    if (CalleeFn.getNumResults() != 0)
-      return Rewriter.notifyMatchFailure(Op, "callee has results");
     nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
     auto Fn = mlir::FlatSymbolRefAttr::get(CalleeFn.getSymNameAttr());
     nbdl_spec::LoopOp ParentLoop = getParentLoopOf(Op, Fn);
@@ -696,6 +691,11 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (needsResolve(Op.getFn()) ||
         llvm::any_of(Op.getArgs(), needsResolve))
       return Rewriter.notifyMatchFailure(Op, "args are not resolved");
+
+    // Leave the result of a visit on a match-fn unresolved
+    // since the visit is inlined.
+    if (Op.lookupMatchFn())
+      return Rewriter.notifyMatchFailure(Op, "callee is a match-fn");
 
     mlir::MLIRContext* Ctx = Op.getContext();
     mlir::Type NewT;
@@ -1298,7 +1298,7 @@ namespace nbdl_spec {
 #define GEN_PASS_REGISTRATION_CADAPTERPASS
 #include "nbdl_spec/NbdlPasses.h.inc"
 
-llvm::LogicalResult verifyRecursiveVisits(mlir::func::FuncOp Fn) {
+llvm::LogicalResult verifyRecursiveVisits(DefineMatchFnOp Fn) {
   llvm::SmallVector<VisitOp, 4> Visits = getVisitsOn(Fn, Fn);
   if (Visits.empty())
     return llvm::success();

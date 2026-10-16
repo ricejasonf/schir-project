@@ -117,7 +117,7 @@ def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
   let mnemonic = "func_name";
   let description = [{
     Represent the type of a result of lifting the symbol
-    name of a FuncOp to a value.
+    name of a function (ie a FuncOp or DefineMatchFnOp) to a value.
   }];
 }
 
@@ -238,7 +238,8 @@ def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
 
 def Nbdl_FuncNameOp : Nbdl_Op<"func_name", [Pure]> {
   let description = [{
-    Lift the symbol name of a FuncOp to a store-like value.
+    Lift the symbol name of a function (ie a FuncOp or DefineMatchFnOp)
+    to a store-like value.
   }];
 
   let arguments = (ins FlatSymbolRefAttr:$name);
@@ -298,6 +299,25 @@ def Nbdl_DefineStoreOp : Nbdl_Op<"define_store", [Symbol, IsolatedFromAbove]> {
   let extraClassDeclaration = [{
     bool isExternal() { return getBody().empty(); }
   }];
+}
+
+def Nbdl_DefineMatchFnOp : Nbdl_Op<"define_match_fn",
+                                   [Symbol, IsolatedFromAbove]> {
+  let description = [{
+    Define a generic function whose parameters are unresolved stores
+    that may be matched within its body.
+
+    Let the flatten pass inline each visit on the function (as a nbdl.loop)
+    so it needs no C++ translation or lowering. Require each visit on the
+    function within its own body (ie a recursive visit) to be in tail
+    position.
+  }];
+
+  let arguments = (ins SymbolNameAttr:$sym_name);
+  let results = (outs);
+  let regions = (region SizedRegion<1>:$body);
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
 }
 
 def Nbdl_ContextOp : Nbdl_Op<"context", [Symbol]> {
@@ -415,6 +435,10 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     // Look up the FuncOp in the parent module if the callee
     // is a function name (possibly lifted to a store.)
     ::mlir::func::FuncOp lookupCallee();
+
+    // Look up the DefineMatchFnOp in the parent module if the callee
+    // is a function name (possibly lifted to a store.)
+    DefineMatchFnOp lookupMatchFn();
   }];
 }
 

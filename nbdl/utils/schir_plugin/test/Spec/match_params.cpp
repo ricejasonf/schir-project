@@ -49,14 +49,16 @@ struct my_struct {
             match_my_struct)
 
 ; // CHECK-LABEL: @"::foo::match_int"
-; // CHECK: "nbdl.match"(%arg{{[0-9]+}})
+; // CHECK: [[STORE:%[0-9]+]] = "nbdl.lift_store"(%arg0)
+; // CHECK: "nbdl.match"([[STORE]])
 ; // CHECK-NEXT: ({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 (define-match-fn match_int (Store fn)
   (match-params ((V : 'int Store))
     (visit fn V)))
 
 ; // CHECK-LABEL: @"::foo::match_my_struct"
-; // CHECK: "nbdl.match"(%arg{{[0-9]+}})
+; // CHECK: [[STORE:%[0-9]+]] = "nbdl.lift_store"(%arg0)
+; // CHECK: "nbdl.match"([[STORE]])
 ; // CHECK-NEXT: ({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"foo::my_struct">>):
 (define-match-fn match_my_struct (Store fn)
   (match-params ((V : 'foo::my_struct Store))
