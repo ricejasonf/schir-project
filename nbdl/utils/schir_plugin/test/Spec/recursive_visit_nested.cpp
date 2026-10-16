@@ -93,31 +93,33 @@ namespace foo {
   (return))
 
 ; // Sum the integers from N down to 1 adding to Acc.
-(define-match-fn sum_down (N Acc Dest Fn)
+; // Visit Fn with the sum.
+(define-match-fn sum_down (N Acc Fn)
   (match-if (visit is_zero_i32 N)
-    (visit Fn Acc Dest)
+    (visit Fn Acc)
     (visit sum_down (visit sub_one_i32 N)
                     (visit add_i32 Acc N)
-                    Dest
                     Fn)))
 
 ; // Count N up while decrementing the counter at Counter.
 ; // Visit sum_down in the base case to inline it as a loop as well.
-(define-match-fn count_up (Counter N Dest)
+(define-match-fn count_up (Counter N Fn)
   (match-if (visit dec_is_zero_i32 Counter)
-    (visit sum_down N 0 Dest accumulate_i32)
-    (visit count_up Counter (visit add_one_i32 N) Dest)))
+    (visit sum_down N 0 Fn)
+    (visit count_up Counter (visit add_one_i32 N) Fn)))
 
 ; // Nest the loop of sum_down in the loop of count_up.
 ; // Expect each continue to be for its own loop.
+; // Inline the closure that adds to Dest.
 ; // CHECK-LABEL: func.func @"::foo::count_up_then_sum"(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @count_up}> ({
 ; // CHECK-NEXT: ^bb0([[OUTER_N:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.match_if"
 ; // CHECK: "nbdl.loop"([[OUTER_N]], {{%[0-9]+}}) <{fn = @sum_down}> ({
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<i32>,
 ; // CHECK-SAME: {{%arg[0-9]+}}: !nbdl.store<i32>):
-; // CHECK: func.call @"::foo::accumulate_i32"
+; // CHECK: func.call @"::foo::accumulate_i32"({{%[0-9]+}}, %arg1)
 ; // CHECK: "nbdl.continue"({{%[0-9]+}}, {{%[0-9]+}}) <{fn = @sum_down}>
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : (!nbdl.store<i32>, !nbdl.store<i32>) -> ()
@@ -126,18 +128,24 @@ namespace foo {
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : (!nbdl.store<i32>) -> ()
 (define-fn count_up_then_sum ((Counter : !llvm.ptr) (Dest : !llvm.ptr)) -> ()
-  (visit count_up Counter 0 Dest)
+  (visit count_up Counter 0
+         (match-fn (Sum) (visit accumulate_i32 Sum Dest)))
   (return))
 
 ; // Run a loop for each element of the memref.
+; // Create the closure within the body of match_each.
 ; // CHECK-LABEL: func.func @"::foo::sum_each"({{.*}}, %arg1: !llvm.ptr) {
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.match_each"
 ; // CHECK-NEXT: ^bb0([[X:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.loop"([[X]], {{%[0-9]+}}) <{fn = @sum_down}>
+; // CHECK: func.call @"::foo::accumulate_i32"({{%[0-9]+}}, %arg1)
+; // CHECK-NOT: "nbdl.closure"
 (define-fn sum_each ((Src : !memref_i32) (Dest : !llvm.ptr)) -> ()
   (match-each (lift-store Src)
     (lambda (X)
-      (visit sum_down X 0 Dest accumulate_i32)))
+      (visit sum_down X 0
+             (match-fn (Sum) (visit accumulate_i32 Sum Dest)))))
   (return))
 
 (write-lowered-module)

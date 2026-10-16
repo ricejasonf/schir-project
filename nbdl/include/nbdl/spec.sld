@@ -252,6 +252,7 @@
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.func_name (type "!nbdl.func_name"))
+    (define !nbdl.closure (type "!nbdl.closure"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define !nbdl.unknown (type "!nbdl.unknown"))
     (define i32 (type "i32"))
@@ -1202,6 +1203,25 @@
                                              (syntax-source-loc Name)))
            ...))))
 
+    ;; Create a closure as an expr whose body captures the values in
+    ;; scope with the same invocable semantics as define-match-fn.
+    (define-syntax match-fn
+      (syntax-rules ()
+        ((match-fn (Arg ...) Body1 BodyN ...)
+         (%expr
+           (syntax-source-loc Body1)
+           (lambda (Loc Fn)
+             (Fn (result
+                   (create-op
+                     "nbdl.closure"
+                     (loc: Loc)
+                     (operands:)
+                     (attributes:)
+                     (result-types: !nbdl.closure)
+                     (region: "body" ((Arg : (!nbdl.store)) ...)
+                              (%top-level
+                                (lambda () Body1 BodyN ...)))))))))))
+
     ;; Define a normal function whose parameter and result types are
     ;; mlir types where string-likes are lifted to C++ types.
     ;; Use lift-store on a parameter to use it with Nbdl operations.
@@ -1431,6 +1451,7 @@
     match-if
     declare-match-fn
     define-match-fn
+    match-fn
     define-fn
     lift-store
     return

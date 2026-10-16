@@ -81,45 +81,46 @@ struct int_sink {
 ; // whose then region is the base case.
 ; // Expect the match-fn itself to be unchanged.
 ; // CHECK-LABEL: @sum_down(
+; // CHECK-SAME: %arg0: !nbdl.store, %arg1: !nbdl.store, %arg2: !nbdl.store)
 ; // CHECK: "nbdl.match_if"
 ; // CHECK: [[SELF:%[0-9]+]] = "nbdl.func_name"() <{name = @sum_down}>
 ; // CHECK: [[RESULT:%[0-9]+]] = "nbdl.visit"([[SELF]],
 ; // CHECK-NEXT: "nbdl.discard"([[RESULT]])
-(define-match-fn sum_down (N Acc Dest Fn)
+(define-match-fn sum_down (N Acc Fn)
   (match-if (visit is_zero_i32 N)
-    (visit Fn Acc Dest)
+    (visit Fn Acc)
     (visit sum_down (visit sub_one_i32 N)
                     (visit add_i32 Acc N)
-                    Dest
                     Fn)))
 
 ; // Inline the visit on the recursive match-fn as a loop that carries
-; // N and Acc, but not Dest and Fn which are the same in every
+; // N and Acc, but not the closure Fn which is the same in every
 ; // iteration. Expect a continue in place of the recursive visit.
+; // Inline the closure that writes to Dest.
 ; // CHECK-LABEL: func.func @"::foo::sum_to_i32"
 ; // CHECK-SAME: (%arg0: i32, %arg1: !llvm.ptr) {
 ; // CHECK-NOT: "nbdl.func_name"() <{name = @sum_down}>
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: [[N:%[0-9]+]] = "nbdl.lift_store"(%arg0)
 ; // CHECK-NEXT: [[ACC:%[0-9]+]] = "nbdl.lift_store"
-; // CHECK-NEXT: [[DEST:%[0-9]+]] = "nbdl.lift_store"(%arg1)
 ; // CHECK-NEXT: "nbdl.loop"([[N]], [[ACC]]) <{fn = @sum_down}>
 ; // CHECK-NEXT: ^bb0([[N_ARG:%arg[0-9]+]]: !nbdl.store<i32>,
 ; // CHECK-SAME: [[ACC_ARG:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.visit"({{%[0-9]+}}, [[N_ARG]])
 ; // CHECK-SAME: -> i1
 ; // CHECK: "nbdl.match_if"
-; // CHECK: "nbdl.unwrap"([[ACC_ARG]])
-; // CHECK-NEXT: "nbdl.unwrap"([[DEST]])
-; // CHECK-NEXT: func.call @"::foo::write_i32"
+; // CHECK: [[SUM:%[0-9]+]] = "nbdl.unwrap"([[ACC_ARG]])
+; // CHECK-NEXT: func.call @"::foo::write_i32"([[SUM]], %arg1)
 ; // CHECK: [[NEXT_N:%[0-9]+]] = "nbdl.lift_store"
 ; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NEXT: [[NEXT_ACC:%[0-9]+]] = "nbdl.lift_store"
 ; // CHECK-SAME: -> !nbdl.store<i32>
 ; // CHECK-NEXT: "nbdl.continue"([[NEXT_N]], [[NEXT_ACC]]) <{fn = @sum_down}>
 ; // CHECK-NOT: "nbdl.func_name"() <{name = @sum_down}>
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.return"() : () -> ()
 (define-fn sum_to_i32 ((N : i32) (Dest : !llvm.ptr)) -> ()
-  (visit sum_down N 0 Dest write_i32)
+  (visit sum_down N 0 (match-fn (Sum) (visit write_i32 Sum Dest)))
   (return))
 
 ; // Do the same with C++ types to translate the loop to C++.
@@ -140,13 +141,18 @@ struct int_sink {
                         (visit '|std::plus<int>{}| Acc N)
                         Fn)))
 
+; // Pass a closure that captures the sink.
 ; // CHECK-LABEL: func.func @"::foo::sum_to_int"
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.loop"({{.*}}) <{fn = @"::foo::sum_down_int.match_fn"}>
 ; // CHECK-NEXT: ^bb0({{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>,
-; // CHECK-SAME: {{%arg[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
+; // CHECK-SAME: [[ACC_ARG:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"int">>):
+; // CHECK: "nbdl.visit"(%arg1, [[ACC_ARG]])
 ; // CHECK: "nbdl.continue"({{.*}}) <{fn = @"::foo::sum_down_int.match_fn"}>
+; // CHECK-NOT: "nbdl.closure"
+; // CHECK-LABEL: func.func
 (define-fn sum_to_int ((N : 'int) (Sink : 'foo::int_sink)) -> ()
-  (visit sum_down_int N '|int{0}| Sink)
+  (visit sum_down_int N '|int{0}| (match-fn (Sum) (visit Sink Sum)))
   (return))
 
 ; // Decrement the i32 at P and return true if the result is zero.
@@ -177,27 +183,29 @@ struct int_sink {
 ; // Pass every argument unchanged in every recursive visit so nothing
 ; // is loop-carried. Let the loop still end by decrementing the counter
 ; // that Counter points to in the condition.
-(define-match-fn count_down (Counter Dest Fn)
+(define-match-fn count_down (Counter Fn)
   (match-if (visit dec_is_zero_i32 Counter)
-    (visit Fn 7 Dest)
-    (visit count_down Counter Dest Fn)))
+    (visit Fn 7)
+    (visit count_down Counter Fn)))
 
 ; // Expect no operands for the loop and the continue.
+; // Inline the closure that writes to Dest.
 ; // CHECK-LABEL: func.func @"::foo::count_down_ptr"
 ; // CHECK-SAME: (%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: [[COUNTER:%[0-9]+]] = "nbdl.lift_store"(%arg0)
 ; // CHECK: "nbdl.loop"() <{fn = @count_down}> ({
 ; // CHECK-NEXT: "nbdl.func_name"() <{name = @"::foo::dec_is_zero_i32"}>
 ; // CHECK-NEXT: "nbdl.visit"({{%[0-9]+}}, [[COUNTER]])
 ; // CHECK-SAME: -> i1
 ; // CHECK: "nbdl.match_if"
-; // CHECK: func.call @"::foo::write_i32"
+; // CHECK: func.call @"::foo::write_i32"({{%[0-9]+}}, %arg1)
 ; // CHECK: }, {
 ; // CHECK-NEXT: "nbdl.continue"() <{fn = @count_down}> : () -> ()
 ; // CHECK-NEXT: }) : (i1) -> ()
 ; // CHECK-NEXT: }) : () -> ()
 (define-fn count_down_ptr ((Counter : !llvm.ptr) (Dest : !llvm.ptr)) -> ()
-  (visit count_down Counter Dest write_i32)
+  (visit count_down Counter (match-fn (X) (visit write_i32 X Dest)))
   (return))
 
 (write-lowered-module)

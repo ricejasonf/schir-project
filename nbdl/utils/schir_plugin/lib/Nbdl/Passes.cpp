@@ -154,6 +154,15 @@ getVisitsOn(mlir::Operation* Root, nbdl_spec::DefineMatchFnOp Fn) {
   return Visits;
 }
 
+// Return true if Op is within a closure within Root.
+bool isInClosure(mlir::Operation* Op, mlir::Operation* Root) {
+  for (mlir::Operation* Parent = Op->getParentOp();
+       Parent && Parent != Root; Parent = Parent->getParentOp())
+    if (isa<nbdl_spec::ClosureOp>(Parent))
+      return true;
+  return false;
+}
+
 // Return true if a visit is in tail position relative to Root.
 // Allow only parent operations that are match operations selecting
 // a branch or loops so the result is discarded as the terminator of
@@ -197,12 +206,18 @@ getContinues(nbdl_spec::LoopOp Loop) {
   return Continues;
 }
 
-// Return true if the flatten pass may inline a visit
-// (ie the callee is or may resolve to a match-fn in the module.)
+// Return true if T is a closure (possibly lifted to a store.)
+bool isClosureType(mlir::Type T) {
+  if (mlir::Type AltT = getSingleAltT(T))
+    T = AltT;
+  return isa<nbdl_spec::ClosureType>(T);
+}
+
+// Return true if the flatten pass may inline a visit.
 bool mayInlineVisit(nbdl_spec::VisitOp Op) {
   if (Op.getSfinae() || Op.getValidCppCrossMap())
     return false;
-  if (Op.lookupMatchFn())
+  if (Op.lookupMatchFn() || isClosureType(Op.getFn().getType()))
     return true;
   if (Op.lookupCallee())
     return false;
@@ -234,12 +249,12 @@ mlir::Attribute getNameAttr(mlir::Value V) {
   return {};
 }
 
-// Return true if a value is a function name or member name
-// which only exists at compile time.
+// Return true if a value is the name of a function-like.
 bool isNameType(mlir::Type T) {
   if (mlir::Type AltT = getSingleAltT(T))
     T = AltT;
-  return isa<nbdl_spec::FuncNameType, nbdl_spec::MemberNameType>(T);
+  return isa<nbdl_spec::FuncNameType, nbdl_spec::MemberNameType,
+             nbdl_spec::ClosureType>(T);
 }
 
 // Return true if every continue of a loop passes a value to the
@@ -350,14 +365,14 @@ llvm::LogicalResult finalizeLoops(mlir::Operation* Root) {
       getContinues(Loop);
     bool IsValid = true;
     for (mlir::BlockArgument Arg : Loop.getBody().getArguments()) {
-      // A function or member name has no value to carry.
+      // A compile time value cannot be carried.
       if (!isNameType(Arg.getType()))
         continue;
       for (nbdl_spec::ContinueOp C : Continues) {
         if (isInvariantLoopArg(Loop, Arg, C))
           continue;
-        C.emitError("recursive visit must pass the same function "
-                    "or member name as argument ")
+        C.emitError("recursive visit must pass the same function, "
+                    "member name, or closure as argument ")
           << Arg.getArgNumber();
         IsValid = false;
       }
@@ -414,8 +429,7 @@ constexpr auto isCppWriteable = [](mlir::Value V) -> bool {
          !getCppTypename(V).empty();
 };
 
-// Inline a visit on a match-fn, or check the argument types
-// of a visit on a FuncOp and lower it to a func.call.
+// Inline a visit on a match-fn or closure, or lower a visit on a FuncOp.
 struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   using Base::Base;
 
@@ -440,6 +454,13 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
 
     mlir::ValueRange Args = Op.getArgs();
+    if (nbdl_spec::ClosureOp Closure = nbdl_spec::getClosure(Op.getFn())) {
+      if (Args.size() != Closure.getBody().getNumArguments()) {
+        Op.emitError("invalid visit arity");
+        return llvm::failure();
+      }
+      return inlineClosure(Op, Closure, Rewriter);
+    }
     if (nbdl_spec::DefineMatchFnOp MatchFn = Op.lookupMatchFn()) {
       if (Args.size() != MatchFn.getBody().getNumArguments()) {
         Op.emitError("invalid visit arity");
@@ -560,6 +581,9 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
                                   mlir::PatternRewriter& Rewriter) const {
     if (CalleeFn->isAncestor(Op))
       return Rewriter.notifyMatchFailure(Op, "recursive visit");
+    // Defer a visit within a closure until the closure is inlined.
+    if (isInClosure(Op, /*Root=*/nullptr))
+      return Rewriter.notifyMatchFailure(Op, "visit is within a closure");
     nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
     auto Fn = mlir::FlatSymbolRefAttr::get(CalleeFn.getSymNameAttr());
     nbdl_spec::LoopOp ParentLoop = getParentLoopOf(Op, Fn);
@@ -604,6 +628,30 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       for (mlir::Operation& CalleeOp : CalleeBody)
         Rewriter.clone(CalleeOp, Mapping);
     }
+
+    Rewriter.eraseOp(Discard);
+    Rewriter.eraseOp(Op);
+    return llvm::success();
+  }
+
+  // Replace a visit on a closure with the body of the closure.
+  llvm::LogicalResult inlineClosure(nbdl_spec::VisitOp Op,
+                                    nbdl_spec::ClosureOp Closure,
+                                    mlir::PatternRewriter& Rewriter) const {
+    nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
+    if (!Discard)
+      return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
+
+    mlir::Block& ClosureBody = Closure.getBody().front();
+    Rewriter.setInsertionPoint(Discard);
+    mlir::IRMapping Mapping;
+    for (auto [Param, Arg] : llvm::zip(ClosureBody.getArguments(),
+                                       Op.getArgs()))
+      Mapping.map(Param, liftArg(Rewriter, Param.getType(), Arg));
+
+    // The closure body replaces both the visit and the discard.
+    for (mlir::Operation& ClosureOp : ClosureBody)
+      Rewriter.clone(ClosureOp, Mapping);
 
     Rewriter.eraseOp(Discard);
     Rewriter.eraseOp(Op);
@@ -692,10 +740,11 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
         llvm::any_of(Op.getArgs(), needsResolve))
       return Rewriter.notifyMatchFailure(Op, "args are not resolved");
 
-    // Leave the result of a visit on a match-fn unresolved
-    // since the visit is inlined.
+    // Leave the result of an inlined visit unresolved.
     if (Op.lookupMatchFn())
       return Rewriter.notifyMatchFailure(Op, "callee is a match-fn");
+    if (isClosureType(Op.getFn().getType()))
+      return Rewriter.notifyMatchFailure(Op, "callee is a closure");
 
     mlir::MLIRContext* Ctx = Op.getContext();
     mlir::Type NewT;
@@ -1300,6 +1349,8 @@ namespace nbdl_spec {
 
 llvm::LogicalResult verifyRecursiveVisits(DefineMatchFnOp Fn) {
   llvm::SmallVector<VisitOp, 4> Visits = getVisitsOn(Fn, Fn);
+  // Defer checking a visit within a closure until it is inlined.
+  llvm::erase_if(Visits, [&](VisitOp V) { return isInClosure(V, Fn); });
   if (Visits.empty())
     return llvm::success();
 
@@ -1384,7 +1435,18 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
   });
   if (HasError)
     return llvm::failure();
-  return finalizeLoops(Op);
+  if (llvm::failed(finalizeLoops(Op)))
+    return llvm::failure();
+
+  // It is an error if any closure outside of a match-fn is not inlined.
+  Op->walk([&](ClosureOp Closure) {
+    if (Closure->getParentOfType<DefineMatchFnOp>())
+      return;
+    Closure.emitError("closure is not inlined (ie each visit on it "
+                      "must be in tail position)");
+    HasError = true;
+  });
+  return llvm::failure(HasError);
 }
 
 } // namespace nbdl_spec

@@ -96,59 +96,67 @@ struct int_sink {
              (result-types:))
   (return (is-zero Next)))
 
-; // Write 1 to Dest if N is even and 0 otherwise via two functions that
+; // Visit Fn with 1 if N is even and 0 otherwise via two functions that
 ; // visit each other. Declare is_odd so is_even may visit it before it
 ; // is defined.
 (declare-match-fn is_odd)
 
-(define-match-fn is_even (N Dest)
+(define-match-fn is_even (N Fn)
   (match-if (visit is_zero_i32 N)
-    (visit write_i32 1 Dest)
-    (visit is_odd (visit sub_one_i32 N) Dest)))
+    (visit Fn 1)
+    (visit is_odd (visit sub_one_i32 N) Fn)))
 
-(define-match-fn is_odd (N Dest)
+(define-match-fn is_odd (N Fn)
   (match-if (visit is_zero_i32 N)
-    (visit write_i32 0 Dest)
-    (visit is_even (visit sub_one_i32 N) Dest)))
+    (visit Fn 0)
+    (visit is_even (visit sub_one_i32 N) Fn)))
 
 ; // Continue the loop of is_even from the inlined body of is_odd.
 ; // Expect no loop of is_odd since nothing continues it.
+; // Inline the closure that writes to Dest.
 ; // (Skip the lowered module.)
 ; // CHECK-LABEL: @is_odd(
 ; // CHECK-LABEL: func.func @"::foo::is_even_i32"
 ; // CHECK-NOT: fn = @is_odd
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @is_even}> ({
 ; // CHECK-NEXT: ^bb0([[N:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.match_if"
+; // CHECK: func.call @"::foo::write_i32"({{%[0-9]+}}, %arg1)
 ; // CHECK: "nbdl.match_if"
+; // CHECK: func.call @"::foo::write_i32"({{%[0-9]+}}, %arg1)
 ; // CHECK: "nbdl.continue"({{%[0-9]+}}) <{fn = @is_even}>
 ; // CHECK-NOT: fn = @is_odd
-; // CHECK-LABEL: func.func @"::foo::repeat_sum_i32"
+; // CHECK: "nbdl.return"
 (define-fn is_even_i32 ((N : i32) (Dest : !llvm.ptr)) -> ()
-  (visit is_even N Dest)
+  (visit is_even N (match-fn (Result) (visit write_i32 Result Dest)))
   (return))
 
 ; // Sum the integers from N down to 1 adding to Acc.
 ; // Visit Fn with the sum.
-(define-match-fn sum_down (N Acc Counter Fn)
+(define-match-fn sum_down (N Acc Fn)
   (match-if (visit is_zero_i32 N)
-    (visit Fn Acc Counter)
+    (visit Fn Acc)
     (visit sum_down (visit sub_one_i32 N)
                     (visit add_i32 Acc N)
-                    Counter
                     Fn)))
 
 ; // Add the sum of 1 to 4 to Acc until decrementing the i32 at Counter
-; // results in zero. Then write Acc to Counter.
-; // Pass repeat_sum to sum_down as the function to visit with the sum
-; // so each function visits the other.
-(define-match-fn repeat_sum (Acc Counter)
+; // results in zero. Then visit Fn with Acc.
+; // Visit repeat_sum from sum_down via a closure.
+(define-match-fn repeat_sum (Acc Counter Fn)
   (match-if (visit dec_is_zero_i32 Counter)
-    (visit write_i32 Acc Counter)
-    (visit sum_down 4 Acc Counter repeat_sum)))
+    (visit Fn Acc)
+    (visit sum_down 4 Acc
+           (match-fn (Sum) (visit repeat_sum Sum Counter Fn)))))
 
+; // Expect the match-fn itself to keep the closure.
 ; // Continue the loop of repeat_sum from the base case of the loop of
 ; // sum_down which is within it.
+; // CHECK-LABEL: @repeat_sum(
+; // CHECK: "nbdl.closure"
+; // CHECK-LABEL: func.func @"::foo::repeat_sum_i32"
+; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @repeat_sum}> ({
 ; // CHECK-NEXT: ^bb0([[ACC:%arg[0-9]+]]: !nbdl.store<i32>):
 ; // CHECK: "nbdl.match_if"
@@ -160,18 +168,19 @@ struct int_sink {
 ; // CHECK-NEXT: "nbdl.continue"([[INNER_ACC]]) <{fn = @repeat_sum}>
 ; // CHECK-NEXT: }, {
 ; // CHECK: "nbdl.continue"({{%[0-9]+}}, {{%[0-9]+}}) <{fn = @sum_down}>
+; // CHECK-NOT: "nbdl.closure"
+; // CHECK: "nbdl.return"
 (define-fn repeat_sum_i32 ((Counter : !llvm.ptr)) -> ()
-  (visit repeat_sum 0 Counter)
+  (visit repeat_sum 0 Counter
+         (match-fn (Acc) (visit write_i32 Acc Counter)))
   (return))
 
 ; // Do the same with C++ types to translate the loops to C++.
-(define-match-fn sum_down_int (N Acc Count Sink Fn)
+(define-match-fn sum_down_int (N Acc Fn)
   (match-if (visit '|std::equal_to<int>{}| N '|int{0}|)
-    (visit Fn Count Acc Sink)
+    (visit Fn Acc)
     (visit sum_down_int (visit '|std::minus<int>{}| N '|int{1}|)
                         (visit '|std::plus<int>{}| Acc N)
-                        Count
-                        Sink
                         Fn)))
 
 (define-match-fn repeat_sum_int (Count Acc Sink)
@@ -179,9 +188,11 @@ struct int_sink {
     (visit Sink Acc)
     (visit sum_down_int '|int{4}|
                         Acc
-                        (visit '|std::minus<int>{}| Count '|int{1}|)
-                        Sink
-                        repeat_sum_int)))
+                        (match-fn (Sum)
+                          (visit repeat_sum_int
+                                 (visit '|std::minus<int>{}| Count '|int{1}|)
+                                 Sum
+                                 Sink)))))
 
 (define-fn repeat_sum_to_int ((Count : 'int) (Sink : 'foo::int_sink)) -> ()
   (visit repeat_sum_int Count '|int{0}| Sink)

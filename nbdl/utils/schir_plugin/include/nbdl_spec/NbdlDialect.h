@@ -72,14 +72,14 @@ namespace nbdl_spec {
 // assuming that every iteration passes it unchanged. Otherwise, return V.
 mlir::Value lookThroughLoopArgs(mlir::Value V);
 
-// Get the FuncNameOp that defines V looking through block arguments of
-// loops and a !nbdl.store<!nbdl.func_name> created by LiftStoreOp.
-// Return a null op if V is not a function name.
+// Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);
+
+// Get the ClosureOp that defines V or null if V is not a closure.
+ClosureOp getClosure(mlir::Value V);
 
 // Check that each visit on a function within its own body (ie a
 // recursive visit) is in tail position and that there is a base case.
-// Let the flatten pass inline a visit on such a function as a nbdl.loop.
 llvm::LogicalResult verifyRecursiveVisits(DefineMatchFnOp Fn);
 }
 

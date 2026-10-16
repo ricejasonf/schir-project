@@ -121,6 +121,13 @@ def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
   }];
 }
 
+def Nbdl_Closure : TypeDef<Nbdl_Dialect, "Closure"> {
+  let mnemonic = "closure";
+  let description = [{
+    Represent the type of the result of a ClosureOp.
+  }];
+}
+
 def Nbdl_String : TypeDef<Nbdl_Dialect, "String"> {
   let mnemonic = "string";
   let description = [{
@@ -318,6 +325,19 @@ def Nbdl_DefineMatchFnOp : Nbdl_Op<"define_match_fn",
   let regions = (region SizedRegion<1>:$body);
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
+}
+
+def Nbdl_ClosureOp : Nbdl_Op<"closure", [Pure]> {
+  let description = [{
+    Create a function that captures values in scope with parameters
+    like those of a DefineMatchFnOp. Let the flatten pass inline each
+    visit on it.
+  }];
+
+  let arguments = (ins);
+  let results = (outs Nbdl_Closure:$result);
+  let regions = (region SizedRegion<1>:$body);
+  let hasVerifier = 1;
 }
 
 def Nbdl_ContextOp : Nbdl_Op<"context", [Symbol]> {

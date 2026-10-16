@@ -75,6 +75,13 @@ nbdl_spec::FuncNameOp nbdl_spec::getFuncName(mlir::Value V) {
   return V.getDefiningOp<nbdl_spec::FuncNameOp>();
 }
 
+nbdl_spec::ClosureOp nbdl_spec::getClosure(mlir::Value V) {
+  V = lookThroughLoopArgs(V);
+  if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
+    V = lookThroughLoopArgs(Op.getValue());
+  return V.getDefiningOp<nbdl_spec::ClosureOp>();
+}
+
 // Look up the function in the parent module of a visit
 // if the callee is a function name.
 static mlir::Operation* lookupCalleeSymbol(nbdl_spec::VisitOp Op) {
@@ -126,6 +133,14 @@ mlir::ParseResult nbdl_spec::DefineMatchFnOp::parse(
 llvm::LogicalResult nbdl_spec::DefineMatchFnOp::verify() {
   if (getBody().empty())
     return emitOpError("expecting a body");
+  for (mlir::BlockArgument Arg : getBody().getArguments())
+    if (!llvm::isa<nbdl_spec::StoreType>(Arg.getType()))
+      return emitOpError("parameter ") << Arg.getArgNumber()
+        << " should be a store (" << Arg.getType() << ")";
+  return llvm::success();
+}
+
+llvm::LogicalResult nbdl_spec::ClosureOp::verify() {
   for (mlir::BlockArgument Arg : getBody().getArguments())
     if (!llvm::isa<nbdl_spec::StoreType>(Arg.getType()))
       return emitOpError("parameter ") << Arg.getArgNumber()
