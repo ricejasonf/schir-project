@@ -105,8 +105,7 @@ namespace foo {
     (visit sum_i32 (visit 'nbdl::bind_memref Src)
                    (visit 'nbdl::bind_memref Dest))))
 
-(finalize-module)
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 } // schir_scheme
 } // namespace foo
 } // namespace

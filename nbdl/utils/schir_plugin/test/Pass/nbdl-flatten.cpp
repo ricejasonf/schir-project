@@ -447,8 +447,6 @@ struct nbdl::get_impl<foo::keyed> {
             (match (get Composed K)
               (else => Fn)))))))))
 
-(finalize-module)
-
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 
 } // schir_scheme

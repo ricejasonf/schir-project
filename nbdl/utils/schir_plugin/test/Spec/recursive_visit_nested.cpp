@@ -149,8 +149,7 @@ namespace foo {
   (return))
 
 (write-lowered-module)
-(finalize-module)
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 
 ; // Lower each loop to a scf.while with the loop-carried values as its
 ; // iteration arguments so no memory is allocated for either loop.

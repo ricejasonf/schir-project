@@ -63,8 +63,14 @@
       (apply nbdl_spec_create_store_type
              (map %cpp-or-type Alts)))
 
-    ;; "Cpp" module will translate to c++ via translate-cpp.
-    (define main-module (create-top-module "nbdl_spec_module_cpp"))
+    ;; Lazily instantiate main module for all definitions.
+    (define main-module #f)
+
+    ;; Return the module of the current definitions.
+    (define (%main-module)
+      (unless main-module
+        (set! main-module (create-top-module "nbdl_spec_module_cpp")))
+      main-module)
 
     (register-nbdl-dialect)
     (load-dialect "func")
@@ -88,21 +94,21 @@
     (define llvm-module #f)
 
     ;; Copy a FuncOp into Module to be lowered.
-    (define (copy-to-lowered-module Module FuncOp)
+    (define (copy-to-lowered-module Module FuncOp CAdapter?)
       (with-module-builder
         Module
         (lambda ()
           (define Copy (copy-op FuncOp))
           ;; Mark to have an abi adapter created to allow calling from C++.
-          (when (%export-op? export-c-ops FuncOp)
+          (when CAdapter?
             (mark-c-adapter Copy))
           Copy)))
 
     ;; Copy a FuncOp into the llvm-module.
-    (define (lower-to-llvm FuncOp)
+    (define (lower-to-llvm FuncOp CAdapter?)
       (unless llvm-module
         (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
-      (copy-to-lowered-module llvm-module FuncOp))
+      (copy-to-lowered-module llvm-module FuncOp CAdapter?))
 
     ;; An element (Name Op) of an exported ops list.
     (define (%make-export Name Op)
@@ -110,14 +116,6 @@
 
     (define (%export-op Export)
       (cadr Export))
-
-    ;; Return #t if Op is an element of ExportOps.
-    (define (%export-op? ExportOps Op)
-      (let loop ((Rest ExportOps))
-        (cond
-          ((null? Rest) #f)
-          ((eq? Op (%export-op (car Rest))) #t)
-          (else (loop (cdr Rest))))))
 
     ;; Add the element (Name Op) to the end of ExportOps so
     ;; elements are in order of definition.
@@ -140,11 +138,11 @@
     ;; lowered to LLVM by finalize-module (ie by define-fn.)
     (define %lower-to-llvm-ops '())
 
-    ;; Return a procedure that emits C++ for an Op via Translate.
-    (define (%emit-cpp Translate)
+    ;; Return a procedure that emits C++ for an Op of Module via Translate.
+    (define (%emit-cpp Module Translate)
       (lambda (Op)
         (with-module-builder
-          main-module
+          Module
           (lambda ()
             (Translate Op lexer-writer)
             (flush-tokens)))))
@@ -152,38 +150,60 @@
     (define (%function-op? Op)
       (not (define-store-op? Op)))
 
+    ;; Clear the module and exports so subsequent definitions
+    ;; are added to a new module.
+    (define (%reset-module)
+      (set! main-module #f)
+      (set! llvm-module #f)
+      (set! export-cpp-names '())
+      (set! export-c-names '())
+      (set! export-c-internal-names '())
+      (set! export-cpp-ops '())
+      (set! export-c-ops '())
+      (set! export-c-internal-ops '())
+      (set! %lower-to-llvm-ops '())
+      (set! %write-lowered-module? #f))
+
     ;; Finish the module by writing c++ translations, forward declarations,
     ;; wrappers of lowered functions, and lowering and injecting
     ;; backend modules.
+    ;; Return the module and start a new one (even if finalizing fails.)
     (define (finalize-module)
-      (%finalize-exports export-cpp-ops define-store-op?
-                         (%emit-cpp translate-cpp))
+      (define Module (%main-module))
+      (define CppOps export-cpp-ops)
+      (define COps export-c-ops)
+      (define CInternalOps export-c-internal-ops)
+      (define LoweredOps %lower-to-llvm-ops)
+      (define WriteLowered? %write-lowered-module?)
+      (define (lowered? Op) (memq Op LoweredOps))
+      (%reset-module)
+      (%finalize-exports CppOps define-store-op?
+                         (%emit-cpp Module translate-cpp))
       ;; Declarations are written with canonical C++ types
       ;; to match the definitions.
-      (nbdl_canonicalize_cpp_types main-module current-schir-clang)
+      (nbdl_canonicalize_cpp_types Module current-schir-clang)
       ;; Infer types and simplify operations.
-      (run-inference-passes)
-      (%finalize-exports export-cpp-ops %function-op?
-                         (%emit-cpp declare-cpp))
+      (run-inference-passes Module)
+      (%finalize-exports CppOps %function-op?
+                         (%emit-cpp Module declare-cpp))
       ;; Lowered functions are called from C++ via wrappers.
-      (%finalize-exports export-c-ops %function-op?
-                         (%emit-cpp define-lowered-wrapper))
-      (%finalize-exports export-cpp-ops %function-op?
-                         (%emit-cpp translate-cpp))
-      (%finalize-exports export-c-ops
-                         (lambda (Op) (memq Op %lower-to-llvm-ops))
-                         lower-to-llvm)
-      (%finalize-exports export-c-internal-ops
-                         (lambda (Op) (memq Op %lower-to-llvm-ops))
-                         lower-to-llvm)
+      (%finalize-exports COps %function-op?
+                         (%emit-cpp Module define-lowered-wrapper))
+      (%finalize-exports CppOps %function-op?
+                         (%emit-cpp Module translate-cpp))
+      (%finalize-exports COps lowered?
+                         (lambda (Op) (lower-to-llvm Op #t)))
+      (%finalize-exports CInternalOps lowered?
+                         (lambda (Op) (lower-to-llvm Op #f)))
       (when llvm-module
         (apply run-passes llvm-module "nbdl-lower" %lowering-passes)
-        (when %write-lowered-module?
+        (when WriteLowered?
           (write llvm-module)
           (newline))
         (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
         (inject-module llvm-module)
-        (set! llvm-module #f)))
+        (set! llvm-module #f))
+      Module)
 
     (define %write-lowered-module? #f)
 
@@ -226,7 +246,7 @@
     ;; which receives the symbol name.
     (define (%create-top-level-op SymName Thunk)
       (with-module-builder
-        main-module
+        (%main-module)
         (lambda ()
           (define TopLevelOp (Thunk SymName))
           ;; The verify pass may also raise a more specific error.
@@ -1343,7 +1363,7 @@
               (define-values (_ _ DefineStoreOp)
                 (apply values Name))
               DefineStoreOp))
-         (else (module-lookup main-module Name))))
+         (else (module-lookup (%main-module) Name))))
       (translate-cpp Op)
       (newline))
 
@@ -1354,15 +1374,17 @@
 
     (define (dump-op name)
       (define Op
-        (module-lookup main-module name))
+        (module-lookup (%main-module) name))
       (dump Op)
       (newline))
 
     (define (dump-nbdl-module)
-      (dump main-module))
+      (dump (%main-module)))
 
-    (define (write-nbdl-module)
-      (write main-module)
+    ;; Write the Module (ie as returned by finalize-module)
+    ;; or the module of the current definitions.
+    (define (write-nbdl-module . Module)
+      (write (if (null? Module) (%main-module) (car Module)))
       (newline))
 
     ;; Track the names of exports.
@@ -1402,7 +1424,7 @@
 
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
-        main-module current-schir-clang))
+        (%main-module) current-schir-clang))
 
     ;; Pass pipeline strings for the inference stage
     ;; (in order of registration.)
@@ -1431,11 +1453,13 @@
         (set! %lowering-passes
           (append %lowering-passes (list Pipeline)))))
 
-    ;; Run the flatten pass and the registered inference passes.
+    ;; Run the flatten pass and the registered inference passes
+    ;; on the Module or the module of the current definitions.
     ;; It is an error if the result type of any function is not inferred.
-    (define (run-inference-passes)
+    (define (run-inference-passes . Module)
       (apply nbdl_run_inference_passes
-             main-module current-schir-clang %inference-passes))
+             (if (null? Module) (%main-module) (car Module))
+             current-schir-clang %inference-passes))
 
   ) ; end of... begin
   (export

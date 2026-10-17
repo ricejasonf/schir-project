@@ -199,8 +199,7 @@ struct int_sink {
   (return))
 
 (write-lowered-module)
-(finalize-module)
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 
 ; // Continue the outer loop from the inner loop by exiting the inner loop
 ; // with the flag and values of the outer loop as its results.

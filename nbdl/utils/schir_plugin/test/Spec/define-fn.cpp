@@ -295,8 +295,7 @@ struct int_sink {
          5)
   (return))
 
-(finalize-module)
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 
 }
 }  // namespace foo

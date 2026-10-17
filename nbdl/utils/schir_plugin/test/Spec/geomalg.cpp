@@ -174,9 +174,7 @@ namespace foo {
   (define-fn cancel_vec3 ((A : !vec3)) -> (!vec3)
     (return (sum A (negate A))))
 
-  (finalize-module)
-
-  (write-nbdl-module)
+  (write-nbdl-module (finalize-module))
 
 #| ; // FIXME c++ preprocessor directives unavailable here
 ; // TODO Check incorrect type mapping.

@@ -209,8 +209,7 @@ struct int_sink {
   (return))
 
 (write-lowered-module)
-(finalize-module)
-(write-nbdl-module)
+(write-nbdl-module (finalize-module))
 
 ; // Lower the loop (via nbdl-lower) to a scf.while whose iteration
 ; // arguments are the loop-carried values. Yield a flag from each branch
