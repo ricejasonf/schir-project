@@ -110,7 +110,7 @@ struct int_sink {
 ; // Continue the loop of is_even from the inlined body of is_odd.
 ; // Expect no loop of is_odd since nothing continues it.
 ; // Inline the closure that writes to Dest.
-; // (Skip the lowered module.)
+; // (Skip the lower module.)
 ; // CHECK-LABEL: @is_odd(
 ; // CHECK-LABEL: func.func @"::foo::is_even_i32"
 ; // CHECK-NOT: fn = @is_odd
@@ -194,12 +194,12 @@ struct int_sink {
   (visit repeat_sum_int Count '|int{0}| Sink)
   (return))
 
-(write-lowered-module)
+(write-lower-module)
 (write-nbdl-module (finalize-module))
 
 ; // Continue the outer loop from the inner loop by exiting the inner loop
 ; // with the flag and values of the outer loop as its results.
-; // (Expect the lowered module before the Nbdl module.)
+; // (Expect the lower module before the Nbdl module.)
 ; // LOWERED-LABEL: func.func @"::foo::is_even_i32"
 ; // LOWERED: scf.while ({{%.+}} = %arg0) : (i32) -> i32 {
 ; // LOWERED-NOT: scf.while

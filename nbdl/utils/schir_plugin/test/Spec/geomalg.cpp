@@ -6,6 +6,7 @@
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -o %t > %t.out
 // RUN: FileCheck %s < %t.out
+// RUN: FileCheck --check-prefix=SPIRV %s < %t.out
 // RUN: %t
 
 // COM_RUNz: clang++ -std=c++26 \
@@ -32,6 +33,7 @@ namespace foo {
           (geomalg base))
 
   (export-c test_dot test_add cancel_vec3)
+  (export-shader test_dot test_add)
   (export-cpp test_test_dot test_test_call)
 
   ; // Functions with geomalg operations exported to C are lowered to LLVM
@@ -168,7 +170,21 @@ namespace foo {
   (define-fn cancel_vec3 ((A : !vec3)) -> (!vec3)
     (return (sum A (negate A))))
 
+  (write-spirv-module)
   (write-nbdl-module (finalize-module))
+
+  ; // Functions with geomalg operations exported to a shader are lowered
+  ; // to SPIRV alongside their export to C.
+  ; // SPIRV-LABEL: module @nbdl_spec_spirv_module
+  ; // SPIRV: spirv.func @"::foo::test_dot"
+  ; // SPIRV-SAME: (%arg0: vector<3xf32>, %arg1: vector<3xf32>) -> f32
+  ; // SPIRV-COUNT-3: spirv.FMul
+  ; // SPIRV: spirv.ReturnValue {{%[0-9]+}} : f32
+  ; // SPIRV: spirv.func @"::foo::test_add"
+  ; // SPIRV-SAME: (%arg0: vector<3xf32>, %arg1: vector<3xf32>) -> vector<3xf32>
+  ; // SPIRV: spirv.ReturnValue {{%[0-9]+}} : vector<3xf32>
+  ; // SPIRV-NOT: cancel_vec3
+  ; // SPIRV-LABEL: module @nbdl_spec_module_cpp
 
 #| ; // FIXME c++ preprocessor directives unavailable here
 ; // TODO Check incorrect type mapping.
@@ -195,7 +211,7 @@ bool vec_equal(geomalg::vec3 A, geomalg::vec3 B) {
 }
 
 int main() {
-  // Call the lowered geomalg functions directly.
+  // Call the geomalg functions lowered to LLVM directly.
   SCHIR_ASSERT(foo::test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
   SCHIR_ASSERT(foo::test_dot({{1, 0, 0}}, {{0, 1, 0}}).value == 0);
   SCHIR_ASSERT(foo::test_dot({{-1, 2, 0.5}}, {{2, 3, 4}}).value == 6);

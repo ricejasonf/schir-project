@@ -204,13 +204,13 @@ struct int_sink {
   (visit count_down Counter (match-fn (X) (visit write_i32 X Dest)))
   (return))
 
-(write-lowered-module)
+(write-lower-module)
 (write-nbdl-module (finalize-module))
 
 ; // Lower the loop (via nbdl-lower) to a scf.while whose iteration
 ; // arguments are the loop-carried values. Yield a flag from each branch
 ; // of the scf.if to continue with the values for the next iteration.
-; // (Expect the lowered module before the Nbdl module.)
+; // (Expect the lower module before the Nbdl module.)
 ; // LOWERED-LABEL: func.func @"::foo::sum_to_i32"
 ; // LOWERED-SAME: (%arg0: i32, %arg1: !llvm.ptr)
 ; // LOWERED-NOT: memref.alloca

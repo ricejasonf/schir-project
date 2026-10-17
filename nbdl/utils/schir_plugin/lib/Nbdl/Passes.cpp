@@ -1341,9 +1341,11 @@ public:
 namespace nbdl_spec {
 #define GEN_PASS_DECL_LOWERPASS
 #define GEN_PASS_DECL_LOWERTOLLVMPASS
+#define GEN_PASS_DECL_LOWERTOSPIRVPASS
 #define GEN_PASS_DECL_CADAPTERPASS
 #define GEN_PASS_REGISTRATION_LOWERPASS
 #define GEN_PASS_REGISTRATION_LOWERTOLLVMPASS
+#define GEN_PASS_REGISTRATION_LOWERTOSPIRVPASS
 #define GEN_PASS_REGISTRATION_CADAPTERPASS
 #include "nbdl_spec/NbdlPasses.h.inc"
 
@@ -1375,6 +1377,7 @@ llvm::LogicalResult verifyRecursiveVisits(DefineMatchFnOp Fn) {
 void registerPasses() {
   registerLowerPass();
   registerLowerToLLVMPass();
+  registerLowerToSPIRVPass();
   registerCAdapterPass();
 }
 

@@ -107,6 +107,8 @@ namespace foo {
 ; // Nest the loop of sum_down in the loop of count_up.
 ; // Expect each continue to be for its own loop.
 ; // Inline the closure that adds to Dest.
+; // (Skip the lower module.)
+; // CHECK-LABEL: @count_up(
 ; // CHECK-LABEL: func.func @"::foo::count_up_then_sum"(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
 ; // CHECK-NOT: "nbdl.closure"
 ; // CHECK: "nbdl.loop"({{%[0-9]+}}) <{fn = @count_up}> ({
@@ -144,7 +146,7 @@ namespace foo {
              (match-fn (Sum) (visit accumulate_i32 Sum Dest)))))
   (return))
 
-(write-lowered-module)
+(write-lower-module)
 (write-nbdl-module (finalize-module))
 
 ; // Lower each loop to a scf.while with the loop-carried values as its

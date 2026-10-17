@@ -17,8 +17,8 @@
       (load-builtin "nbdl_spec_translate_cpp"))
     (define declare-cpp
       (load-builtin "nbdl_spec_declare_cpp"))
-    (define define-lowered-wrapper
-      (load-builtin "nbdl_spec_define_lowered_wrapper"))
+    (define define-llvm-wrapper
+      (load-builtin "nbdl_spec_define_llvm_wrapper"))
     (define mark-c-adapter
       (load-builtin "nbdl_spec_mark_c_adapter"))
     (define close-previous-scope
@@ -87,28 +87,55 @@
     (define (top-level-name Name)
       (if (or (memq Name export-cpp-names)
               (memq Name export-c-names)
-              (memq Name export-c-internal-names))
+              (memq Name export-c-internal-names)
+              (memq Name export-shader-names))
         (namespace-prefix Name)
         Name))
 
-    (define llvm-module #f)
+    ;; The module of functions to be lowered by nbdl-lower.
+    (define lower-module #f)
 
-    ;; Copy a FuncOp into Module to be lowered.
-    (define (copy-to-lowered-module Module FuncOp CAdapter?)
+    ;; The modules of functions lowered to each exit dialect.
+    (define llvm-module #f)
+    (define spirv-module #f)
+
+    ;; Map each FuncOp to its copy in the lower-module as (FuncOp . Copy).
+    (define %lower-module-copies '())
+
+    ;; Copy a FuncOp into Module.
+    (define (%copy-to-module Module FuncOp)
       (with-module-builder
         Module
-        (lambda ()
-          (define Copy (copy-op FuncOp))
-          ;; Mark to have an abi adapter created to allow calling from C++.
-          (when CAdapter?
-            (mark-c-adapter Copy))
-          Copy)))
+        (lambda () (copy-op FuncOp))))
 
-    ;; Copy a FuncOp into the llvm-module.
+    ;; Copy a FuncOp into the lower-module once.
+    (define (add-to-lower-module FuncOp)
+      (unless lower-module
+        (set! lower-module (create-top-module "nbdl_spec_lower_module")))
+      (unless (assq FuncOp %lower-module-copies)
+        (set! %lower-module-copies
+          (cons (cons FuncOp (%copy-to-module lower-module FuncOp))
+                %lower-module-copies))))
+
+    ;; Get the copy of a FuncOp in the lower-module.
+    (define (%lower-module-copy FuncOp)
+      (cdr (assq FuncOp %lower-module-copies)))
+
+    ;; Copy the lower-module copy of a FuncOp into the llvm-module.
     (define (lower-to-llvm FuncOp CAdapter?)
       (unless llvm-module
         (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
-      (copy-to-lowered-module llvm-module FuncOp CAdapter?))
+      (let ((Copy (%copy-to-module llvm-module (%lower-module-copy FuncOp))))
+        ;; Mark to have an abi adapter created to allow calling from C++.
+        (when CAdapter?
+          (mark-c-adapter Copy))
+        Copy))
+
+    ;; Copy the lower-module copy of a FuncOp into the spirv-module.
+    (define (lower-to-spirv FuncOp)
+      (unless spirv-module
+        (set! spirv-module (create-top-module "nbdl_spec_spirv_module")))
+      (%copy-to-module spirv-module (%lower-module-copy FuncOp)))
 
     ;; An element (Name Op) of an exported ops list.
     (define (%make-export Name Op)
@@ -134,9 +161,9 @@
               (Fn Op)))
           (loop (cdr Rest)))))
 
-    ;; Functions exported via export-c or export-c-internal that are
-    ;; lowered to LLVM by finalize-module (ie by define-fn.)
-    (define %lower-to-llvm-ops '())
+    ;; Functions exported via export-c, export-c-internal, or export-shader
+    ;; that are lowered by finalize-module (ie by define-fn.)
+    (define %lower-ops '())
 
     ;; Return a procedure that emits C++ for an Op of Module via Translate.
     (define (%emit-cpp Module Translate)
@@ -154,18 +181,28 @@
     ;; are added to a new module.
     (define (%reset-module)
       (set! main-module #f)
-      (set! llvm-module #f)
+      (%reset-lower-modules)
       (set! export-cpp-names '())
       (set! export-c-names '())
       (set! export-c-internal-names '())
+      (set! export-shader-names '())
       (set! export-cpp-ops '())
       (set! export-c-ops '())
       (set! export-c-internal-ops '())
-      (set! %lower-to-llvm-ops '())
-      (set! %write-lowered-module? #f))
+      (set! export-shader-ops '())
+      (set! %lower-ops '())
+      (set! %write-lower-module? #f)
+      (set! %write-spirv-module? #f))
+
+    ;; Clear the modules of the lowering stage and exit dialects.
+    (define (%reset-lower-modules)
+      (set! lower-module #f)
+      (set! llvm-module #f)
+      (set! spirv-module #f)
+      (set! %lower-module-copies '()))
 
     ;; Finish the module by writing c++ translations, forward declarations,
-    ;; wrappers of lowered functions, and lowering and injecting
+    ;; wrappers of functions lowered to LLVM, and lowering and injecting
     ;; backend modules.
     ;; Return the module and start a new one (even if finalizing fails.)
     (define (finalize-module)
@@ -173,9 +210,11 @@
       (define CppOps export-cpp-ops)
       (define COps export-c-ops)
       (define CInternalOps export-c-internal-ops)
-      (define LoweredOps %lower-to-llvm-ops)
-      (define WriteLowered? %write-lowered-module?)
-      (define (lowered? Op) (memq Op LoweredOps))
+      (define ShaderOps export-shader-ops)
+      (define LowerOps %lower-ops)
+      (define WriteLower? %write-lower-module?)
+      (define WriteSPIRV? %write-spirv-module?)
+      (define (lower-op? Op) (memq Op LowerOps))
       (%reset-module)
       (%finalize-exports CppOps define-store-op?
                          (%emit-cpp Module translate-cpp))
@@ -186,31 +225,48 @@
       (run-inference-passes Module)
       (%finalize-exports CppOps %function-op?
                          (%emit-cpp Module declare-cpp))
-      ;; Lowered functions are called from C++ via wrappers.
+      ;; Functions lowered to LLVM are called from C++ via wrappers.
       (%finalize-exports COps %function-op?
-                         (%emit-cpp Module define-lowered-wrapper))
+                         (%emit-cpp Module define-llvm-wrapper))
       (%finalize-exports CppOps %function-op?
                          (%emit-cpp Module translate-cpp))
-      (%finalize-exports COps lowered?
+      ;; Lower each function once for every exit dialect module.
+      (%finalize-exports COps lower-op? add-to-lower-module)
+      (%finalize-exports CInternalOps lower-op? add-to-lower-module)
+      (%finalize-exports ShaderOps lower-op? add-to-lower-module)
+      (when lower-module
+        (apply run-passes lower-module "nbdl-lower" %lowering-passes)
+        (when WriteLower?
+          (write lower-module)
+          (newline)))
+      (%finalize-exports COps lower-op?
                          (lambda (Op) (lower-to-llvm Op #t)))
-      (%finalize-exports CInternalOps lowered?
+      (%finalize-exports CInternalOps lower-op?
                          (lambda (Op) (lower-to-llvm Op #f)))
+      (%finalize-exports ShaderOps lower-op? lower-to-spirv)
       (when llvm-module
-        (apply run-passes llvm-module "nbdl-lower" %lowering-passes)
-        (when WriteLowered?
-          (write llvm-module)
-          (newline))
         (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
-        (inject-module llvm-module)
-        (set! llvm-module #f))
+        (inject-module llvm-module))
+      (when spirv-module
+        (run-passes spirv-module "nbdl-to-spirv")
+        (when WriteSPIRV?
+          (write spirv-module)
+          (newline)))
+      (%reset-lower-modules)
       Module)
 
-    (define %write-lowered-module? #f)
+    (define %write-lower-module? #f)
+    (define %write-spirv-module? #f)
 
-    ;; Write the module of functions lowered by finalize-module
-    ;; before lowering it to an exit dialect (for debugging and testing.)
-    (define (write-lowered-module)
-      (set! %write-lowered-module? #t))
+    ;; Write the lower-module of finalize-module before lowering it
+    ;; to the exit dialects (for debugging and testing.)
+    (define (write-lower-module)
+      (set! %write-lower-module? #t))
+
+    ;; Write the module of functions lowered to SPIRV by finalize-module
+    ;; (for debugging and testing.)
+    (define (write-spirv-module)
+      (set! %write-spirv-module? #t))
 
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
@@ -228,6 +284,10 @@
           ((memq Name export-c-internal-names)
            (set! export-c-internal-ops
              (%add-export-op Loc export-c-internal-ops Name TopLevelOp))))
+        ;; A function may be exported to a shader in addition to C.
+        (when (memq Name export-shader-names)
+          (set! export-shader-ops
+            (%add-export-op Loc export-shader-ops Name TopLevelOp)))
         TopLevelOp))
 
     ;; Raise an error if Name is exported in conflicting ways.
@@ -240,6 +300,11 @@
                  (or (memq Name export-cpp-names)
                      (memq Name export-c-names)))
         (error-with-loc Loc "internal name cannot also be exported: {}"
+                        Name))
+      (when (and (memq Name export-cpp-names)
+                 (memq Name export-shader-names))
+        (error-with-loc Loc
+                        "name cannot be exported to both C++ and a shader: {}"
                         Name)))
 
     ;; Create and verify a top level operation via Thunk
@@ -268,6 +333,9 @@
       (when (or (memq Name export-c-names)
                 (memq Name export-c-internal-names))
         (error-with-loc Loc "match-fn cannot be exported to C: {}" Name))
+      (when (memq Name export-shader-names)
+        (error-with-loc Loc "match-fn cannot be exported to a shader: {}"
+                        Name))
       (%create-top-level-op (%match-fn-name Name) Thunk))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
@@ -1275,9 +1343,10 @@
                                   Body1 BodyN ...))))))
              ;; Process exports if any.
              (when (or (memq 'Name export-c-names)
-                       (memq 'Name export-c-internal-names))
-               (set! %lower-to-llvm-ops
-                 (cons FuncOp %lower-to-llvm-ops)))
+                       (memq 'Name export-c-internal-names)
+                       (memq 'Name export-shader-names))
+               (set! %lower-ops
+                 (cons FuncOp %lower-ops)))
              (make-named-fn SymName FuncOp)))))))
 
     (define (build-lift-store Loc Arg)
@@ -1391,11 +1460,13 @@
     (define export-cpp-names '())
     (define export-c-names '())
     (define export-c-internal-names '())
+    (define export-shader-names '())
 
     ;; Track exported ops as (Name Op) in order of definition.
     (define export-cpp-ops '())
     (define export-c-ops '())
     (define export-c-internal-ops '())
+    (define export-shader-ops '())
 
     (define-syntax export-cpp
       (syntax-rules ()
@@ -1422,6 +1493,28 @@
              export-c-internal-names
              (list 'Name ...))))))
 
+    ;; Export functions to the SPIRV module where each Entry is a Name
+    ;; or (Name "Kind" GlobalVar ...) to create an entry point.
+    (define-syntax export-shader
+      (syntax-rules ()
+        ((export-shader Entry ...)
+         (begin
+           (%export-shader-entry (syntax-source-loc Entry) 'Entry)
+           ...))))
+
+    ;; Add the name of a shader Entry to the exports.
+    (define (%export-shader-entry Loc Entry)
+      (cond
+        ((symbol? Entry)
+         (set! export-shader-names
+           (append export-shader-names (list Entry))))
+        ((and (pair? Entry) (symbol? (car Entry)))
+         (error-with-loc Loc "TODO shader entry points are not supported: {}"
+                         (car Entry)))
+        (else
+         (error-with-loc Loc
+           "expecting name or (name \"Kind\" GlobalVar ...): {}" Entry))))
+
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
         (%main-module) current-schir-clang))
@@ -1445,7 +1538,7 @@
     (define %lowering-passes '())
 
     ;; Register a pass pipeline (string) to lower the operations of other
-    ;; dialects to dialects that nbdl-to-llvm can lower to LLVM or SPIRV.
+    ;; dialects to dialects that nbdl-to-llvm and nbdl-to-spirv can lower.
     (define (register-lowering-pass Pipeline)
       (unless (string? Pipeline)
         (error "expecting pass pipeline string: {}" Pipeline))
@@ -1488,8 +1581,10 @@
     export-cpp
     export-c
     export-c-internal
+    export-shader
     finalize-module
-    write-lowered-module
+    write-lower-module
+    write-spirv-module
 
     ;; Reexport some base stuff
     define

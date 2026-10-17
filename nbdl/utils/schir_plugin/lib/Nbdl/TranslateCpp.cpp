@@ -424,8 +424,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
   // Write C++ forward declarations.
   bool IsDeclaration = false;
-  // Write a function that calls a lowered function via its C adapter.
-  bool IsLoweredWrapper = false;
+  // Write a function that calls a function lowered to LLVM via its C adapter.
+  bool IsLLVMWrapper = false;
   // Map each loop to the name of its recursive lambda.
   llvm::DenseMap<mlir::Operation*, std::string> LoopNames;
 
@@ -483,8 +483,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     if (Body.empty())
       return SetError("empty function body", Op);
 
-    if (IsLoweredWrapper)
-      return WriteLoweredWrapper(Op, Name);
+    if (IsLLVMWrapper)
+      return WriteLLVMWrapper(Op, Name);
     VisitNormalFunc(Op, Name);
   }
 
@@ -550,17 +550,17 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   }
 
   // Define a function with the C++ types mapped from the MLIR types of
-  // a function lowered from MLIR that calls the lowered function via
+  // a function lowered to LLVM that calls the LLVM function via
   // its C adapter. The adapter receives a pointer to the result and
   // each argument so the C++ objects are passed the same way regardless
-  // of how the lowered prototype maps to the C ABI.
+  // of how the LLVM prototype maps to the C ABI.
   //  extern "C" void nbdl_c_3foo4name(void*, void*, ...);
   //  [[maybe_unused]] inline R name(T arg_0, ...) {
   //    R result{};
   //    nbdl_c_3foo4name(&result, &arg_0, ...);
   //    return result;
   //  }
-  void WriteLoweredWrapper(FuncOp Op, llvm::StringRef Name) {
+  void WriteLLVMWrapper(FuncOp Op, llvm::StringRef Name) {
     mlir::FunctionType FT = Op.getFunctionType();
     mlir::Region& Body = Op.getBody();
     std::string AdapterName = getCAdapterName(Op.getSymName());
@@ -1215,7 +1215,7 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
   if (auto FuncOp = dyn_cast<mlir::func::FuncOp>(Op)) {
     FuncWriter Writer(LexerWriter);
     Writer.IsDeclaration = Mode != TranslateMode::Definition;
-    Writer.IsLoweredWrapper = Mode == TranslateMode::LoweredWrapper;
+    Writer.IsLLVMWrapper = Mode == TranslateMode::LLVMWrapper;
     Writer.Visit(Op);
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);

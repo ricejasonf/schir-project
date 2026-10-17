@@ -204,14 +204,14 @@ void nbdl_spec_declare_cpp(Context& C, ValueRefs Args) {
 }
 
 // Define a C++ function that calls a function (FuncOp) lowered
-// from MLIR via its C adapter.
-// (define-lowered-wrapper op [port])
-void nbdl_spec_define_lowered_wrapper(Context& C, ValueRefs Args) {
-  translateCpp(C, Args, nbdl_spec::TranslateMode::LoweredWrapper);
+// to LLVM via its C adapter.
+// (define-llvm-wrapper op [port])
+void nbdl_spec_define_llvm_wrapper(Context& C, ValueRefs Args) {
+  translateCpp(C, Args, nbdl_spec::TranslateMode::LLVMWrapper);
 }
 
 // Mark a FuncOp to have a C adapter created by
-// the nbdl-c-adapter pass once it is lowered.
+// the nbdl-c-adapter pass once it is lowered to LLVM.
 // (mark-c-adapter op)
 void nbdl_spec_mark_c_adapter(Context& C, ValueRefs Args) {
   if (Args.size() != 1)
@@ -277,7 +277,8 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
   if (Args.size() != 0)
     return C.RaiseError("invalid arity");
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
-  // Functions exported via export-c may use arith and memref operations.
+  // Functions exported via export-c or export-shader may use arith and
+  // memref operations.
   C.DialectRegistry->insert<mlir::arith::ArithDialect,
                             mlir::memref::MemRefDialect>();
   C.DialectRegistry->addExtension(

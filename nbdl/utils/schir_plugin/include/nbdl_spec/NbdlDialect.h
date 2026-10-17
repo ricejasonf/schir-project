@@ -41,10 +41,10 @@ void registerPasses();
 
 // The attribute that marks a function to be called from C++ via a
 // C adapter created by the nbdl-c-adapter pass. Its value is the
-// function type before lowering.
+// function type before lowering to LLVM.
 inline constexpr llvm::StringLiteral CAdapterAttrName = "nbdl.c_adapter";
 
-// Get the C linkage name of the adapter for a function lowered from MLIR
+// Get the C linkage name of the adapter for a function lowered to LLVM
 // given its symbol name.
 // Each name component is prefixed with its length.
 //  e.g. ::foo::add_i32 -> nbdl_c_3foo7add_i32

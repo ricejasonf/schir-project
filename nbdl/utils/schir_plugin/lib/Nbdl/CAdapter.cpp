@@ -1,8 +1,8 @@
 // Copyright Jason Rice 2026
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-// Create C adapters for lowered functions so they may be called from C++
-// without depending on how their lowered prototypes map to the C ABI.
+// Create C adapters for functions lowered to LLVM so they may be called
+// from C++ without depending on how their LLVM prototypes map to the C ABI.
 //
 #include <nbdl_spec/NbdlDialect.h>
 #include <mlir/Conversion/LLVMCommon/MemRefBuilder.h>
@@ -74,7 +74,7 @@ public:
 
     mlir::MLIRContext* Ctx = &getContext();
     mlir::Location Loc = Fn.getLoc();
-    LLVM::LLVMFunctionType LoweredT = Fn.getFunctionType();
+    LLVM::LLVMFunctionType LLVMFnT = Fn.getFunctionType();
     unsigned NumResults = FT.getNumResults();
     llvm::SmallVector<mlir::Type, 8> PtrTs(NumResults + FT.getNumInputs(),
                                            LLVM::LLVMPointerType::get(Ctx));
@@ -88,7 +88,7 @@ public:
     B.setInsertionPointToStart(Entry);
 
     // The pointees might be less aligned than
-    // the ABI alignment of the lowered types.
+    // the ABI alignment of the LLVM types.
     constexpr unsigned Alignment = 1;
 
     // Load the arguments where a memref descriptor is
@@ -107,14 +107,14 @@ public:
         mlir::MemRefDescriptor::unpack(B, Loc, Desc, MT, Args);
         continue;
       }
-      if (Args.size() >= LoweredT.getNumParams())
+      if (Args.size() >= LLVMFnT.getNumParams())
         break;
-      mlir::Type ParamT = LoweredT.getParamType(Args.size());
+      mlir::Type ParamT = LLVMFnT.getParamType(Args.size());
       Args.push_back(LLVM::LoadOp::create(B, Loc, ParamT, Ptr, Alignment));
     }
     if (!llvm::equal(mlir::ValueRange(Args).getTypes(),
-                     LoweredT.getParams()))
-      return Fn.emitError("lowered function type does not match ")
+                     LLVMFnT.getParams()))
+      return Fn.emitError("LLVM function type does not match ")
         << nbdl_spec::CAdapterAttrName << ": " << FT;
 
     auto Call = LLVM::CallOp::create(B, Loc, Fn, Args);
