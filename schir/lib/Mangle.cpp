@@ -10,6 +10,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ConvertUTF.h"
 
 namespace {
 bool isSpecialChar(char c) {
@@ -30,6 +31,21 @@ bool isSpecialChar(char c) {
   case '_':
     return false;
   }
+  return true;
+}
+
+// Parse <hex-char-encoding> into a code point consuming from Buf.
+bool parseCharHexCode(llvm::StringRef& Buf, uint32_t& CodePoint) {
+  llvm::StringRef Input = Buf;
+  if (!Input.consume_front("0x"))
+    return false;
+  llvm::StringRef HexCode = Input.take_while(llvm::isHexDigit);
+  Input = Input.drop_front(HexCode.size());
+  if (HexCode.empty() || !Input.consume_front("z"))
+    return false;
+  if (HexCode.getAsInteger(16, CodePoint))
+    return false;
+  Buf = Input;
   return true;
 }
 }
@@ -172,9 +188,16 @@ char parseSpecialChar(llvm::StringRef Buf) {
 
 std::string Mangler::mangleCharHexCode(Continuation Cont, Twine Prefix,
                                        llvm::StringRef Str) {
-  llvm_unreachable("TODO mangle special characters");
-  // we may drop multiple chars if we are supporting utf8
-  return mangleNameSegment(Cont, "???", Str.drop_front(1));
+  auto Source = reinterpret_cast<const llvm::UTF8*>(Str.data());
+  auto SourceEnd = reinterpret_cast<const llvm::UTF8*>(Str.end());
+  llvm::UTF32 CodePoint = 0;
+  if (llvm::convertUTF8Sequence(&Source, SourceEnd, &CodePoint,
+                                llvm::strictConversion) != llvm::conversionOK)
+    return setError("expected valid UTF-8 in name");
+  size_t Length = reinterpret_cast<const char*>(Source) - Str.data();
+  std::string HexCode = llvm::utohexstr(CodePoint, /*LowerCase=*/true);
+  return mangleNameSegment(Cont, Prefix + "0x" + HexCode + "z",
+                           Str.drop_front(Length));
 }
 
 bool Mangler::isExternalVariable(llvm::StringRef ManglePrefix,
@@ -191,8 +214,9 @@ namespace {
 bool consumeNameSegment(llvm::StringRef& Buf) {
   if (Buf.size() < 2) return false;
   if (Buf[0] == '0') {
-    // TODO handle <hex-char-encoding>
-    return false;
+    // <hex-char-encoding>
+    uint32_t CodePoint;
+    return parseCharHexCode(Buf, CodePoint);
   } else if (Buf[0] >= 'a' && Buf[0] <= 'z') {
     // <special-char-code>
     Buf = Buf.drop_front(2);
@@ -257,7 +281,15 @@ bool Mangler::parseNameSegment(llvm::StringRef& Input,
                                llvm::SmallVectorImpl<char>& Output) {
   if (Input.size() < 2) return false;
   if (Input[0] == '0') {
-    llvm_unreachable("TODO handle hex-char-encoding");
+    // <hex-char-encoding>
+    uint32_t CodePoint;
+    if (!parseCharHexCode(Input, CodePoint))
+      return false;
+    char Buf[UNI_MAX_UTF8_BYTES_PER_CODE_POINT];
+    char* BufEnd = Buf;
+    if (!llvm::ConvertCodePointToUTF8(CodePoint, BufEnd))
+      return false;
+    Output.append(Buf, BufEnd);
   } else if (Input[0] >= 'a' && Input[0] <= 'z') {
     // <special-char>
     Output.push_back(parseSpecialChar(Input));

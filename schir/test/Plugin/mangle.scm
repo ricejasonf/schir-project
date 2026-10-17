@@ -54,3 +54,21 @@
 
 ; CHECK: _LOLL3SLOLL4SbaseF3Sdotdt4Sfuncdt2Sfn
 (test-mangle-func "dot.func.fn")
+
+; CHECK: _LOLL3SLOLL4SbaseF0x221az
+(test-mangle-func "√")
+
+; CHECK: _LOLL3SLOLL4SbaseF3Scaf0xe9z
+(test-mangle-func "café")
+
+; CHECK: _LOLL3SLOLL4SbaseF0x3bbzmi6Ssquare
+(test-mangle-func "λ-square")
+
+; CHECK: _LOLL3SLOLL4SbaseF0x1f642z
+(test-mangle-func "🙂")
+
+; CHECK: _LOLL3SLOLL4SbaseF1Sa0x20z1Sb
+(test-mangle-func "a b")
+
+; CHECK: "_FOOBARL0x3bbzL2S42"
+(test-mangle-module '(λ 42))

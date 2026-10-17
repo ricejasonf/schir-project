@@ -98,4 +98,34 @@ TEST(MangleTest, parseModuleNameNode) {
   Output.clear();
 }
 
+TEST(MangleTest, parseModuleNameNodeHexChar) {
+  auto Context = schir::Context();
+  auto Mangler = schir::Mangler(Context);
+
+  std::string MangledNameStr;
+  auto mangle = [&](llvm::StringRef Name) {
+    schir::Value Spec = Context.ParseLiteral(Name);
+    MangledNameStr = Mangler.mangleModule(schir::ManglePrefix, Spec);
+    auto MangledName = llvm::StringRef(MangledNameStr);
+    MangledName.consume_front(schir::ManglePrefix);
+    return MangledName;
+  };
+  llvm::SmallString<32> Output;
+  llvm::StringRef MangledName;
+
+  MangledName = mangle("(caf\xC3\xA9 \xF0\x9F\x99\x82)");
+  EXPECT_EQ(MangledNameStr, "_SCHIRL3Scaf0xe9zL0x1f642z");
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
+  EXPECT_EQ(std::string(Output), "caf\xC3\xA9");
+  Output.clear();
+  EXPECT_TRUE(Mangler.parseModuleNameNode(MangledName, Output));
+  EXPECT_EQ(std::string(Output), "\xF0\x9F\x99\x82");
+  Output.clear();
+  EXPECT_TRUE(MangledName.empty());
+
+  EXPECT_EQ(Mangler.parseModulePrefix("_SCHIRL3Scaf0xe9zV1Sx",
+                                      schir::ManglePrefix),
+            "_SCHIRL3Scaf0xe9z");
+}
+
 }
