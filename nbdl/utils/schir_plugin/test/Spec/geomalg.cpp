@@ -4,15 +4,9 @@
 // RUN:   -I %geomalg_module_path \
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
-// RUN:   %s -o %t
+// RUN:   %s -o %t > %t.out
+// RUN: FileCheck %s < %t.out
 // RUN: %t
-
-// RUN: clang++ -std=c++26 \
-// RUN:   -I %schir_module_path \
-// RUN:   -I %nbdl_module_path \
-// RUN:   -I %geomalg_module_path \
-// RUN:   -fplugin=SchirClang.so \
-// RUN:   -fsyntax-only %s | FileCheck %s
 
 // COM_RUNz: clang++ -std=c++26 \
 // COM_RUNz:   -DTEST_INVALID_PARAMS=1 \

@@ -1,13 +1,9 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
-// RUN:   -fsyntax-only %s > %t.mlir
-// RUN: FileCheck %s < %t.mlir
-// RUN: FileCheck --check-prefix=LOWERED %s < %t.mlir
-
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
-// RUN:   %s -o %t
+// RUN:   %s -o %t > %t.out
+// RUN: FileCheck %s < %t.out
+// RUN: FileCheck --check-prefix=LOWERED %s < %t.out
 // RUN: %t
 
 #include <nbdl/bind_memref.hpp>

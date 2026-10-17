@@ -1,11 +1,8 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
-// RUN:   -fsyntax-only %s | FileCheck %s
-
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
-// RUN:   %s -o %t
+// RUN:   %s -o %t > %t.out
+// RUN: FileCheck %s < %t.out
 // RUN: %t
 
 #include <nbdl/spec.hpp>

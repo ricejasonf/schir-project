@@ -1,18 +1,12 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
-// RUN:   -fsyntax-only %s | FileCheck %s
-
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
-// RUN:   %s -o %t
+// RUN:   -S -emit-llvm %s -o %t.ll > %t.out
+// RUN: FileCheck %s < %t.out
+// RUN: FileCheck --check-prefix=LLVM \
+// RUN:   --implicit-check-not=nbdl_c_3foo14accumulate_i32 %s < %t.ll
+// RUN: clang++ %t.ll -o %t
 // RUN: %t
-
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so \
-// RUN:   -fpass-plugin=SchirLLVMPass.so \
-// RUN:   -S -emit-llvm %s -o - | FileCheck --check-prefix=LLVM \
-// RUN:   --implicit-check-not=nbdl_c_3foo14accumulate_i32 %s
 
 // C++ calls a lowered function via its C adapter which receives pointers
 // to the result and arguments. A memref is passed as a pointer to its
