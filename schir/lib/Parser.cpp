@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
 #include <optional>
 
@@ -116,6 +117,27 @@ namespace {
       Val.negate();
     return Val;
   }
+
+  // Returns true if there is no whitespace between the tokens.
+  bool isAttached(schir::Token const& Tok, schir::Token const& PrevTok) {
+    return PrevTok.getLiteralData().data() != nullptr &&
+           PrevTok.getLiteralData().end() == Tok.getLiteralData().begin();
+  }
+
+  // Returns the token kind that closes a list started by StartTok.
+  schir::TokenKind getClosingKind(schir::Token const& StartTok,
+                                  schir::TokenKind Terminator) {
+    switch (StartTok.getKind()) {
+    case schir::tok::l_paren:
+      return schir::tok::r_paren;
+    case schir::tok::l_brace:
+      return schir::tok::r_brace;
+    case schir::tok::l_square:
+      return schir::tok::r_square;
+    default:
+      return Terminator;
+    }
+  }
 }
 
 ValueResult Parser::ParseTopLevelExpr() {
@@ -139,9 +161,19 @@ ValueResult Parser::Parse(schir::TokenKind Term) {
 }
 
 ValueResult Parser::ParseExpr(schir::Token const& StartTok) {
+  if (IsNeoteric)
+    return ParseNeotericExpr(StartTok);
+  return ParseDatum(StartTok);
+}
+
+ValueResult Parser::ParseDatum(schir::Token const& StartTok) {
   switch (Tok.getKind()) {
   case tok::l_paren:
     return ParseListStart();
+  case tok::l_brace:
+    if (IsCurlyInfixEnabled)
+      return ParseCurlyInfixListStart();
+    return SetError(Tok, "curly-infix is not enabled (use #!curly-infix)");
   case tok::vector_lparen:
     return ParseVectorStart();
   case tok::bytevector_lparen:
@@ -209,6 +241,9 @@ ValueResult Parser::ParseExpr(schir::Token const& StartTok) {
     IsFinished = true;
     return SetError(Tok, "unterminated block comment");
   }
+  case tok::parser_directive: {
+    return SetError(Tok, "unsupported parser directive");
+  }
   default: {
     return SetError(Tok, "expected expression");
   }
@@ -238,6 +273,14 @@ ValueResult Parser::ParseListStart() {
   assert(Tok.is(tok::l_paren));
   Token StartTok = Tok;
   ConsumeToken();
+  return ParseListBody(StartTok);
+}
+
+// ParseListBody - Parses the elements of a list after the opening
+//                 token allowing a leading period within curly-infix lists.
+ValueResult Parser::ParseListBody(Token const& StartTok) {
+  if (IsNeoteric && Tok.is(tok::period))
+    return ParseDottedCdr(StartTok);
   return ParseList(StartTok);
 }
 
@@ -252,8 +295,7 @@ ValueResult Parser::ParseList(Token const& StartTok) {
     ParseExpr(StartTok);
   }
 
-  if ((StartTok.is(tok::l_paren) && Tok.is(tok::r_paren)) ||
-      (StartTok.is(tok::eof) && Tok.is(Terminator))) {
+  if (Tok.is(getClosingKind(StartTok, Terminator))) {
     ConsumeToken();
     return Value(Empty{});
   }
@@ -284,12 +326,126 @@ ValueResult Parser::ParseDottedCdr(Token const& StartTok) {
   ConsumeToken();
   Token DotTok = Tok;
   ValueResult Cdr = ParseExpr(StartTok);
-  if (Tok.isNot(tok::r_paren)) {
+  if (Tok.isNot(getClosingKind(StartTok, Terminator))) {
     return SetError(DotTok, "invalid dot notation");
   }
-  // Consume the tok::r_paren.
+  // Consume the closing token.
   ConsumeToken();
   return Cdr;
+}
+
+// ParseNeotericExpr - Parses a datum followed by any attached
+//                     neoteric suffixes. (SRFI-105)
+ValueResult Parser::ParseNeotericExpr(Token const& StartTok) {
+  ValueResult Result = ParseDatum(StartTok);
+  if (!Result.isUsable())
+    return Result;
+  return ParseNeotericSuffix(Result.get());
+}
+
+// ParseNeotericSuffix - Applies e(...), e{...}, and e[...] left-to-right
+//                       while the opening token has no leading whitespace.
+ValueResult Parser::ParseNeotericSuffix(Value Prefix) {
+  while (isAttached(Tok, PrevTok)) {
+    Token OpenTok = Tok;
+    SourceLocation Loc = OpenTok.getLocation();
+    switch (OpenTok.getKind()) {
+    case tok::l_paren: {
+      // e(...) => (e ...)
+      ConsumeToken();
+      ValueResult Args = ParseListBody(OpenTok);
+      if (!Args.isUsable())
+        return Args;
+      Prefix = Context.CreatePairWithSource(Prefix, Args.get(), Loc);
+      break;
+    }
+    case tok::l_brace: {
+      // e{} => (e)
+      // e{...} => (e {...})
+      ConsumeToken();
+      Value Args = Empty();
+      if (Tok.is(tok::r_brace)) {
+        ConsumeToken();
+      } else {
+        ValueResult Arg = ParseCurlyInfixList(OpenTok);
+        if (!Arg.isUsable())
+          return Arg;
+        Args = Context.CreatePair(Arg.get());
+      }
+      Prefix = Context.CreatePairWithSource(Prefix, Args, Loc);
+      break;
+    }
+    case tok::l_square: {
+      // e[...] => ($bracket-apply$ e ...)
+      ConsumeToken();
+      ValueResult Args = ParseList(OpenTok);
+      if (!Args.isUsable())
+        return Args;
+      Value S = Context.CreateSymbol("$bracket-apply$", Loc);
+      Prefix = Context.CreatePairWithSource(S,
+                  Context.CreatePair(Prefix, Args.get()), Loc);
+      break;
+    }
+    default:
+      return Prefix;
+    }
+  }
+  return Prefix;
+}
+
+ValueResult Parser::ParseCurlyInfixListStart() {
+  // Consume the l_brace
+  assert(Tok.is(tok::l_brace));
+  Token StartTok = Tok;
+  ConsumeToken();
+  return ParseCurlyInfixList(StartTok);
+}
+
+// ParseCurlyInfixList - Parses the elements of a curly-infix list
+//                       after the l_brace and maps them.
+ValueResult Parser::ParseCurlyInfixList(Token const& StartTok) {
+  llvm::SaveAndRestore NeotericRAII(IsNeoteric, true);
+  // {. e} => e
+  if (Tok.is(tok::period))
+    return ParseDottedCdr(StartTok);
+  ValueResult List = ParseList(StartTok);
+  if (!List.isUsable())
+    return List;
+  return MapCurlyInfixList(List.get(), StartTok.getLocation());
+}
+
+// MapCurlyInfixList - Maps the elements of a curly-infix list
+//                     to its prefix form.
+schir::Value Parser::MapCurlyInfixList(Value List, SourceLocation Loc) {
+  llvm::SmallVector<Value, 8> Xs;
+  Value Tail = List;
+  while (auto* P = dyn_cast<Pair>(Tail)) {
+    Xs.push_back(P->Car);
+    Tail = P->Cdr;
+  }
+
+  bool IsProper = isa<Empty>(Tail);
+  // {} => ()
+  // {e} => e
+  // {e1 e2} => (e1 e2)
+  if (IsProper && Xs.size() < 3)
+    return Xs.size() == 1 ? Xs.front() : List;
+
+  // {a op b op c ...} => (op a b c ...)
+  bool IsSimple = IsProper && Xs.size() % 2 == 1;
+  for (unsigned I = 3; IsSimple && I < Xs.size(); I += 2)
+    IsSimple = equal(Xs[I], Xs[1]);
+
+  if (IsSimple) {
+    Value Result = Empty();
+    for (unsigned I = Xs.size() + 1; I > 1; I -= 2)
+      Result = Context.CreatePairWithSource(Xs[I - 2], Result, Loc);
+    return Context.CreatePairWithSource(Xs[1], Result, Loc);
+  }
+
+  // Otherwise the list is mixed.
+  Value S = Context.CreateSymbol("$nfx$", Loc);
+  return Context.CreatePairWithSource(S, List, Loc);
 }
 
 ValueResult Parser::ParseVectorStart(bool IsByteVector) {

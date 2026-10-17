@@ -37,6 +37,7 @@ enum class TokenKind {
   l_paren,
   l_square, 
   numeric_constant,
+  parser_directive,         // #!...
   period,
   quasiquote,               // `
   quote,                    // '

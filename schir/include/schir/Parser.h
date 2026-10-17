@@ -47,7 +47,10 @@ class Parser {
   Token Tok = {};
   TokenKind Terminator = tok::eof;
   bool IsFinished = false;
-  SourceLocation PrevTokLocation;
+  bool IsCurlyInfixEnabled = false;
+  // True while parsing within a curly-infix list.
+  bool IsNeoteric = false;
+  Token PrevTok = {};
   std::string LiteralResult = {};
   std::string ErrorMsg = {};
   Token ErrTok = {};
@@ -58,8 +61,17 @@ class Parser {
   bool ParseLiteralImpl();
 
   ValueResult ParseExpr(Token const& StartTok);
+  ValueResult ParseDatum(Token const& StartTok);
   ValueResult ParseExprAbbrev(Token const& StartTok,
                               char const* Name);
+
+  // SRFI-105 curly-infix and neoteric expressions
+  ValueResult ParseNeotericExpr(Token const& StartTok);
+  ValueResult ParseNeotericSuffix(Value Prefix);
+  ValueResult ParseCurlyInfixListStart();
+  ValueResult ParseCurlyInfixList(Token const& StartTok);
+  ValueResult ParseListBody(Token const& StartTok);
+  Value MapCurlyInfixList(Value List, SourceLocation Loc);
 
   ValueResult ParseCharConstant();
   ValueResult ParseExternName();
@@ -129,7 +141,7 @@ public:
   // the first token and is consumed.
   // Returns false on failure. (sorry)
   bool PrimeToken(schir::TokenKind Term = tok::eof) {
-    Lexer.Lex(Tok);
+    LexToken();
 
     Terminator = Term;
     switch (Terminator) {
@@ -145,9 +157,19 @@ public:
   }
 
   SourceLocation ConsumeToken() {
-    PrevTokLocation = Tok.getLocation();
+    PrevTok = Tok;
+    LexToken();
+    return PrevTok.getLocation();
+  }
+
+  // Lexes the next token handling any known parser directives.
+  void LexToken() {
     Lexer.Lex(Tok);
-    return PrevTokLocation;
+    while (Tok.is(tok::parser_directive) &&
+           Tok.getLiteralData() == "#!curly-infix") {
+      IsCurlyInfixEnabled = true;
+      Lexer.Lex(Tok);
+    }
   }
 
   bool TryConsumeToken(schir::TokenKind Expected, llvm::StringRef ErrMsg) {

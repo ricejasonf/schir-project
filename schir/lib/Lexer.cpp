@@ -299,6 +299,11 @@ void Lexer::LexSharpLiteral(Token& Tok, const char *CurPtr) {
       CurPtr += 2;
     }
     break;
+  case '!':
+    // Parser directives such as #!curly-infix
+    Kind = tok::parser_directive;
+    SkipUntilDelimiter(CurPtr);
+    break;
   case ';':
     // The datum that follows this token
     // is treated as a comment but we still
