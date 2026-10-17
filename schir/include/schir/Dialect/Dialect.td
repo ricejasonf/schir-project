@@ -364,12 +364,15 @@ def Schir_MatchOp : SchirOp<"match", []> {
 def Schir_MatchIdOp : SchirOp<"match-id", []> {
   let summary = "match-id";
   let description = [{
-    Perform matching of a non-literal value and input value such that they
-    have the same binding or pointer address.
+    Perform matching of a pattern literal identifier and an input identifier
+    such that the input, resolved in the environment $env, has the same
+    global $mangledName or the same binding as $val.
     (Id means identifier.)
   }];
 
-  let arguments = (ins Schir_Type:$val, Schir_Type:$input);
+  let arguments = (ins Schir_Type:$input, Schir_Type:$env,
+                       Optional<Schir_Type>:$val,
+                       OptionalAttr<StrAttr>:$mangledName);
   let results   = (outs);
 }
 

@@ -969,12 +969,28 @@ private:
   }
 
   BlockItrTy Visit(MatchIdOp Op) {
-    schir::Value P = getValue(Op.getVal());
     schir::Value E = getValue(Op.getInput());
-    if (P == E) {
-      return next(Op);
+    schir::Value Env = getValue(Op.getEnv());
+
+    // Resolve the input identifier at the macro use site.
+    EnvEntry Entry;
+    if (auto* B = dyn_cast<Binding>(E)) {
+      Entry = EnvEntry{B};
+      if (auto* EN = dyn_cast<ExternName>(B->getValue()))
+        Entry.MangledName = EN->getName();
+    } else if (isIdentifier(E)) {
+      Entry = Context.OpGen->LookupEnv(E, Env);
     }
-    return patternFail(Op, "identifier does not match", {E, P});
+
+    bool IsMatch;
+    if (std::optional<llvm::StringRef> Name = Op.getMangledName())
+      IsMatch = Entry.MangledName && Entry.MangledName->getView() == *Name;
+    else
+      IsMatch = Entry && Entry.Value == getBindingOrValue(Op.getVal());
+
+    if (IsMatch)
+      return next(Op);
+    return patternFail(Op, "identifier does not match", {E});
   }
 
   BlockItrTy Visit(SyntaxClosureOp Op) {

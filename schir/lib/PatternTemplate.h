@@ -229,13 +229,19 @@ public:
         // If the symbol is unbound just use the symbol.
         OpGen.create<schir::MatchOp>(Loc, P, E);
         return mlir::Value();
+      } else if (Entry.MangledName) {
+        // Match against the global by its mangled name.
+        auto Name = mlir::StringAttr::get(OpGen.Builder.getContext(),
+                                          Entry.MangledName->getStringRef());
+        OpGen.create<schir::MatchIdOp>(Loc, E, EnvArg, mlir::Value(), Name);
+        return mlir::Value();
       } else {
         // FIXME This will create captures for local syntax which
-        //       never need this. Exported syntax always refer to
-        //       globals.
+        //       never need this.
         // Match against the binding or instance of value itself.
         mlir::Value PV = OpGen.VisitEnvEntry(Loc, Entry);
-        OpGen.create<schir::MatchIdOp>(Loc, PV, E);
+        OpGen.create<schir::MatchIdOp>(Loc, E, EnvArg, PV,
+                                       mlir::StringAttr());
         return mlir::Value();
       }
     }
