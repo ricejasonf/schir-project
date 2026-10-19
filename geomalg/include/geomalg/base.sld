@@ -14,6 +14,7 @@
     scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
     !zero
     !vec2 !vec3 !uvec2 !uvec3
+    call
     sum
     oprod
     iprod
@@ -26,6 +27,20 @@
     inverse
     convert
     expand
+    ;; Procedures taking an explicit source location
+    call-aux
+    sum-aux
+    oprod-aux
+    iprod-aux
+    gprod-aux
+    vprod-aux
+    dot-aux
+    negate-aux
+    rev-aux
+    grade-invo-aux
+    inverse-aux
+    convert-aux
+    expand-aux
     )
   (import (schir base)
           (schir mlir))
@@ -112,19 +127,6 @@
     (define !vec4 (!multivector !e1 !e2 !e3 !no))
     (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))
 
-    ; Args are checked within after expanding with metric.
-    (define-syntax %make-call-fn
-      (syntax-rules ()
-        ((%make-call-fn FuncOp (FuncName ArgN ...))
-         (lambda (ArgN ...)
-           (result
-             (create-op "geomalg.call"
-                        (loc: (current-source-loc))
-                        (operands: ArgN ...)
-                        (attributes:
-                          ("callee" (flat-symbolref-attr 'FuncName)))
-                        (result-types: (function-type-results FuncOp))))))))
-
     (define (define-func-aux-aux Loc ReturnLoc FuncName ArgTypes ArgLocs BodyFn)
       (define FuncOp
         (create-op "func.func"
@@ -174,20 +176,45 @@
              ...
              BodyN)))))
 
-    ; Define a lambda by the given FuncName that
-    ; creates a call to the generated function.
-    ;; This is currently only used within geomalg's tests.
+    (define %geomalg-func '%geomalg-func)
+
+    ;; Make a callable function object from its symbol name and FuncOp.
+    (define (make-func SymName FuncOp)
+      (list %geomalg-func SymName FuncOp))
+
+    (define (func? Obj)
+      (and (pair? Obj) (eq? %geomalg-func (car Obj))))
+
+    ;; Define FuncName as a function object for use with call.
     (define-syntax define-func
       (syntax-rules()
         ((define-func FuncName ((ArgName : ArgType) ...)
                       BodyI ... BodyN)
-         (begin
-           ;; Overwrite the FuncOp with a callable lambda that builds the call expression.
-           (define FuncName
-             (let ((FuncOp (define-func-aux 'FuncName FuncName
-                                            ((ArgName : ArgType) ...)
-                                            BodyI ... BodyN)))
-              (%make-call-fn FuncOp (FuncName ArgName ...))))))))
+         (define FuncName
+           (make-func 'FuncName
+                      (define-func-aux 'FuncName FuncName
+                                       ((ArgName : ArgType) ...)
+                                       BodyI ... BodyN))))))
+
+    ; Args are checked within after expanding with metric.
+    (define (call-aux Loc Func . Args)
+      (if (func? Func)
+        (let ((SymName (cadr Func))
+              (FuncOp (car (cddr Func))))
+          (result
+            (create-op "geomalg.call"
+                       (loc: Loc)
+                       (operands: Args)
+                       (attributes:
+                         ("callee" (flat-symbolref-attr SymName)))
+                       (result-types: (function-type-results FuncOp)))))
+        (error-with-loc Loc "expecting geomalg function: {}" Func)))
+
+    ;; Call a function defined with define-func.
+    (define-syntax call
+      (syntax-rules ()
+        ((call Func Arg ...)
+         (call-aux (syntax-source-loc) Func Arg ...))))
 
     ; Shorcut to create ops with result only specifying
     ; operands and inferring result type.
@@ -197,97 +224,6 @@
                    (loc: Loc)
                    (operands: Operands)
                    (attributes:))))
-
-    (define-syntax sum
-      (syntax-rules ()
-        ((sum)
-         (%create-blade-val "geomalg.blade"
-                            !zero '() 0))
-        ((sum V1 VN ...)
-         (%create-val "geomalg.sum"
-                      (syntax-source-loc V1)
-                      V1 VN ...))))
-
-    (define-syntax oprod
-      (syntax-rules ()
-        ((oprod V1 V2)
-         (%create-val "geomalg.oprod"
-                      (syntax-source-loc V1)
-                      V1 V2))))
-
-    (define-syntax iprod
-      (syntax-rules ()
-        ((iprod V1 V2)
-         (%create-val "geomalg.iprod"
-                      (syntax-source-loc V1)
-                      V1 V2))))
-
-    (define (dot-impl Loc V1 V2)
-      (result (create-op "geomalg.dot"
-                         (loc: Loc)
-                         (operands: V1 V2)
-                         (attributes:)
-                         (result-types: !scalar))))
-
-    (define-syntax dot
-      (syntax-rules ()
-        ((dot V1 V2)
-         (dot-impl (syntax-source-loc V1)
-                   V1 V2))))
-
-    (define (gprod-impl Loc V1 V2)
-      (result (create-op "geomalg.gprod"
-                         (loc: Loc)
-                         (operands: V1 V2)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
-    (define-syntax gprod
-      (syntax-rules ()
-        ((gprod V1 V2)
-         (gprod-impl (syntax-source-loc V1) V1 V2))))
-
-    (define (vprod-impl Loc Arg Versors)
-      (result (create-op "geomalg.vprod"
-                         (loc: Loc)
-                         (operands: Arg Versors)
-                         (attributes:)
-                         (result-types: !geomalg.unknown))))
-
-    (define-syntax vprod
-      (syntax-rules ()
-        ((vprod Arg Versors ...)
-         (vprod-impl (syntax-source-loc Arg)
-                     Arg
-                     (list Versors ...)))))
-
-    (define-syntax negate
-      (syntax-rules ()
-        ((negate V)
-         (%create-val "geomalg.negate"
-                     (syntax-source-loc V)
-                     V))))
-
-    (define-syntax rev
-      (syntax-rules ()
-        ((rev V)
-         (%create-val "geomalg.rev"
-                      (syntax-source-loc V)
-                      V))))
-
-    (define-syntax grade-invo
-      (syntax-rules ()
-        ((grade-invo V)
-         (create-val "geomalg.grade_invo"
-                     (syntax-source-loc V)
-                     V))))
-
-    (define-syntax inverse
-      (syntax-rules ()
-        ((inverse V)
-         (%create-val "geomalg.inverse"
-                     (syntax-source-loc V)
-                     V))))
 
     ; Shortcut to create basis blade constant.
     ; (For scalar multiplication use iprod.)
@@ -302,63 +238,148 @@
                    (result-types: ResultType)
                    )))
 
+    (define (sum-aux Loc . Vs)
+      (if (null? Vs)
+        (%create-blade-val "geomalg.blade" !zero Loc 0)
+        (apply %create-val "geomalg.sum" Loc Vs)))
+
+    (define-syntax sum
+      (syntax-rules ()
+        ((sum V ...)
+         (sum-aux (syntax-source-loc) V ...))))
+
+    (define (oprod-aux Loc V1 V2)
+      (%create-val "geomalg.oprod" Loc V1 V2))
+
+    (define-syntax oprod
+      (syntax-rules ()
+        ((oprod V1 V2)
+         (oprod-aux (syntax-source-loc) V1 V2))))
+
+    (define (iprod-aux Loc V1 V2)
+      (%create-val "geomalg.iprod" Loc V1 V2))
+
+    (define-syntax iprod
+      (syntax-rules ()
+        ((iprod V1 V2)
+         (iprod-aux (syntax-source-loc) V1 V2))))
+
+    (define (dot-aux Loc V1 V2)
+      (result (create-op "geomalg.dot"
+                         (loc: Loc)
+                         (operands: V1 V2)
+                         (attributes:)
+                         (result-types: !scalar))))
+
+    (define-syntax dot
+      (syntax-rules ()
+        ((dot V1 V2)
+         (dot-aux (syntax-source-loc) V1 V2))))
+
+    (define (gprod-aux Loc V1 V2)
+      (result (create-op "geomalg.gprod"
+                         (loc: Loc)
+                         (operands: V1 V2)
+                         (attributes:)
+                         (result-types: !geomalg.unknown))))
+
+    (define-syntax gprod
+      (syntax-rules ()
+        ((gprod V1 V2)
+         (gprod-aux (syntax-source-loc) V1 V2))))
+
+    (define (vprod-aux Loc Arg . Versors)
+      (result (create-op "geomalg.vprod"
+                         (loc: Loc)
+                         (operands: Arg Versors)
+                         (attributes:)
+                         (result-types: !geomalg.unknown))))
+
+    (define-syntax vprod
+      (syntax-rules ()
+        ((vprod Arg Versors ...)
+         (vprod-aux (syntax-source-loc) Arg Versors ...))))
+
+    (define (negate-aux Loc V)
+      (%create-val "geomalg.negate" Loc V))
+
+    (define-syntax negate
+      (syntax-rules ()
+        ((negate V)
+         (negate-aux (syntax-source-loc) V))))
+
+    (define (rev-aux Loc V)
+      (%create-val "geomalg.rev" Loc V))
+
+    (define-syntax rev
+      (syntax-rules ()
+        ((rev V)
+         (rev-aux (syntax-source-loc) V))))
+
+    (define (grade-invo-aux Loc V)
+      (%create-val "geomalg.grade_invo" Loc V))
+
+    (define-syntax grade-invo
+      (syntax-rules ()
+        ((grade-invo V)
+         (grade-invo-aux (syntax-source-loc) V))))
+
+    (define (inverse-aux Loc V)
+      (%create-val "geomalg.inverse" Loc V))
+
+    (define-syntax inverse
+      (syntax-rules ()
+        ((inverse V)
+         (inverse-aux (syntax-source-loc) V))))
+
     ; TODO Local syntax would enable consolidating the boiler plate here
     ;      ... probably.
     ; Construct basis blades with constant coefficient.
     (define-syntax scalar
       (syntax-rules ()
         ((scalar Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !scalar
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !scalar
+                            (syntax-source-loc) Coeff))))
     (define-syntax e1
       (syntax-rules ()
         ((e1 Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !e1
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !e1
+                            (syntax-source-loc) Coeff))))
     (define-syntax e2
       (syntax-rules ()
         ((e2 Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !e2
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !e2
+                            (syntax-source-loc) Coeff))))
     (define-syntax e3
       (syntax-rules ()
         ((e3 Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !e3
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !e3
+                            (syntax-source-loc) Coeff))))
     (define-syntax no
       (syntax-rules ()
         ((no Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !no
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !no
+                            (syntax-source-loc) Coeff))))
     (define-syntax ni
       (syntax-rules ()
         ((ni Coeff)
-         (%create-blade-val "geomalg.blade"
-                            !ni
-                            (syntax-source-loc Coeff)
-                            Coeff))))
+         (%create-blade-val "geomalg.blade" !ni
+                            (syntax-source-loc) Coeff))))
+
+    (define (convert-aux Loc V Type)
+      (result
+        (create-op "geomalg.convert"
+                   (loc: Loc)
+                   (operands: V)
+                   (attributes:)
+                   (result-types: Type))))
 
     (define-syntax convert
       (syntax-rules ()
         ((convert V Type)
-         (result
-           (create-op "geomalg.convert"
-                      (loc: (syntax-source-loc V))
-                      (operands: V)
-                      (attributes:)
-                      (result-types: Type))))))
+         (convert-aux (syntax-source-loc) V Type))))
 
-    (define (expand-impl Loc V)
+    (define (expand-aux Loc V)
       (define Op
         (create-op "geomalg.expand"
                    (loc: Loc)
@@ -369,6 +390,5 @@
     (define-syntax expand
       (syntax-rules ()
         ((expand V)
-         (expand-impl (syntax-source-loc V) V))
-                    ))
+         (expand-aux (syntax-source-loc) V))))
     )) ;; define-library

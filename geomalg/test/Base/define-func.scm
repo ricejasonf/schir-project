@@ -75,7 +75,7 @@
 ; CHECK-SAME: : (!geomalg.multivector<<1>, <2>, <4>>) -> !geomalg.unknown
 ; CHECK-NEXT: geomalg.return [[CALL0]]
 (define-func my_func5 ()
-  (my_func4 (sum (e1 5) (e2 15.5) (e3 25.6))))
+  (call my_func4 (sum (e1 5) (e2 15.5) (e3 25.6))))
 (write (module-lookup geomalg-current-module "my_func5"))
 (newline)
 
@@ -83,7 +83,7 @@
 ; CHECK-NEXT: [[CALL0:%[0-9]+]] = geomalg.call @my_func5() : () -> !geomalg.unknown
 ; CHECK-NEXT: geomalg.return [[CALL0]]
 (define-func my_func6 ()
-  (my_func5))
+  (call my_func5))
 (write (module-lookup geomalg-current-module "my_func6"))
 (newline)
 

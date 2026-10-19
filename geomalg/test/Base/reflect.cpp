@@ -42,7 +42,7 @@ extern "C" vec3 test_reflect_1(vec3, vec3);
       p
       (no 1)
       (iprod (iprod (scalar .5)
-                 (test_dot p p))
+                 (call test_dot p p))
              (ni 1))))
   (define point2
     (vprod point ReflAxis))
