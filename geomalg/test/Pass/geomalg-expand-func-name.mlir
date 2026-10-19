@@ -11,9 +11,9 @@
 
 // Only the named function is expanded and has its result type updated.
 // CHECK-LABEL: func.func @reflect
-// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>, <7>>
+// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-NOT: "geomalg.vprod"
-// CHECK: geomalg.return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <7>>
+// CHECK: geomalg.return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>>
 func.func @reflect(%arg0: !vec3, %arg1: !vec3) -> !geomalg.unknown {
   %0 = "geomalg.vprod"(%arg0, %arg1)
     : (!vec3, !vec3) -> !geomalg.unknown

@@ -1413,17 +1413,32 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   // to tame the combinational explosions which requires
   // this pattern to have a relatively low "benefit".
 
-  // Leftmost and rightmost operands
   // v₁ A v₁⁻¹
-  mlir::Value VL = Negate(GradeInvo(Versor));
-  mlir::Value VR = Inverse(Versor);
-
   mlir::Value Result;
-  if (IsOrthogonal) {
+  if (BT.getGrade() == 0 || (IsOrthogonal && BT.getGrade() % 2 == 0)) {
+    // Scalars and orthogonal blades of even grade commute with the versor.
+    Result = Arg;
+  } else if (IsOrthogonal) {
     // Use the antisymmetric property.
-    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, VL, VR);
+    mlir::Value VL = Negate(GradeInvo(Versor));
+    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, VL, Inverse(Versor));
     Result = InnerProdOp::create(Rewriter, Loc, Dot, Arg); // scalar mult
     Result = NegateOp::create(Rewriter, Loc, Result.getType(), Result);
+  } else if (isVector(Versor.getType()) && BT.getGrade() == 1) {
+    // v a v⁻¹ = 2 (v ⌋ a) v⁻¹ - a
+    mlir::Value Two = BladeOp::create(Rewriter, Loc, 2.0f);
+    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, Versor, Arg);
+    mlir::Value Scale = InnerProdOp::create(Rewriter, Loc, Two, Dot);
+    Result = SumOp::create(Rewriter, Loc,
+                           InnerProdOp::create(Rewriter, Loc, Scale,
+                                               Inverse(Versor)),
+                           Negate(Arg));
+  } else if (isVector(Versor.getType())) {
+    // v (a ∧ B) v⁻¹ = (v a v⁻¹) ∧ (v B v⁻¹)
+    auto [a, B] = factorBlade(Rewriter, Arg);
+    Result = createOuterProd(Rewriter, Loc,
+                             VersorProdOp::create(Rewriter, Loc, a, Versor),
+                             VersorProdOp::create(Rewriter, Loc, B, Versor));
   } else {
     Result = Mult(Versor, Mult(Arg, Inverse(Versor)));
   }
@@ -1557,7 +1572,6 @@ llvm::LogicalResult ExpandLC::matchAndRewrite(
       replaceOp(Rewriter, LC, RHS);
       return llvm::success();
     } else if (R.getGrade() == 0 && geomalg::isUnitBlade(RHS)) {
-      llvm_unreachable("FIXME Does this happen in practice?");
       replaceOp(Rewriter, LC, LHS);
       return llvm::success();
     }

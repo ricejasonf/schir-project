@@ -20,16 +20,17 @@ func.func @versor_prod_0(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK-LABEL: func.func @versor_prod_1
 // CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<1>
+// The reflection of a vector is v a v⁻¹ = 2 (v ⌋ a) v⁻¹ - a.
 // CHECK: [[MV:%[0-9]+]]:3 = "geomalg.expand"(%arg0)
+// CHECK: [[TWO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 2.0{{0*}}e+00 : f32}>
+// CHECK: [[D0:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[MV]]#0)
+// CHECK: [[S0:%[0-9]+]] = "geomalg.iprod"([[TWO]], [[D0]])
+// CHECK: [[N0:%[0-9]+]] = "geomalg.negate"([[MV]]#0)
 // CHECK: [[I0:%[0-9]+]] = "geomalg.inverse"([[ARG1]])
-// CHECK: [[P0_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#0, [[I0]])
-// CHECK: [[P0_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P0_0]])
-// CHECK: [[P1_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#1, [[I0]])
-// CHECK: [[P1_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P1_0]])
-// CHECK: [[P2_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#2, [[I0]])
-// CHECK: [[P2_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P2_0]])
-// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"([[P0_1]], [[P1_1]], [[P2_1]])
-// CHECK: return [[SUM]]
+// CHECK: [[R0:%[0-9]+]] = "geomalg.iprod"([[S0]], [[I0]])
+// CHECK: "geomalg.sum"([[R0]], [[N0]],
+// CHECK-NOT: "geomalg.gprod"
+// CHECK: return
 func.func @versor_prod_1(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
                          %arg1: !geomalg.blade<1>)
             -> !geomalg.unknown {
@@ -43,19 +44,12 @@ func.func @versor_prod_1(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
 // CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<1>
 // CHECK-SAME: [[ARG2:%arg[0-9]+]]: !geomalg.blade<2>
-// CHECK: [[MV:%[0-9]+]]:3 = "geomalg.expand"(%arg0)
-// CHECK: [[I0:%[0-9]+]] = "geomalg.inverse"([[ARG1]])
-// CHECK: [[P0_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#0, [[I0]])
-// CHECK: [[P0_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P0_0]])
-// CHECK: [[VP0:%[0-9]+]] = "geomalg.vprod"([[P0_1]], [[ARG2]])
-// CHECK: [[P1_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#1, [[I0]])
-// CHECK: [[P1_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P1_0]])
-// CHECK: [[VP1:%[0-9]+]] = "geomalg.vprod"([[P1_1]], [[ARG2]])
-// CHECK: [[P2_0:%[0-9]+]] = "geomalg.gprod"([[MV]]#2, [[I0]])
-// CHECK: [[P2_1:%[0-9]+]] = "geomalg.gprod"([[ARG1]], [[P2_0]])
-// CHECK: [[VP2:%[0-9]+]] = "geomalg.vprod"([[P2_1]], [[ARG2]])
-// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"([[VP0]], [[VP1]], [[VP2]])
-// CHECK: return [[SUM]]
+// The first versor is applied first.
+// CHECK-NOT: "geomalg.vprod"
+// CHECK: "geomalg.inverse"([[ARG1]])
+// CHECK: "geomalg.inverse"([[ARG2]])
+// CHECK-NOT: "geomalg.vprod"
+// CHECK: return
 func.func @versor_prod_2(%arg0: !geomalg.multivector<<1>, <2>, <4>>,
                          %arg1: !geomalg.blade<1>, %arg2: !geomalg.blade<2>)
             -> !geomalg.unknown {
