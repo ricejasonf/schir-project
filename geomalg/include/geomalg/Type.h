@@ -36,6 +36,16 @@ bool isUnitVector(mlir::Value V) {
 
 bool isValidNarrowing(mlir::Type A, mlir::Type B);
 
+// Return true if the type is a blade of grade 1 or a sum of them.
+inline
+bool isVector(mlir::Type T) {
+  if (auto BT = dyn_cast<geomalg::BladeType>(T))
+    return BT.getGrade() == 1;
+  if (auto MV = dyn_cast<geomalg::MultivectorLike>(T))
+    return MV.isVector();
+  return false;
+}
+
 // Ensure blade types are nonnegative.
 inline
 mlir::Type getCanonicalType(mlir::Type Type) {

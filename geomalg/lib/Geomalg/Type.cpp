@@ -26,8 +26,19 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
     return true;
 
   // We must know the semantics.
-  if (!isa<MultivectorLike, BladeType, ZeroType>(A))
+  if (!isa<MultivectorLike, BladeType, VersorType, ZeroType>(A))
     return false;
+
+  // A versor narrows by narrowing its factors.
+  if (auto VA = dyn_cast<VersorType>(A)) {
+    if (auto VB = dyn_cast<VersorType>(B))
+      return VA.getFactors().size() == VB.getFactors().size() &&
+             llvm::all_of(llvm::zip(VA.getFactors(), VB.getFactors()),
+                          [](auto Pair) {
+                            auto [FA, FB] = Pair;
+                            return isValidNarrowing(FA, FB);
+                          });
+  }
 
   // If all other sum operands become zero then
   // a multivector becomes a single basis blade
@@ -139,6 +150,21 @@ mlir::Type createMultivectorLikeType<MultivectorType>(
 template
 mlir::Type createMultivectorLikeType<UnitVectorType>(
                   llvm::MutableArrayRef<BladeType> BladeTypes);
+
+llvm::LogicalResult VersorType::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> EmitError,
+    llvm::ArrayRef<mlir::Type> Factors) {
+  if (Factors.empty())
+    return EmitError() << "expecting at least one versor factor";
+  for (mlir::Type T : Factors)
+    if (!isVector(T))
+      return EmitError() << "expecting 1-vector versor factor: " << T;
+  return llvm::success();
+}
+
+llvm::SmallVector<mlir::Type, 4> VersorType::getFactorTypes() const {
+  return llvm::SmallVector<mlir::Type, 4>(getFactors());
+}
 
 bool MultivectorType::isVector() const {
   for (geomalg::BladeType BT : getBlades()) {

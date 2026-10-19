@@ -170,6 +170,28 @@ void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
   CreateMultivectorLikeType<geomalg::UnitVectorType>(C, Args);
 }
 
+// Construct a versor type from 1-vector and versor types
+// flattening the factors of versors.
+void geomalg_versor_type(schir::Context& C, schir::ValueRefs Args) {
+  llvm::SmallVector<mlir::Type, 4> Factors;
+  for (schir::Value Arg : Args) {
+    mlir::Type Type = schir::any_cast<mlir::Type>(Arg);
+    if (auto VT = dyn_cast_if_present<geomalg::VersorType>(Type))
+      llvm::append_range(Factors, VT.getFactors());
+    else if (Type && geomalg::isVector(Type))
+      Factors.push_back(Type);
+    else
+      return C.RaiseError("expecting 1-vector or versor type: {}", Arg);
+  }
+
+  if (Factors.empty())
+    return C.RaiseError("expecting at least one versor factor type");
+
+  mlir::MLIRContext* MLIRContext = schir::mlir_helper::getCurrentContext(C);
+  mlir::Type Result = geomalg::VersorType::get(MLIRContext, Factors);
+  return C.Cont(C.CreateAny<mlir::Type>(Result));
+}
+
 // Run ExpandFuncPass with the current metric if it is known.
 // Update the function return type now so we have it for possible
 // introspection.

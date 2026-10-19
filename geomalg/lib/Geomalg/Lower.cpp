@@ -79,6 +79,15 @@ struct TypeConverter : mlir::TypeConverter {
       int64_t Size = MV.getBlades().size();
       return mlir::VectorType::get(Size, ScalarT);
     });
+    // A versor is stored as the concatenated elements of its factors.
+    addConversion([ScalarT](VersorType VT) {
+      int64_t Size = 0;
+      for (mlir::Type F : VT.getFactors()) {
+        auto MV = dyn_cast<MultivectorLike>(F);
+        Size += MV ? MV.getBlades().size() : 1;
+      }
+      return mlir::VectorType::get(Size, ScalarT);
+    });
   }
 };
 
@@ -218,6 +227,69 @@ public:
     mlir::Location Loc = Op->getLoc();
     mlir::Value InputVector = Adaptor.getArg();
     mlir::ValueRange NewResults = expandVector(R, Loc, InputVector);
+    R.replaceOp(Op, NewResults);
+    return llvm::success();
+  }
+};
+
+struct VersorToVector : mlir::OpConversionPattern<VersorOp>,
+                        ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        VersorOp Op, VersorOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    auto ResultT = dyn_cast_if_present<mlir::VectorType>(
+        getTypeConverter()->convertType(Op.getResult().getType()));
+    if (!ResultT)
+      return R.notifyMatchFailure(Op, "expecting versor result type");
+
+    // Concatenate the elements of the factors.
+    llvm::SmallVector<mlir::Value, 8> Elements;
+    for (mlir::Value F : Adaptor.getFactors()) {
+      if (isa<mlir::VectorType>(F.getType()))
+        llvm::append_range(Elements, expandVector(R, Loc, F));
+      else
+        Elements.push_back(F);
+    }
+    if (static_cast<int64_t>(Elements.size()) != ResultT.getNumElements())
+      return R.notifyMatchFailure(Op, "factors do not match versor type");
+
+    R.replaceOpWithNewOp<vector::FromElementsOp>(Op, ResultT, Elements);
+    return llvm::success();
+  }
+};
+
+struct FactorsToVector : mlir::OpConversionPattern<FactorsOp>,
+                         ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        FactorsOp Op, FactorsOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Location Loc = Op->getLoc();
+    mlir::ValueRange Elements = expandVector(R, Loc, Adaptor.getArg());
+
+    // Split the elements into the factors.
+    llvm::SmallVector<mlir::Value, 4> NewResults;
+    for (mlir::Type T : Op.getResultTypes()) {
+      mlir::Type FT = getTypeConverter()->convertType(T);
+      if (auto VT = dyn_cast_if_present<mlir::VectorType>(FT)) {
+        int64_t Size = VT.getNumElements();
+        NewResults.push_back(vector::FromElementsOp::create(R, Loc, VT,
+                               Elements.take_front(Size)));
+        Elements = Elements.drop_front(Size);
+      } else if (FT) {
+        NewResults.push_back(Elements.front());
+        Elements = Elements.drop_front();
+      } else {
+        return R.notifyMatchFailure(Op, "expecting factor type");
+      }
+    }
+
     R.replaceOp(Op, NewResults);
     return llvm::success();
   }
@@ -488,6 +560,8 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
   PS.add<CMulToMul,
          SumToVector,
          ExpandToVector,
+         VersorToVector,
+         FactorsToVector,
          LowerNegate,
          LowerBlade,
          DotToArith,

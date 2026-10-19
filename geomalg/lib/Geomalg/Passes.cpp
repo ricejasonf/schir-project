@@ -126,6 +126,39 @@ liftToMultivector(mlir::PatternRewriter& Rewriter, mlir::Type TargetT,
   return Result;
 }
 
+// Get the 1-vector factors of a versor in product order.
+static llvm::SmallVector<mlir::Value, 4>
+getVersorFactors(mlir::PatternRewriter& Rewriter, mlir::Value Versor) {
+  assert(isa<geomalg::VersorType>(Versor.getType()) &&
+      "expecting versor type");
+  llvm::SmallVector<mlir::Value, 4> Factors;
+  if (auto VOp = Versor.getDefiningOp<geomalg::VersorOp>()) {
+    for (mlir::Value F : VOp.getFactors()) {
+      if (isa<geomalg::VersorType>(F.getType()))
+        llvm::append_range(Factors, getVersorFactors(Rewriter, F));
+      else
+        Factors.push_back(F);
+    }
+    return Factors;
+  }
+
+  // Prevent duplicate FactorsOps.
+  auto FactorsOpItr = llvm::find_if(Versor.getUsers(),
+      [](mlir::Operation* Op) {
+        return llvm::isa<geomalg::FactorsOp>(Op);
+      });
+  geomalg::FactorsOp FOp;
+  if (FactorsOpItr != Versor.getUsers().end()) {
+    FOp = cast<geomalg::FactorsOp>(*FactorsOpItr);
+  } else {
+    mlir::OpBuilder::InsertionGuard IG(Rewriter);
+    Rewriter.setInsertionPointAfterValue(Versor);
+    FOp = geomalg::FactorsOp::create(Rewriter, Versor.getLoc(), Versor);
+  }
+  llvm::append_range(Factors, FOp.getResults());
+  return Factors;
+}
+
 static mlir::Type inferReturnType(mlir::InferTypeOpInterface Op) {
   assert(!Op->hasTrait<mlir::OpTrait::VariadicResults>() &&
       "expecting operation with single result");
@@ -337,6 +370,52 @@ struct ExpandVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
 
   llvm::LogicalResult matchAndRewrite(
       geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Replace each versor operand of a versor product with its factors.
+struct ExpandVersorVP : mlir::OpRewritePattern<geomalg::VersorProdOp> {
+  using Base = mlir::OpRewritePattern<geomalg::VersorProdOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandVersorVP");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Rewrite the inverse, reverse, grade involution, or negation
+// of a versor as a versor.
+struct ExpandVersorUnary : mlir::RewritePattern {
+  ExpandVersorUnary(mlir::MLIRContext* Ctx, mlir::PatternBenefit Benefit)
+    : mlir::RewritePattern(MatchAnyOpTypeTag(), Benefit, Ctx)
+  { }
+
+  void initialize() {
+    setDebugName("ExpandVersorUnary");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Replace versor operands of other operations with the geometric
+// product of their factors.
+struct ExpandVersorOperand : mlir::RewritePattern {
+  ExpandVersorOperand(mlir::MLIRContext* Ctx, mlir::PatternBenefit Benefit)
+    : mlir::RewritePattern(MatchAnyOpTypeTag(), Benefit, Ctx)
+  { }
+
+  void initialize() {
+    setDebugName("ExpandVersorOperand");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      mlir::Operation* Op,
       mlir::PatternRewriter& Rewriter) const override;
 };
 
@@ -691,6 +770,20 @@ struct ExpandConvert : OpRewriteMetric<geomalg::ConvertOp> {
       return llvm::success();
     }
 
+    // Widen a versor by converting each of its factors.
+    if (auto VT = dyn_cast<VersorType>(ResultT);
+        VT && isa<VersorType>(ArgT) && isValidNarrowing(ResultT, ArgT)) {
+      llvm::SmallVector<mlir::Value, 4> Factors
+        = getVersorFactors(Rewriter, Arg);
+      if (Factors.size() != VT.getFactors().size())
+        return llvm::failure();
+      for (auto [F, FT] : llvm::zip(Factors, VT.getFactors()))
+        if (F.getType() != FT)
+          F = ConvertOp::create(Rewriter, Loc, FT, F);
+      replaceOpWithNewOp<VersorOp>(Rewriter, Op, Factors);
+      return llvm::success();
+    }
+
     // Widen to a type that the argument type is a narrowing of
     // by adding the missing blades with zero coefficients.
     // (e.g. to keep the result type of a function.)
@@ -825,7 +918,7 @@ ExpandSum::matchAndRewrite(geomalg::SumOp Op,
         Values.push_back(V);
     } else if (isa<MultivectorLike>(V.getType())) {
       llvm::append_range(Values, expandMultivector(Rewriter, V));
-    } else if (isUnknown(V)) {
+    } else if (isUnknown(V) || isa<VersorType>(V.getType())) {
       return llvm::failure();
     } else {
       // Discard zeros.
@@ -1273,7 +1366,7 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   }
 
   for (mlir::Value V : Versors) {
-    if (isUnknown(V))
+    if (isUnknown(V) || isa<VersorType>(V.getType()))
       return llvm::failure();
   }
 
@@ -1342,6 +1435,86 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
 
   replaceOp(Rewriter, VP, Result);
   return llvm::success();
+}
+
+// A versor V = f₁ f₂ ⋯ fₖ applies its last factor first.
+// (ie V X V⁻¹ = f₁ (⋯ (fₖ X fₖ⁻¹) ⋯) f₁⁻¹)
+llvm::LogicalResult ExpandVersorVP::matchAndRewrite(
+      geomalg::VersorProdOp VP,
+      mlir::PatternRewriter& Rewriter) const {
+  mlir::ValueRange Versors = VP.getVersors();
+  if (llvm::none_of(Versors.getTypes(), llvm::IsaPred<VersorType>))
+    return llvm::failure();
+
+  llvm::SmallVector<mlir::Value, 8> NewVersors;
+  for (mlir::Value V : Versors) {
+    if (isa<VersorType>(V.getType()))
+      llvm::append_range(NewVersors,
+                         llvm::reverse(getVersorFactors(Rewriter, V)));
+    else
+      NewVersors.push_back(V);
+  }
+
+  replaceOpWithNewOp<VersorProdOp>(Rewriter, VP, VP.getArg(), NewVersors);
+  return llvm::success();
+}
+
+llvm::LogicalResult ExpandVersorUnary::matchAndRewrite(
+      mlir::Operation* Op,
+      mlir::PatternRewriter& Rewriter) const {
+  if (!isa<InverseOp, ReverseOp, GradeInvoOp, NegateOp>(Op) ||
+      !isa<VersorType>(Op->getOperand(0).getType()))
+    return llvm::failure();
+
+  mlir::Location Loc = Op->getLoc();
+  llvm::SmallVector<mlir::Value, 4> Factors
+    = getVersorFactors(Rewriter, Op->getOperand(0));
+  llvm::SmallVector<mlir::Value, 4> NewFactors;
+  if (isa<InverseOp>(Op)) {
+    // (f₁ ⋯ fₖ)⁻¹ = fₖ⁻¹ ⋯ f₁⁻¹
+    for (mlir::Value F : llvm::reverse(Factors))
+      NewFactors.push_back(InverseOp::create(Rewriter, Loc, F));
+  } else if (isa<ReverseOp>(Op)) {
+    // (f₁ ⋯ fₖ)~ = fₖ ⋯ f₁
+    llvm::append_range(NewFactors, llvm::reverse(Factors));
+  } else if (isa<GradeInvoOp>(Op)) {
+    // (f₁ ⋯ fₖ)^ = f₁^ ⋯ fₖ^
+    for (mlir::Value F : Factors)
+      NewFactors.push_back(GradeInvoOp::create(Rewriter, Loc, F));
+  } else {
+    // -(f₁ ⋯ fₖ) = (-f₁) ⋯ fₖ
+    NewFactors = Factors;
+    NewFactors.front() = NegateOp::create(Rewriter, Loc, Factors.front());
+  }
+
+  replaceOpWithNewOp<VersorOp>(Rewriter, Op, NewFactors);
+  return llvm::success();
+}
+
+llvm::LogicalResult ExpandVersorOperand::matchAndRewrite(
+      mlir::Operation* Op,
+      mlir::PatternRewriter& Rewriter) const {
+  if (!isa<SumOp, OuterProdOp, InnerProdOp, GeomProdOp,
+           DotOp, VersorProdOp>(Op))
+    return llvm::failure();
+
+  // The versors of a versor product are expanded by ExpandVersorVP.
+  unsigned NumOperands = isa<VersorProdOp>(Op) ? 1 : Op->getNumOperands();
+  bool Changed = false;
+  for (mlir::OpOperand& Operand : Op->getOpOperands().take_front(NumOperands)) {
+    mlir::Value V = Operand.get();
+    if (!isa<VersorType>(V.getType()))
+      continue;
+
+    // f₁ f₂ ⋯ fₖ
+    llvm::SmallVector<mlir::Value, 4> Factors = getVersorFactors(Rewriter, V);
+    mlir::Value Product = Factors.front();
+    for (mlir::Value F : llvm::drop_begin(Factors))
+      Product = GeomProdOp::create(Rewriter, Op->getLoc(), Product, F);
+    Rewriter.modifyOpInPlace(Op, [&] { Operand.set(Product); });
+    Changed = true;
+  }
+  return llvm::success(Changed);
 }
 
 // Expand the left contraction to a multivector where appropriate
@@ -1907,6 +2080,9 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          ExpandConvert
            >(Metric::get(MK), Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
+  PS.add<ExpandVersorVP,
+         ExpandVersorUnary,
+         ExpandVersorOperand>(Ctx, mlir::PatternBenefit(10));
   if (MK != MetricKind::unknown) {
     PS.add<ApplyMetric>(geomalg::Metric::get(MK), Ctx,
                         mlir::PatternBenefit(10));

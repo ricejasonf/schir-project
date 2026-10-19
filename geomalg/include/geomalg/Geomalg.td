@@ -76,6 +76,24 @@ def Geomalg_MultivectorLike : TypeInterface<"MultivectorLike"> {
   ];
 }
 
+def Geomalg_VersorLike : TypeInterface<"VersorLike"> {
+  let description = [{
+    Provide an interface for objects that can be applied to an operand
+    with the sandwich product. A versor is a product of invertible
+    factors each of which is applied by its own sandwich product.
+  }];
+  let cppNamespace = "geomalg";
+  let methods = [
+    InterfaceMethod<
+      [{Get the factor types in product order.}],
+      /*ReturnType*/"llvm::SmallVector<mlir::Type, 4>",
+      /*MethodName*/"getFactorTypes",
+      /*Args*/(ins),
+      /*MethodBody*/[{}],
+      /*DefaultImplementation*/[{ return {$_type}; }]>
+  ];
+}
+
 // Types
 
 def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
@@ -85,7 +103,8 @@ def Geomalg_Zero : TypeDef<Geomalg_Dialect, "Zero", []> {
   }];
 }
 
-def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade", []> {
+def Geomalg_Blade : TypeDef<Geomalg_Dialect, "Blade",
+                             [Geomalg_VersorLike]> {
   let mnemonic = "blade";
   let description = [{
     A basis k-blade is a wedge product of standard basis vectors
@@ -173,7 +192,8 @@ class Geomalg_BladeOfGradeK<int K> :
       "::llvm::cast<geomalg::BladeType>($_self).getGrade() == " # K>>;
 
 def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector",
-                                  [Geomalg_MultivectorLike]> {
+                                  [Geomalg_MultivectorLike,
+                                   Geomalg_VersorLike]> {
   let mnemonic = "multivector";
   let description = [{
     A multivector is a sum of basis blades. It is itself a k-blade if
@@ -190,7 +210,8 @@ def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector",
 }
 
 def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector",
-                                 [Geomalg_MultivectorLike]> {
+                                 [Geomalg_MultivectorLike,
+                                  Geomalg_VersorLike]> {
   let mnemonic = "unit_vector";
   let description = [{
     A unit vector is a sum of basis 1-blades with the assumed property
@@ -215,6 +236,24 @@ def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector",
   }];
 }
 
+def Geomalg_Versor : TypeDef<Geomalg_Dialect, "Versor",
+                              [DeclareTypeInterfaceMethods<Geomalg_VersorLike,
+                                 ["getFactorTypes"]>]> {
+  let mnemonic = "versor";
+  let description = [{
+    A versor is a geometric product of invertible 1-vectors
+    which is kept factored so it can be applied one factor at a time.
+    The factors are in product order so the last factor is applied first.
+  }];
+
+  let parameters = (ins ArrayRefParameter<"mlir::Type">:$factors);
+  let assemblyFormat = "`<` $factors `>`";
+  let genVerifyDecl = 1;
+}
+
+// A 1-vector is a blade of grade 1 or a sum of them.
+def Geomalg_Vector : Type<CPred<"::geomalg::isVector($_self)">, "1-vector">;
+
 def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown",
                               [Schir_PlaceholderLike]> {
   let mnemonic = "unknown";
@@ -227,8 +266,21 @@ def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown",
 // may be an operand until its type is inferred.
 def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
                                Geomalg_MultivectorLike,
+                               Geomalg_Versor,
                                Geomalg_Zero,
                                Schir_PlaceholderLike]>;
+
+// A value that may be applied with the sandwich product.
+def Geomalg_VersorValue : AnyTypeOf<[Geomalg_VersorLike,
+                                     Geomalg_Zero,
+                                     Schir_PlaceholderLike]>;
+
+// A value that may be a factor of a versor.
+def Geomalg_VersorFactor : AnyTypeOf<[Geomalg_Vector,
+                                      Geomalg_Versor,
+                                      Geomalg_Zero,
+                                      Schir_PlaceholderLike],
+                                     "1-vector or versor">;
 
 // Operations
 
@@ -489,12 +541,12 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
 
 def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Multilinear, ZeroAbsorb]> {
   let description = [{
-    Given an ordered set of invertible blades, construct a versor
-    and its inverse applying it to an operand using the
-    sandwich product.
+    Given an ordered set of versors, apply each to an operand using the
+    sandwich product where the first versor is applied first.
   }];
 
-  let arguments = (ins Geomalg_Value:$arg, Variadic<Geomalg_Value>:$versors);
+  let arguments = (ins Geomalg_Value:$arg,
+                       Variadic<Geomalg_VersorValue>:$versors);
   let results   = (outs Geomalg_Unknown:$result);
   let builders = [
     OpBuilder<(ins "::mlir::Value":$Arg, "::mlir::ValueRange":$Versors), [{
@@ -503,6 +555,26 @@ def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Multilinear, ZeroAbsorb]> {
         $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
+}
+
+def Geomalg_VersorOp : Geomalg_Op<"versor", [ZeroAbsorb, InferredResult]> {
+  let description = [{
+    Construct a versor as the geometric product of 1-vectors and
+    other versors in the order given.
+  }];
+
+  let arguments = (ins Variadic<Geomalg_VersorFactor>:$factors);
+  let results   = (outs Geomalg_Value:$result);
+  let hasVerifier = 1;
+}
+
+def Geomalg_FactorsOp : Geomalg_Op<"factors", [InferredResult]> {
+  let description = [{
+    Break out the 1-vector factors of a versor in product order.
+  }];
+
+  let arguments = (ins Geomalg_Versor:$arg);
+  let results   = (outs Variadic<Geomalg_Value>:$results);
 }
 
 def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return",

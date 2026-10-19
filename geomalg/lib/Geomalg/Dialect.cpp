@@ -69,6 +69,12 @@ geomalg::ReverseOp::inferReturnTypes(
                   mlir::PropertyRef,
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  // The reverse of a versor reverses the order of its 1-vector factors.
+  if (auto VT = dyn_cast<VersorType>(Operands.front().getType())) {
+    llvm::SmallVector<mlir::Type, 4> Factors(llvm::reverse(VT.getFactors()));
+    InferredTypes.push_back(VersorType::get(Ctx, Factors));
+    return llvm::success();
+  }
   llvm::append_range(InferredTypes, Operands.getTypes());
   return llvm::success();
 }
@@ -112,7 +118,7 @@ geomalg::SumOp::inferReturnTypes(
   mlir::Type ResultT;
   for (mlir::Value V : Operands) {
     mlir::Type Type = V.getType();
-    if (isUnknown(Type) || isa<MultivectorType>(Type)) {
+    if (isUnknown(Type) || isa<MultivectorType, VersorType>(Type)) {
       InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
       return llvm::success();
     } else if (isa<ZeroType>(V.getType())) {
@@ -150,6 +156,8 @@ geomalg::ExpandOp::inferReturnTypes(
                   mlir::RegionRange,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   mlir::Type ArgT = Operands.front().getType();
+  if (isa<VersorType>(ArgT))
+    return llvm::failure();
   auto MV = dyn_cast<MultivectorLike>(ArgT);
   // Unary sums just propagate their argument.
   if (!MV) {
@@ -294,5 +302,60 @@ geomalg::MatvecOp::inferReturnTypes(
     Result = createMultivectorLikeType<MultivectorType>(BladeTypes);
 
   InferredTypes.push_back(Result);
+  return llvm::success();
+}
+
+llvm::LogicalResult
+geomalg::VersorOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::PropertyRef,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  // Flatten the factors of nested versors.
+  llvm::SmallVector<mlir::Type, 4> Factors;
+  mlir::Type Result;
+  for (mlir::Type T : Operands.getTypes()) {
+    if (isZero(T)) {
+      Result = ZeroType::get(Ctx);
+      break;
+    } else if (auto VT = dyn_cast<VersorType>(T)) {
+      llvm::append_range(Factors, VT.getFactors());
+    } else if (isVector(T)) {
+      Factors.push_back(T);
+    } else {
+      // Unknown or invalid operands are left to the verifier.
+      Result = UnknownType::get(Ctx);
+    }
+  }
+
+  if (!Result)
+    Result = Factors.empty() ? mlir::Type(UnknownType::get(Ctx))
+                             : mlir::Type(VersorType::get(Ctx, Factors));
+  InferredTypes.push_back(Result);
+  return llvm::success();
+}
+
+llvm::LogicalResult geomalg::VersorOp::verify() {
+  if (getFactors().empty())
+    return emitOpError("expecting at least one factor");
+  return llvm::success();
+}
+
+llvm::LogicalResult
+geomalg::FactorsOp::inferReturnTypes(
+                  mlir::MLIRContext* Ctx,
+                  std::optional<mlir::Location> LocOpt,
+                  mlir::ValueRange Operands,
+                  mlir::DictionaryAttr,
+                  mlir::PropertyRef,
+                  mlir::RegionRange,
+                  llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
+  auto VT = dyn_cast<VersorType>(Operands.front().getType());
+  if (!VT)
+    return llvm::failure();
+  llvm::append_range(InferredTypes, VT.getFactors());
   return llvm::success();
 }
