@@ -159,6 +159,76 @@ getVersorFactors(mlir::PatternRewriter& Rewriter, mlir::Value Versor) {
   return Factors;
 }
 
+// Get the blade values of a blade or multivector.
+static llvm::SmallVector<mlir::Value, 8>
+getBladeValues(mlir::PatternRewriter& Rewriter, mlir::Value V) {
+  if (isa<geomalg::MultivectorLike>(V.getType()))
+    return llvm::SmallVector<mlir::Value, 8>(expandMultivector(Rewriter, V));
+  return {V};
+}
+
+// Sum nonempty values without creating a sum of a single value.
+static mlir::Value createSum(mlir::PatternRewriter& Rewriter,
+                             mlir::Location Loc, mlir::ValueRange Vs) {
+  assert(!Vs.empty() && "expecting values to sum");
+  if (Vs.size() == 1)
+    return Vs.front();
+  return geomalg::SumOp::create(Rewriter, Loc, Vs);
+}
+
+namespace {
+// Build scalar arithmetic with geomalg operations.
+struct ScalarBuilder {
+  mlir::PatternRewriter& Rewriter;
+  mlir::Location Loc;
+  mlir::Type ScalarT;
+
+  ScalarBuilder(mlir::PatternRewriter& R, mlir::Location L)
+    : Rewriter(R), Loc(L), ScalarT(geomalg::BladeType::get(R.getContext(), 0))
+  { }
+
+  mlir::Value constant(float C) {
+    return geomalg::BladeOp::create(Rewriter, Loc, ScalarT, C);
+  }
+  // Multiply a scalar by a scalar or multivector.
+  mlir::Value mul(mlir::Value A, mlir::Value B) {
+    return geomalg::InnerProdOp::create(Rewriter, Loc, A, B);
+  }
+  mlir::Value add(mlir::Value A, mlir::Value B) {
+    return geomalg::SumOp::create(Rewriter, Loc, A, B);
+  }
+  mlir::Value neg(mlir::Value A) {
+    return geomalg::NegateOp::create(Rewriter, Loc, A);
+  }
+  mlir::Value sub(mlir::Value A, mlir::Value B) {
+    return add(A, neg(B));
+  }
+  mlir::Value inv(mlir::Value A) {
+    return geomalg::InverseOp::create(Rewriter, Loc, A);
+  }
+  mlir::Value div(mlir::Value A, mlir::Value B) {
+    return mul(A, inv(B));
+  }
+  mlir::Value sqrt(mlir::Value A) {
+    return geomalg::SqrtOp::create(Rewriter, Loc, ScalarT, A);
+  }
+  mlir::Value sin(mlir::Value A) {
+    return geomalg::SinOp::create(Rewriter, Loc, ScalarT, A);
+  }
+  mlir::Value cos(mlir::Value A) {
+    return geomalg::CosOp::create(Rewriter, Loc, ScalarT, A);
+  }
+  mlir::Value atan2(mlir::Value Y, mlir::Value X) {
+    return geomalg::Atan2Op::create(Rewriter, Loc, ScalarT, Y, X);
+  }
+  // Select T if L < R or F otherwise.
+  mlir::Value selectLt(mlir::Value L, mlir::Value R,
+                       mlir::Value T, mlir::Value F) {
+    return geomalg::SelectLtOp::create(Rewriter, Loc, ScalarT, L, R, T, F);
+  }
+};
+}  // namespace
+
 static mlir::Type inferReturnType(mlir::InferTypeOpInterface Op) {
   assert(!Op->hasTrait<mlir::OpTrait::VariadicResults>() &&
       "expecting operation with single result");
@@ -416,6 +486,46 @@ struct ExpandVersorOperand : mlir::RewritePattern {
 
   llvm::LogicalResult matchAndRewrite(
       mlir::Operation* Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Keep the blades of a multivector of the given grade.
+struct ExpandGrade : mlir::OpRewritePattern<geomalg::GradeOp> {
+  using Base = mlir::OpRewritePattern<geomalg::GradeOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandGrade");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::GradeOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Expand the exponential of a bivector to a motor.
+struct ExpandExp : OpRewriteMetric<geomalg::ExpOp> {
+  using Base::Base;
+
+  void initialize() {
+    setDebugName("ExpandExp");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::ExpOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Expand the logarithm of a motor to a bivector.
+struct ExpandLog : OpRewriteMetric<geomalg::LogOp> {
+  using Base::Base;
+
+  void initialize() {
+    setDebugName("ExpandLog");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::LogOp Op,
       mlir::PatternRewriter& Rewriter) const override;
 };
 
@@ -1008,6 +1118,10 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
       Result.setType(ResultT);  // ok because we are modifying
                                 // a new (cloned) result.
     }
+    // Keep blades of outer products canonical as with createOuterProd.
+    if (auto BT = dyn_cast<BladeType>(Result.getType());
+        BT && isa<OuterProdOp>(NewOp) && !BT.isCanonical())
+      Result = OSwapOp::create(Rewriter, NewOp->getLoc(), Result);
     Results.push_back(Result);
   }
 
@@ -1338,15 +1452,75 @@ llvm::LogicalResult DistributeVP::matchAndRewrite(
   if (!MV)
     return llvm::failure();
 
+  // Apply the remaining versors to the sum so its terms are combined
+  // before they are distributed again.
   llvm::SmallVector<mlir::Value, 8> SumArgs;
   mlir::ValueRange Values = expandMultivector(Rewriter, Arg);
   for (mlir::Value V : Values) {
-    mlir::Value SumArg = VersorProdOp::create(Rewriter, Loc, V, Versors);
+    mlir::Value SumArg = VersorProdOp::create(Rewriter, Loc, V,
+                                              Versors.take_front());
     SumArgs.push_back(SumArg);
   }
-  replaceOpWithNewOp<SumOp>(Rewriter, VP, SumArgs);
+  mlir::Value Result = SumOp::create(Rewriter, Loc, SumArgs);
+  if (Versors.size() > 1)
+    Result = VersorProdOp::create(Rewriter, Loc, Result, Versors.drop_front());
+  replaceOp(Rewriter, VP, Result);
 
   return llvm::success();
+}
+
+// Get ⟨V Ṽ⟩₀ as the sum of the scalar products of the grade parts of V.
+static mlir::Value createVersorNormSq(mlir::PatternRewriter& Rewriter,
+                                      mlir::Location Loc, mlir::Value V) {
+  llvm::SmallVector<mlir::Value, 8> Terms;
+  llvm::SmallVector<mlir::Value, 8> Blades = getBladeValues(Rewriter, V);
+  llvm::SmallVector<mlir::Value, 8> Part;
+  for (unsigned Grade = 0; !Blades.empty(); ++Grade) {
+    Part.clear();
+    llvm::erase_if(Blades, [&](mlir::Value B) {
+      if (cast<BladeType>(B.getType()).getGrade() != Grade)
+        return false;
+      Part.push_back(B);
+      return true;
+    });
+    if (Part.empty())
+      continue;
+    // ⟨V⟩ₖ ⌋ ⟨Ṽ⟩ₖ = ± ⟨V⟩ₖ ⌋ ⟨V⟩ₖ
+    mlir::Value P = createSum(Rewriter, Loc, Part);
+    mlir::Value Term = InnerProdOp::create(Rewriter, Loc, P, P);
+    if (Grade % 4 >= 2)
+      Term = NegateOp::create(Rewriter, Loc, Term);
+    Terms.push_back(Term);
+  }
+  return createSum(Rewriter, Loc, Terms);
+}
+
+// Apply a versor that is a multivector to a blade.
+// (ie V A V⁻¹ = V A Ṽ / ⟨V Ṽ⟩₀)
+static mlir::Value expandMultivectorVP(mlir::PatternRewriter& Rewriter,
+                                       mlir::Location Loc,
+                                       mlir::Value Arg, mlir::Value Versor,
+                                       bool IsOrthogonal,
+                                       llvm::ArrayRef<BladeType> VersorBTs) {
+  // An orthogonal blade commutes or anticommutes with a versor
+  // of a single parity.
+  auto Odd = [](BladeType BT) { return BT.getGrade() % 2 != 0; };
+  unsigned ArgGrade = cast<BladeType>(Arg.getType()).getGrade();
+  if (IsOrthogonal && llvm::all_equal(llvm::map_range(VersorBTs, Odd))) {
+    if (Odd(VersorBTs.front()) && ArgGrade % 2 != 0)
+      return NegateOp::create(Rewriter, Loc, Arg);
+    return Arg;
+  }
+
+  mlir::Value Rev = ReverseOp::create(Rewriter, Loc, Versor);
+  mlir::Value ArgRev = GeomProdOp::create(Rewriter, Loc, Arg, Rev);
+  mlir::Value Sandwich = GeomProdOp::create(Rewriter, Loc, Versor, ArgRev);
+  mlir::Value NormSq = createVersorNormSq(Rewriter, Loc, Versor);
+  mlir::Value InvNormSq = InverseOp::create(Rewriter, Loc, NormSq);
+  mlir::Value Result = InnerProdOp::create(Rewriter, Loc, InvNormSq, Sandwich);
+  return GradeOp::create(Rewriter, Loc,
+                         UnknownType::get(Rewriter.getContext()),
+                         Result, ArgGrade);
 }
 
 // Expand a versor product to the geometric product.
@@ -1415,7 +1589,11 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
 
   // v₁ A v₁⁻¹
   mlir::Value Result;
-  if (BT.getGrade() == 0 || (IsOrthogonal && BT.getGrade() % 2 == 0)) {
+  if (!SingleVBT && !isVector(Versor.getType())) {
+    Result = expandMultivectorVP(Rewriter, Loc, Arg, Versor,
+                                 IsOrthogonal, VersorBladeTypes);
+  } else if (BT.getGrade() == 0 ||
+             (IsOrthogonal && BT.getGrade() % 2 == 0)) {
     // Scalars and orthogonal blades of even grade commute with the versor.
     Result = Arg;
   } else if (IsOrthogonal) {
@@ -1510,7 +1688,7 @@ llvm::LogicalResult ExpandVersorOperand::matchAndRewrite(
       mlir::Operation* Op,
       mlir::PatternRewriter& Rewriter) const {
   if (!isa<SumOp, OuterProdOp, InnerProdOp, GeomProdOp,
-           DotOp, VersorProdOp>(Op))
+           DotOp, VersorProdOp, LogOp>(Op))
     return llvm::failure();
 
   // The versors of a versor product are expanded by ExpandVersorVP.
@@ -1530,6 +1708,179 @@ llvm::LogicalResult ExpandVersorOperand::matchAndRewrite(
     Changed = true;
   }
   return llvm::success(Changed);
+}
+
+// Partition the blades of a motor or bivector by their role in a rigid
+// body motion or return false if a blade is not of even grade or
+// contains the origin.
+namespace {
+struct MotorParts {
+  llvm::SmallVector<mlir::Value, 1> Scalars;
+  llvm::SmallVector<mlir::Value, 3> Rotations;     // Euclidean bivectors
+  llvm::SmallVector<mlir::Value, 3> Translations;  // e ∧ ∞
+  llvm::SmallVector<mlir::Value, 1> Quadvectors;   // e ∧ e ∧ e ∧ ∞
+
+  bool init(mlir::PatternRewriter& Rewriter, mlir::Value M) {
+    for (mlir::Value V : getBladeValues(Rewriter, M)) {
+      auto BT = dyn_cast<BladeType>(V.getType());
+      if (!BT)
+        return false;
+      uint32_t Tag = BT.getCanonicalTag().getTag();
+      if (Tag & NoTag)
+        return false;
+      switch (BT.getGrade()) {
+      case 0:
+        Scalars.push_back(V);
+        break;
+      case 2:
+        (Tag & NiTag ? Translations : Rotations).push_back(V);
+        break;
+      case 4:
+        Quadvectors.push_back(V);
+        break;
+      default:
+        return false;
+      }
+    }
+    return true;
+  }
+};
+}  // namespace
+
+llvm::LogicalResult ExpandGrade::matchAndRewrite(
+    geomalg::GradeOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Value Arg = Op.getArg();
+  if (isUnknown(Arg))
+    return llvm::failure();
+  if (isZero(Arg))
+    return replaceWithZero(Rewriter, Op);
+
+  llvm::SmallVector<mlir::Value, 8> Blades = getBladeValues(Rewriter, Arg);
+  llvm::erase_if(Blades, [&](mlir::Value B) {
+    auto BT = dyn_cast<BladeType>(B.getType());
+    return !BT || BT.getGrade() != Op.getGrade();
+  });
+  if (Blades.empty())
+    return replaceWithZero(Rewriter, Op);
+  replaceOp(Rewriter, Op, createSum(Rewriter, Op.getLoc(), Blades));
+  return llvm::success();
+}
+
+// The threshold of the squared rotation angle below which
+// the rotation is treated as the identity.
+static constexpr float SmallAngleSq = 0x1p-24f;
+
+// exp(B) = cos φ + sinc φ (B + W) + ((sinc φ - cos φ) / φ²) Bᵣ W
+// where B = Bᵣ + Bₜ, φ² = -Bᵣ², and W = Bᵣ ∧ Bₜ.
+llvm::LogicalResult ExpandExp::matchAndRewrite(
+    geomalg::ExpOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = Op.getLoc();
+  mlir::Value B = Op.getArg();
+  if (!Metric || isUnknown(B))
+    return llvm::failure();
+
+  ScalarBuilder S(Rewriter, Loc);
+  if (isZero(B)) {
+    replaceOp(Rewriter, Op, S.constant(1.0f));
+    return llvm::success();
+  }
+
+  MotorParts Parts;
+  if (!Parts.init(Rewriter, B) || !Parts.Scalars.empty() ||
+      !Parts.Quadvectors.empty())
+    return Rewriter.notifyMatchFailure(Op, "expecting a motor bivector");
+
+  // exp(Bₜ) = 1 + Bₜ
+  if (Parts.Rotations.empty()) {
+    replaceOpWithNewOp<SumOp>(Rewriter, Op, S.constant(1.0f), B);
+    return llvm::success();
+  }
+
+  mlir::Value Br = createSum(Rewriter, Loc, Parts.Rotations);
+  mlir::Value PhiSq = S.neg(S.mul(Br, Br));
+  mlir::Value Phi = S.sqrt(PhiSq);
+  mlir::Value Cos = S.cos(Phi);
+  mlir::Value Small = S.constant(SmallAngleSq);
+  mlir::Value Sinc = S.selectLt(PhiSq, Small, S.constant(1.0f),
+                                S.div(S.sin(Phi), Phi));
+  mlir::Value Result;
+  if (Parts.Translations.empty()) {
+    Result = S.add(Cos, S.mul(Sinc, B));
+  } else {
+    mlir::Value Bt = createSum(Rewriter, Loc, Parts.Translations);
+    mlir::Value W = OuterProdOp::create(Rewriter, Loc, Br, Bt);
+    mlir::Value Q = S.selectLt(PhiSq, Small, S.constant(0.0f),
+                               S.div(S.sub(Sinc, Cos), PhiSq));
+    mlir::Value BrW = GeomProdOp::create(Rewriter, Loc, Br, W);
+    std::array<mlir::Value, 3> Terms = {Cos,
+                                        S.mul(Sinc, S.add(B, W)),
+                                        S.mul(Q, BrW)};
+    Result = SumOp::create(Rewriter, Loc, Terms);
+  }
+  replaceOp(Rewriter, Op, Result);
+  return llvm::success();
+}
+
+// log(M) = σ (φ / r) (Bᵣ + Bₜ) - ((1 - |s| φ / r) / r²) Bᵣ P
+// where M = s + Bᵣ + Bₜ + P, r² = -Bᵣ², φ = atan2(r, |s|), and σ = sign(s)
+// so the branch with s ≥ 0 is chosen and M need not be normalized.
+llvm::LogicalResult ExpandLog::matchAndRewrite(
+    geomalg::LogOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = Op.getLoc();
+  mlir::Value M = Op.getArg();
+  if (!Metric || isUnknown(M) || isZero(M))
+    return llvm::failure();
+
+  MotorParts Parts;
+  if (!Parts.init(Rewriter, M))
+    return Rewriter.notifyMatchFailure(Op, "expecting a motor");
+
+  ScalarBuilder S(Rewriter, Loc);
+  bool HasScalar = !Parts.Scalars.empty();
+  mlir::Value Sc = HasScalar ? createSum(Rewriter, Loc, Parts.Scalars)
+                             : mlir::Value();
+
+  // log(s + Bₜ) = Bₜ / s
+  if (Parts.Rotations.empty()) {
+    if (Parts.Translations.empty() || !HasScalar)
+      return replaceWithZero(Rewriter, Op);
+    mlir::Value Bt = createSum(Rewriter, Loc, Parts.Translations);
+    replaceOp(Rewriter, Op, S.mul(S.inv(Sc), Bt));
+    return llvm::success();
+  }
+
+  mlir::Value Br = createSum(Rewriter, Loc, Parts.Rotations);
+  mlir::Value RSq = S.neg(S.mul(Br, Br));
+  mlir::Value R = S.sqrt(RSq);
+  mlir::Value Zero = S.constant(0.0f);
+  mlir::Value AbsS = HasScalar ? S.selectLt(Sc, Zero, S.neg(Sc), Sc) : Zero;
+  mlir::Value AngleRatio = S.div(S.atan2(R, AbsS), R);
+  mlir::Value BCoeff = AngleRatio;
+  mlir::Value PCoeff = HasScalar
+    ? S.div(S.sub(S.constant(1.0f), S.mul(AbsS, AngleRatio)), RSq)
+    : S.inv(RSq);
+  if (HasScalar) {
+    // Use the limits as r → 0 for small rotations.
+    mlir::Value Small = S.mul(S.constant(SmallAngleSq), S.mul(Sc, Sc));
+    mlir::Value Signed = S.selectLt(Sc, Zero, S.neg(AngleRatio), AngleRatio);
+    BCoeff = S.selectLt(RSq, Small, S.inv(Sc), Signed);
+    PCoeff = S.selectLt(RSq, Small, Zero, PCoeff);
+  }
+
+  mlir::Value Biv = Br;
+  if (!Parts.Translations.empty())
+    Biv = S.add(Br, createSum(Rewriter, Loc, Parts.Translations));
+  mlir::Value Result = S.mul(BCoeff, Biv);
+  if (!Parts.Quadvectors.empty()) {
+    mlir::Value P = createSum(Rewriter, Loc, Parts.Quadvectors);
+    mlir::Value BrP = GeomProdOp::create(Rewriter, Loc, Br, P);
+    Result = S.sub(Result, S.mul(PCoeff, BrP));
+  }
+  replaceOp(Rewriter, Op, Result);
+  return llvm::success();
 }
 
 // Expand the left contraction to a multivector where appropriate
@@ -1685,13 +2036,19 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   auto BT = dyn_cast<geomalg::BladeType>(Arg.getType());
   auto MV = dyn_cast<geomalg::MultivectorLike>(Arg.getType());
 
-  // Support only k-blades.
   // Scalars are lowered to division in the dialect conversion.
-  // Arbitrary multivectors are unsupported by this pass.
-  if ((!BT && !MV) ||
-      (BT && BT.getGrade() == 0) ||
-      (MV && !MV.isVector()))
+  if ((!BT && !MV) || (BT && BT.getGrade() == 0))
     return llvm::failure();
+
+  // V⁻¹ = Ṽ / ⟨V Ṽ⟩₀ for a multivector V assumed to be a versor.
+  if (MV && !MV.isVector()) {
+    mlir::Value NormSq = createVersorNormSq(Rewriter, Loc, Arg);
+    mlir::Value Rev = geomalg::ReverseOp::create(Rewriter, Loc, Arg);
+    replaceOpWithNewOp<geomalg::InnerProdOp>(
+        Rewriter, InvOp, geomalg::InverseOp::create(Rewriter, Loc, NormSq),
+        Rev);
+    return llvm::success();
+  }
 
 
   // For basis blades we can simplify to a Negate since we know the grade.
@@ -2081,6 +2438,7 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          SimplifyDot>(Ctx, mlir::PatternBenefit(10));
   PS.add<ExpandLC,
          ExpandGP,
+         ExpandGrade,
          RemoveExpand,
          RemoveCast,
          RemoveConvert,
@@ -2091,7 +2449,9 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          ConvertNarrowedReturn,
          ConvertNarrowedCallArgs>(Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandInverse,
-         ExpandConvert
+         ExpandConvert,
+         ExpandExp,
+         ExpandLog
            >(Metric::get(MK), Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
   PS.add<ExpandVersorVP,

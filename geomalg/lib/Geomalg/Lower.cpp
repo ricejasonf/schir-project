@@ -5,6 +5,8 @@
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
 #include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
 #include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
+#include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
+#include <mlir/Conversion/MathToSPIRV/MathToSPIRV.h>
 #include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
 #include <mlir/Conversion/LLVMCommon/TypeConverter.h>
 #include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
@@ -12,6 +14,7 @@
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
+#include <mlir/Dialect/Math/IR/Math.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
 #include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
 #include <mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h>
@@ -41,6 +44,7 @@ namespace geomalg {
 namespace arith = mlir::arith;
 namespace func = mlir::func;
 namespace linalg = mlir::linalg;
+namespace math = mlir::math;
 namespace spirv = mlir::spirv;
 namespace tensor = mlir::tensor;
 namespace vector = mlir::vector;
@@ -98,6 +102,7 @@ struct ConversionTarget : mlir::ConversionTarget {
     // Legalize stuff.
     addLegalDialect<arith::ArithDialect>();
     addLegalDialect<linalg::LinalgDialect>();
+    addLegalDialect<math::MathDialect>();
     addLegalDialect<func::FuncDialect>();
     addLegalDialect<vector::VectorDialect>();
     // Function signatures, calls, and returns with geomalg types
@@ -394,6 +399,52 @@ public:
   }
 };
 
+// Lower a scalar function to the corresponding math operation.
+template <typename OpTy, typename MathOpTy>
+struct ScalarToMath : mlir::OpConversionPattern<OpTy>,
+                      ::PatternBase {
+public:
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+
+  llvm::LogicalResult matchAndRewrite(
+        OpTy Op, typename OpTy::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    R.replaceOpWithNewOp<MathOpTy>(Op, getScalarT(), Adaptor.getOperands());
+    return llvm::success();
+  }
+};
+
+struct SelectLtToArith : mlir::OpConversionPattern<SelectLtOp>,
+                         ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        SelectLtOp Op, SelectLtOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Value Cond = arith::CmpFOp::create(R, Op.getLoc(),
+                                             arith::CmpFPredicate::OLT,
+                                             Adaptor.getLhs(),
+                                             Adaptor.getRhs());
+    R.replaceOpWithNewOp<arith::SelectOp>(Op, Cond, Adaptor.getTrueValue(),
+                                          Adaptor.getFalseValue());
+    return llvm::success();
+  }
+};
+
+struct LowerOSwap : mlir::OpConversionPattern<OSwapOp>,
+                    ::PatternBase {
+public:
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        OSwapOp Op, OSwapOp::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    R.replaceOpWithNewOp<arith::NegFOp>(Op, Adaptor.getArg());
+    return llvm::success();
+  }
+};
+
 struct LowerCast : mlir::OpConversionPattern<CastOp>,
                         ::PatternBase {
 public:
@@ -563,9 +614,15 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
          VersorToVector,
          FactorsToVector,
          LowerNegate,
+         LowerOSwap,
          LowerBlade,
          DotToArith,
          InverseToArith,
+         ScalarToMath<SqrtOp, math::SqrtOp>,
+         ScalarToMath<SinOp, math::SinOp>,
+         ScalarToMath<CosOp, math::CosOp>,
+         ScalarToMath<Atan2Op, math::Atan2Op>,
+         SelectLtToArith,
          LowerCast,
          LowerReturn,
          LowerCall
@@ -634,6 +691,7 @@ public:
     mlir::populateFuncToSPIRVPatterns(STC, PS);
     mlir::populateBuiltinFuncToSPIRVPatterns(STC, PS);
     mlir::populateVectorToSPIRVPatterns(STC, PS);
+    mlir::populateMathToSPIRVPatterns(STC, PS);
 
     mlir::LogicalResult
       Result = mlir::applyPartialConversion(M, *Target, std::move(PS));
@@ -662,6 +720,7 @@ public:
     arith::populateArithToLLVMConversionPatterns(TC, PS);
     mlir::populateFuncToLLVMConversionPatterns(TC, PS);
     mlir::populateVectorToLLVMConversionPatterns(TC, PS);
+    mlir::populateMathToLLVMConversionPatterns(TC, PS);
 
     mlir::LogicalResult
       Result = mlir::applyPartialConversion(M, Target, std::move(PS));

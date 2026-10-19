@@ -79,6 +79,7 @@ def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
                            "mlir::func::FuncDialect",
                            "mlir::vector::VectorDialect",
                            "mlir::linalg::LinalgDialect",
+                           "mlir::math::MathDialect",
                            "mlir::tensor::TensorDialect"];
 }
 

@@ -155,13 +155,29 @@
         ((line c u)
          (line-aux (syntax-source-loc) c u))))
 
-    ;; Translator T = (t + ½t²∞) t ∝ 1 - ½t∞ as two parallel dual planes
+    ;; Get t or e₁ if t = 0.
+    (define (%direction Loc t)
+      (define IsZero
+        (result
+          (create-op "geomalg.select_lt"
+                     (loc: Loc)
+                     (operands: (%square Loc t)
+                                (%blade Loc !scalar 1.1754943508222875e-38)
+                                (%blade Loc !scalar 1)
+                                (%blade Loc !scalar 0))
+                     (attributes:)
+                     (result-types: !scalar))))
+      (sum-aux Loc t (%scale Loc IsZero (%blade Loc !e1 1))))
+
+    ;; Translator T = (a + ½(a·t)∞) a ∝ 1 - ½t∞ as two parallel dual planes
+    ;; with a = t (or a = e₁ for t = 0)
     ;; or T = (n + ½d∞) n ∝ 1 - ½dn∞ for a unit normal n.
-    ;; As a versor: translation x ↦ x + t (requires t ≠ 0)
-    ;; or x ↦ x + dn (allows d = 0).
+    ;; As a versor: translation x ↦ x + t or x ↦ x + dn.
     (define (translator-aux Loc t . MaybeDist)
       (if (null? MaybeDist)
-        (versor-aux Loc (plane-aux Loc t (%scale Loc .5 (%square Loc t))) t)
+        (let ((a (%direction Loc t)))
+          (versor-aux Loc (plane-aux Loc a (%scale Loc .5 (iprod-aux Loc a t)))
+                          a))
         (versor-aux Loc (plane-aux Loc t (%scale Loc .5 (car MaybeDist)))
                         t)))
 

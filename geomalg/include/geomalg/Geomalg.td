@@ -270,6 +270,14 @@ def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
                                Geomalg_Zero,
                                Schir_PlaceholderLike]>;
 
+// A scalar value whose type may not yet be inferred.
+def Geomalg_ScalarValue : AnyTypeOf<[
+    Type<CPred<"::llvm::isa<::geomalg::BladeType>($_self) && "
+               "::llvm::cast<::geomalg::BladeType>($_self).getGrade() == 0">,
+         "scalar">,
+    Geomalg_Zero,
+    Schir_PlaceholderLike], "scalar">;
+
 // A value that may be applied with the sandwich product.
 def Geomalg_VersorValue : AnyTypeOf<[Geomalg_VersorLike,
                                      Geomalg_Zero,
@@ -396,6 +404,7 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", [InferredResult]> {
     Take the multiplicative inverse. For a single k-blade,
     this is defined as applying the multiplicative inverse of
     the norm squared to the reverse of the k-blade.
+    Other multivectors are assumed to be versors.
   }];
 
   let arguments = (ins Geomalg_Value:$arg);
@@ -575,6 +584,82 @@ def Geomalg_FactorsOp : Geomalg_Op<"factors", [InferredResult]> {
 
   let arguments = (ins Geomalg_Versor:$arg);
   let results   = (outs Variadic<Geomalg_Value>:$results);
+}
+
+def Geomalg_GradeOp : Geomalg_Op<"grade"> {
+  let description = [{
+    Take the part of a multivector of the given grade.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg, I32Attr:$grade);
+  let results   = (outs Geomalg_Unknown:$result);
+}
+
+def Geomalg_ExpOp : Geomalg_Op<"exp"> {
+  let description = [{
+    Take the exponential of a bivector of a rigid body motion
+    which is a motor in the conformal model.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Unknown:$result);
+  let hasVerifier = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$Arg), [{
+        $_state.addOperands(Arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
+}
+
+def Geomalg_LogOp : Geomalg_Op<"log"> {
+  let description = [{
+    Take the bivector logarithm of a motor of a rigid body motion
+    choosing the branch with a nonnegative scalar part.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Unknown:$result);
+  let hasVerifier = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$Arg), [{
+        $_state.addOperands(Arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
+}
+
+// Scalar functions
+
+class Geomalg_ScalarOp<string mnemonic, dag args> : Geomalg_Op<mnemonic> {
+  let arguments = args;
+  let results   = (outs Geomalg_BladeOfGradeK<0>:$result);
+}
+
+def Geomalg_SqrtOp : Geomalg_ScalarOp<"sqrt", (ins Geomalg_ScalarValue:$arg)> {
+  let description = [{ Take the square root of a scalar. }];
+}
+
+def Geomalg_SinOp : Geomalg_ScalarOp<"sin", (ins Geomalg_ScalarValue:$arg)> {
+  let description = [{ Take the sine of a scalar. }];
+}
+
+def Geomalg_CosOp : Geomalg_ScalarOp<"cos", (ins Geomalg_ScalarValue:$arg)> {
+  let description = [{ Take the cosine of a scalar. }];
+}
+
+def Geomalg_Atan2Op : Geomalg_ScalarOp<"atan2",
+      (ins Geomalg_ScalarValue:$y, Geomalg_ScalarValue:$x)> {
+  let description = [{ Take the angle of the point (x, y) in [-π, π]. }];
+}
+
+def Geomalg_SelectLtOp : Geomalg_ScalarOp<"select_lt",
+      (ins Geomalg_ScalarValue:$lhs, Geomalg_ScalarValue:$rhs,
+           Geomalg_ScalarValue:$true_value,
+           Geomalg_ScalarValue:$false_value)> {
+  let description = [{
+    Select the true value if lhs < rhs or the false value otherwise.
+  }];
 }
 
 def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return",

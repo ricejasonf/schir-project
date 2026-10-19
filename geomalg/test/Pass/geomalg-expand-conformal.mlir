@@ -42,7 +42,7 @@ func.func @orthogonal_vector(%x: !e3, %v: !e1) -> !geomalg.unknown {
 
 // A reflection of a k-blade is the outer product of its reflected factors.
 // CHECK-LABEL: func.func @reflect_bivector
-// CHECK-SAME: -> !geomalg.multivector<<3>, <5>, <6>,
+// CHECK-SAME: -> !geomalg.multivector<<3>, <5>, <6>> {
 // CHECK-NOT: "geomalg.gprod"
 // CHECK: geomalg.return
 func.func @reflect_bivector(%x: !geomalg.blade<3>, %v: !vec3)

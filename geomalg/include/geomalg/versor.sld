@@ -19,6 +19,20 @@
       (load-builtin "geomalg_versor_type"))
 
     (define (versor-aux Loc . Vs)
+      (if (null? Vs)
+        (%identity Loc)
+        (%versor Loc Vs)))
+
+    ;; The identity versor is the scalar 1.
+    (define (%identity Loc)
+      (result
+        (create-op "geomalg.blade"
+                   (loc: Loc)
+                   (operands:)
+                   (attributes: ("coefficient" (float-attr 1 (type "f32"))))
+                   (result-types: !scalar))))
+
+    (define (%versor Loc Vs)
       (define Op
         (create-op "geomalg.versor"
                    (loc: Loc)
@@ -27,9 +41,10 @@
       (verify Op)
       (result Op))
 
-    ;; Construct a versor as the geometric product of 1-vectors and versors.
+    ;; Construct a versor as the geometric product of 1-vectors and versors
+    ;; or the identity for no arguments.
     (define-syntax versor
       (syntax-rules ()
-        ((versor V1 VN ...)
-         (versor-aux (syntax-source-loc) V1 VN ...))))
+        ((versor V ...)
+         (versor-aux (syntax-source-loc) V ...))))
     )) ;; define-library

@@ -153,6 +153,7 @@ int main() {
   SCHIR_ASSERT(vec_near(reflect_line(C + E2, C, U), C + E3));
 
   SCHIR_ASSERT(vec_near(translate(X, vec3{3, -1, 2}), X + vec3{3, -1, 2}));
+  SCHIR_ASSERT(vec_near(translate(X, vec3{0, 0, 0}), X));
   SCHIR_ASSERT(vec_near(translate_dist(X, E3, 3), X + 3 * E3));
   SCHIR_ASSERT(vec_near(translate_dist(X, E3, 0), X));
 

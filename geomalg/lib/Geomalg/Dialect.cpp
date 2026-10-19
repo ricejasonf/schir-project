@@ -359,3 +359,36 @@ geomalg::FactorsOp::inferReturnTypes(
   llvm::append_range(InferredTypes, VT.getFactors());
   return llvm::success();
 }
+
+// Verify that a known argument type is a motor (or bivector) whose
+// blades do not contain the conformal origin.
+static llvm::LogicalResult verifyMotorBlades(mlir::Operation* Op,
+                                             mlir::Type ArgT,
+                                             bool BivectorOnly) {
+  if (isUnknown(ArgT) || isZero(ArgT))
+    return llvm::success();
+  if (auto VT = dyn_cast<VersorType>(ArgT)) {
+    if (BivectorOnly || VT.getFactors().size() % 2 != 0)
+      return Op->emitOpError("expecting an even versor operand");
+    return llvm::success();
+  }
+  if (!isa<BladeType, MultivectorLike>(ArgT))
+    return Op->emitOpError("expecting a blade or multivector operand");
+  for (BladeType BT : getBladeTypes(ArgT)) {
+    unsigned Grade = BT.getGrade();
+    if (BivectorOnly ? Grade != 2 : Grade % 2 != 0)
+      return Op->emitOpError(BivectorOnly ? "expecting a bivector operand"
+                                          : "expecting an even operand");
+    if (BT.getCanonicalTag().getTag() & NoTag)
+      return Op->emitOpError("expecting an operand without the origin");
+  }
+  return llvm::success();
+}
+
+llvm::LogicalResult geomalg::ExpOp::verify() {
+  return verifyMotorBlades(*this, getArg().getType(), /*BivectorOnly=*/true);
+}
+
+llvm::LogicalResult geomalg::LogOp::verify() {
+  return verifyMotorBlades(*this, getArg().getType(), /*BivectorOnly=*/false);
+}

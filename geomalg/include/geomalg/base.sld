@@ -121,7 +121,7 @@
 
     (define !vec2 (!multivector !e1 !e2))
     (define !vec3 (!multivector !e1 !e2 !e3))
-    (define !uvec2 (!multivector !e1 !e2 !e3))
+    (define !uvec2 (!multivector !e1 !e2))
     (define !uvec3 (!multivector !e1 !e2 !e3))
 
     (define !vec4 (!multivector !e1 !e2 !e3 !no))
@@ -309,7 +309,7 @@
          (negate-aux (syntax-source-loc) V))))
 
     (define (rev-aux Loc V)
-      (%create-val "geomalg.rev" Loc V))
+      (%create-val "geomalg.reverse" Loc V))
 
     (define-syntax rev
       (syntax-rules ()

@@ -1,5 +1,5 @@
 #ifndef GEOMALG_TYPE_H
-#undef GEOMALG_TYPE_H
+#define GEOMALG_TYPE_H
 
 #include <geomalg/Dialect.h>
 #include <geomalg/Metric.h>
@@ -85,6 +85,20 @@ mlir::Type
 createMultivectorLikeType(llvm::MutableArrayRef<BladeType> BladeTypes);
 
 bool isOrthogonalBasis(Metric const& M, MultivectorLike A, MultivectorLike B);
+
+// Basis vector tags of the conformal origin and infinity.
+inline constexpr uint32_t NoTag = 8;
+inline constexpr uint32_t NiTag = 16;
+
+// Get the blades of a blade or multivector type or none otherwise.
+inline
+llvm::SmallVector<BladeType, 8> getBladeTypes(mlir::Type T) {
+  if (auto BT = dyn_cast<BladeType>(T))
+    return {BT};
+  if (auto MV = dyn_cast<MultivectorLike>(T))
+    return llvm::SmallVector<BladeType, 8>(MV.getBlades());
+  return {};
+}
 
 }  // namespace geomalg
 

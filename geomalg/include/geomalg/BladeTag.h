@@ -72,7 +72,7 @@ public:
     unsigned G = getGrade();
     // Negate if reversing G basis elements performs an odd number of swaps
     // (because of the antisymmetric property of the wedge product.)
-    return G % 2 == 0 || G % 3 == 0;
+    return G % 4 == 2 || G % 4 == 3;
   }
 
   // Peel off the leftmost basis vector from the basis blade.
