@@ -2242,7 +2242,7 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
 
   // Fold all results of NegateOp, OSwapOp, and BladeOp.
   unsigned NegateCount = 0;
-  float Accum = 1.0f;
+  double AccumD = 1.0;
   for (mlir::Value& V : NewOperands) {
     if (auto NOp = V.getDefiningOp<geomalg::NegateOp>()) {
       ++NegateCount;
@@ -2253,18 +2253,11 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
       // Remove the use of the oswap.
       V = SwapOp.getArg();
     } else if (auto BOp = V.getDefiningOp<geomalg::BladeOp>()) {
-      // Since float powers of 2 are closed under multiplication
-      // and represented exactly, they are associative and commutative.
+      // Constants are folded at compile time, so the rounding is the
+      // same on every target. The product of a few f32 values is
+      // exact or nearly so in f64 and is rounded to f32 once.
       float C = BOp.getFloat();
-      int n = 0;
-      float m = std::frexp(C, &n);
-      float m_abs = std::abs(m);
-      // Powers of 2 are part of the algebra and cancel each other out.
-      // (We do not support arbitrary constants at yet.)
-      assert((C == 0 || m_abs == 0.5f)
-          && "we are only expecting powers of 2 right now");
-
-      Accum *= std::abs(C);
+      AccumD *= std::abs(static_cast<double>(C));
       if (C < 0.0f)
         ++NegateCount;
       // Mark to remove from list.
@@ -2276,6 +2269,7 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
 
   // Remove nulls.
   llvm::erase(NewOperands, mlir::Value());
+  float Accum = static_cast<float>(AccumD);
 
   mlir::Location Loc = Op->getLoc();
   // Create and push new BladeOp if it is not the id element

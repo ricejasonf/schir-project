@@ -67,6 +67,7 @@ extern "C" float log_rotation_e12(vec3, vec3);
 extern "C" vec3 apply_interp_half_turn(vec3, float);
 extern "C" vec3 apply_interp_identity(vec3, vec3, vec3, float);
 extern "C" vec3 apply_translation_interp(vec3, vec3, float);
+extern "C" vec3 apply_translation_interp_tenth(vec3, vec3);
 extern "C" vec3 undo_exp_log(vec3, vec3, float, vec3, vec3, vec3);
 extern "C" vec2 apply_motor_2d(vec2, vec2, float, vec2, vec2, vec2);
 extern "C" vec2 apply_exp_log_2d(vec2, vec2, float, vec2, vec2, vec2);
@@ -176,6 +177,11 @@ extern "C" vec2 apply_interp_3_2d(vec2, vec2, vec2, vec2, float, vec2, vec2,
 (define-func apply_translation_interp ((x : !vec3) (u : !vec3) (t : !scalar))
   (define T0 (translator (iprod (scalar 0) u)))
   (convert (down (vprod (up x) T0 (interp T0 (translator u) t))) !vec3))
+
+; // A literal t that is not a power of two.
+(define-func apply_translation_interp_tenth ((x : !vec3) (u : !vec3))
+  (convert (down (vprod (up x) (interp (versor) (translator u) (scalar 0.1))))
+           !vec3))
 
 ; // Apply the motor exp(log(M)) and its inverse.
 (define-func undo_exp_log ((x : !vec3) (n : !vec3) (d : !scalar)
@@ -308,6 +314,8 @@ int main() {
   SCHIR_ASSERT(vec_near(apply_translation_interp(X, vec3{2, 4, -6}, 0.5f),
                         X + vec3{1, 2, -3}));
   SCHIR_ASSERT(vec_near(apply_translation_interp(X, O, 0.5f), X));
+  SCHIR_ASSERT(vec_near(apply_translation_interp_tenth(X, vec3{2, 4, -6}),
+                        X + vec3{0.2f, 0.4f, -0.6f}));
 
   // The inverse of a motor that is not factored.
   SCHIR_ASSERT(vec_near(undo_exp_log(X, N, 2, E1, RG, C), X));
