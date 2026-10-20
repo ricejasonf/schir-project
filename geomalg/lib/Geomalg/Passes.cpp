@@ -2710,7 +2710,8 @@ void geomalg::registerGeomalgToSPIRV() {
     geomalg::ExpandPassOptions EPO{.metric = Options.MetricName};
     PM.addPass(createExpandPass(EPO));
     //PM.addPass(mlir::createSCCPPass());
-    PM.addPass(createLowerPass());
+    // GPUs are not deterministic across vendors anyway so use the builtins.
+    PM.addPass(createLowerPass(LowerPassOptions{.deterministic = false}));
     PM.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
     PM.addNestedPass<mlir::func::FuncOp>(mlir::createCSEPass());
     PM.addPass(createLowerToSPIRVPass());

@@ -3,6 +3,10 @@
 // RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-lower %s \
 // RUN:| FileCheck --check-prefix="LOWER" %s
 
+// RUN: geomalg-opt --geomalg-expand="metric=cga" \
+// RUN:   --geomalg-lower="deterministic=false" %s \
+// RUN:| FileCheck --check-prefix="MATH" %s
+
 // RUN: geomalg-opt --geomalg-to-llvm %s | FileCheck --check-prefix="LLVM" %s
 
 // RUN: geomalg-opt --geomalg-to-spirv %s | FileCheck --check-prefix="SPIRV" %s
@@ -38,17 +42,29 @@ func.func @exp_translation(%b: !trans) -> !geomalg.unknown {
 // CHECK: "geomalg.sum"([[COS]],
 // CHECK-NOT: "geomalg.gprod"
 // CHECK: geomalg.return
+// By default sin and cos are polynomials after rounding φ·2/π with 1.5·2²³.
 // LOWER-LABEL: func.func @exp_2d
 // LOWER: math.sqrt
-// LOWER: math.cos
-// LOWER: math.sin
+// LOWER-NOT: math.cos
+// LOWER-NOT: math.sin
+// LOWER: arith.constant 0.636619746 : f32
+// LOWER: arith.constant 0x4B400000 : f32
 // LOWER: arith.cmpf olt
 // LOWER: arith.select
+// LOWER: return
+// MATH-LABEL: func.func @exp_2d
+// MATH: math.sqrt
+// MATH: math.cos
+// MATH: math.sin
+// MATH: arith.cmpf olt
+// MATH: arith.select
 // LLVM-LABEL: llvm.func @exp_2d
 // LLVM: llvm.intr.sqrt
-// LLVM: llvm.intr.cos
-// LLVM: llvm.intr.sin
+// LLVM-NOT: llvm.intr.cos
+// LLVM-NOT: llvm.intr.sin
+// LLVM-NOT: llvm.call
 // LLVM: llvm.select
+// LLVM: llvm.return
 // SPIRV-LABEL: spirv.func @exp_2d
 // SPIRV: spirv.GL.Sqrt
 // SPIRV: spirv.GL.Cos
@@ -75,9 +91,16 @@ func.func @exp_3d(%b: !biv3) -> !geomalg.unknown {
 // CHECK: "geomalg.atan2"
 // CHECK: geomalg.return
 // LOWER-LABEL: func.func @log_3d
-// LOWER: math.atan2
+// LOWER-NOT: math.atan2
+// LOWER: math.copysign
+// LOWER: return
+// MATH-LABEL: func.func @log_3d
+// MATH: math.atan2
 // LLVM-LABEL: llvm.func @log_3d
-// LLVM: llvm.intr.atan2
+// LLVM-NOT: llvm.intr.atan2
+// LLVM-NOT: llvm.call
+// LLVM: llvm.intr.copysign
+// LLVM: llvm.return
 func.func @log_3d(%m: !motor3) -> !geomalg.unknown {
   %0 = "geomalg.log"(%m) : (!motor3) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown

@@ -35,6 +35,7 @@
 
 // Generated stuff
 namespace geomalg {
+#define GEN_PASS_DECL_LOWERPASS
 #define GEN_PASS_DEF_LOWERPASS
 #define GEN_PASS_DEF_LOWERTOSPIRVPASS
 #define GEN_PASS_DEF_LOWERTOLLVMPASS
@@ -432,6 +433,166 @@ public:
   }
 };
 
+// Build f32 approximations of sin, cos, and atan2 with operations that are
+// correctly rounded under IEEE 754 (+, -, *, /, negation, comparison and
+// select) so the results are the same on every platform. Nothing here may
+// call libm, use integer conversions of possibly NaN values, or rely on FMA
+// contraction (no fast-math flags are set). The polynomials are from Cephes
+// (sinf.c, cosf.c, atanf.c) with errors within a few ulp for finite inputs.
+struct PolyBuilder {
+  mlir::OpBuilder& B;
+  mlir::Location Loc;
+  mlir::Type ScalarT;
+
+  mlir::Value constant(float C) {
+    return arith::ConstantOp::create(B, Loc, B.getFloatAttr(ScalarT, C));
+  }
+  mlir::Value add(mlir::Value X, mlir::Value Y) {
+    return arith::AddFOp::create(B, Loc, X, Y);
+  }
+  mlir::Value sub(mlir::Value X, mlir::Value Y) {
+    return arith::SubFOp::create(B, Loc, X, Y);
+  }
+  mlir::Value mul(mlir::Value X, mlir::Value Y) {
+    return arith::MulFOp::create(B, Loc, X, Y);
+  }
+  mlir::Value div(mlir::Value X, mlir::Value Y) {
+    return arith::DivFOp::create(B, Loc, X, Y);
+  }
+  mlir::Value neg(mlir::Value X) {
+    return arith::NegFOp::create(B, Loc, X);
+  }
+  mlir::Value cmp(arith::CmpFPredicate P, mlir::Value X, mlir::Value Y) {
+    return arith::CmpFOp::create(B, Loc, P, X, Y);
+  }
+  mlir::Value lt(mlir::Value X, mlir::Value Y) {
+    return cmp(arith::CmpFPredicate::OLT, X, Y);
+  }
+  mlir::Value eq(mlir::Value X, float C) {
+    return cmp(arith::CmpFPredicate::OEQ, X, constant(C));
+  }
+  mlir::Value select(mlir::Value Cond, mlir::Value T, mlir::Value F) {
+    return arith::SelectOp::create(B, Loc, Cond, T, F);
+  }
+  mlir::Value abs(mlir::Value X) {
+    return math::AbsFOp::create(B, Loc, X);
+  }
+  mlir::Value copySign(mlir::Value X, mlir::Value Sign) {
+    return math::CopySignOp::create(B, Loc, X, Sign);
+  }
+  // Round to the nearest integer (ties to even) for |X| < 2²²
+  // by adding and subtracting 1.5·2²³.
+  mlir::Value round(mlir::Value X) {
+    mlir::Value Magic = constant(0x1.8p23f);
+    return sub(add(X, Magic), Magic);
+  }
+  // c₀ zⁿ + c₁ zⁿ⁻¹ + ⋯ + cₙ by Horner's method.
+  mlir::Value poly(mlir::Value Z, llvm::ArrayRef<float> Coeffs) {
+    mlir::Value Result = constant(Coeffs.front());
+    for (float C : Coeffs.drop_front())
+      Result = add(mul(Result, Z), constant(C));
+    return Result;
+  }
+
+  // Reduce X to R = X - kπ/2 with |R| ≤ π/4 and return R and the quadrant
+  // k mod 4 as a float in {0, 1, 2, 3}. The subtraction of kπ/2 in three
+  // parts (Cody-Waite) is exact in the first two for |k| < 2¹².
+  std::pair<mlir::Value, mlir::Value> reduceHalfPi(mlir::Value X) {
+    mlir::Value K = round(mul(X, constant(0x1.45f306p-1f)));  // 2/π
+    mlir::Value R = sub(X, mul(K, constant(0x1.92p0f)));
+    R = sub(R, mul(K, constant(0x1.fb4p-12f)));
+    R = sub(R, mul(K, constant(0x1.4442d2p-24f)));
+    // k - 4 round(k/4) ∈ {-2, -1, 0, 1, 2} is exact.
+    mlir::Value M = sub(K, mul(constant(4.0f), round(mul(K, constant(0.25f)))));
+    mlir::Value Q = select(lt(M, constant(0.0f)),
+                           add(M, constant(4.0f)), M);
+    return {R, Q};
+  }
+  // sin R for |R| ≤ π/4
+  mlir::Value sinPoly(mlir::Value R, mlir::Value Z) {
+    mlir::Value P = poly(Z, {-1.9515295891e-4f, 8.3321608736e-3f,
+                             -1.6666654611e-1f});
+    return add(mul(mul(P, Z), R), R);
+  }
+  // cos R for |R| ≤ π/4
+  mlir::Value cosPoly(mlir::Value Z) {
+    mlir::Value P = poly(Z, {2.443315711809948e-5f, -1.388731625493765e-3f,
+                             4.166664568298827e-2f});
+    mlir::Value Y = sub(mul(mul(P, Z), Z), mul(constant(0.5f), Z));
+    return add(Y, constant(1.0f));
+  }
+
+  mlir::Value sinOrCos(mlir::Value X, bool IsCos) {
+    auto [R, Q] = reduceHalfPi(X);
+    mlir::Value Z = mul(R, R);
+    mlir::Value S = sinPoly(R, Z);
+    mlir::Value C = cosPoly(Z);
+    mlir::Value Odd = arith::OrIOp::create(B, Loc, eq(Q, 1.0f), eq(Q, 3.0f));
+    // sin(X) = sin R, cos R, -sin R, -cos R and
+    // cos(X) = cos R, -sin R, -cos R, sin R for the quadrants 0 to 3.
+    mlir::Value Negate = IsCos
+      ? arith::OrIOp::create(B, Loc, eq(Q, 1.0f), eq(Q, 2.0f))
+      : cmp(arith::CmpFPredicate::OGE, Q, constant(2.0f));
+    mlir::Value Y = IsCos ? select(Odd, S, C) : select(Odd, C, S);
+    return select(Negate, neg(Y), Y);
+  }
+
+  mlir::Value atan2(mlir::Value Y, mlir::Value X) {
+    mlir::Value AX = abs(X);
+    mlir::Value AY = abs(Y);
+    // Take the angle in [0, π/4] of (max(|x|, |y|), min(|x|, |y|)).
+    mlir::Value Swap = lt(AX, AY);
+    mlir::Value Max = select(Swap, AY, AX);
+    mlir::Value Min = select(Swap, AX, AY);
+    // Above tan(π/8) use atan(a) = π/4 + atan((a - 1)/(a + 1)).
+    mlir::Value Big = lt(mul(Max, constant(0x1.a8279ap-2f)), Min);
+    mlir::Value Num = select(Big, sub(Min, Max), Min);
+    mlir::Value Den = select(Big, add(Min, Max), Max);
+    // atan2(±0, ±0) uses the ratio 0/1.
+    Den = select(eq(Den, 0.0f), constant(1.0f), Den);
+    mlir::Value T = div(Num, Den);
+    mlir::Value Z = mul(T, T);
+    mlir::Value P = poly(Z, {8.05374449538e-2f, -1.38776856032e-1f,
+                             1.99777106478e-1f, -3.33329491539e-1f});
+    mlir::Value Theta = add(mul(mul(P, Z), T), T);
+    // The angle is kπ/4 ± θ for k ∈ {0, 1, 2, 3, 4}.
+    mlir::Value K = select(Big, constant(1.0f), constant(0.0f));
+    K = select(Swap, sub(constant(2.0f), K), K);
+    Theta = select(Swap, neg(Theta), Theta);
+    // Reflect into the left half plane (including x = -0).
+    mlir::Value XNeg = lt(copySign(constant(1.0f), X), constant(0.0f));
+    K = select(XNeg, sub(constant(4.0f), K), K);
+    Theta = select(XNeg, neg(Theta), Theta);
+    // Add kπ/4 in two parts where the 21 bits of Hi make k Hi exact.
+    mlir::Value Hi = constant(0x1.921fbp-1f);
+    mlir::Value Lo = constant(0x1.5110b4p-23f);
+    Theta = add(mul(K, Hi), add(mul(K, Lo), Theta));
+    return copySign(Theta, Y);
+  }
+};
+
+template <typename OpTy>
+struct ScalarToPoly : mlir::OpConversionPattern<OpTy>,
+                      ::PatternBase {
+public:
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+
+  llvm::LogicalResult matchAndRewrite(
+        OpTy Op, typename OpTy::Adaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    PolyBuilder P{R, Op.getLoc(), getScalarT()};
+    mlir::Value Result;
+    if constexpr (std::is_same_v<OpTy, SinOp>)
+      Result = P.sinOrCos(Adaptor.getArg(), /*IsCos=*/false);
+    else if constexpr (std::is_same_v<OpTy, CosOp>)
+      Result = P.sinOrCos(Adaptor.getArg(), /*IsCos=*/true);
+    else
+      Result = P.atan2(Adaptor.getY(), Adaptor.getX());
+    R.replaceOp(Op, Result);
+    return llvm::success();
+  }
+};
+
 struct LowerOSwap : mlir::OpConversionPattern<OSwapOp>,
                     ::PatternBase {
 public:
@@ -606,7 +767,7 @@ struct LowerCall : mlir::OpConversionPattern<CallOp>,
 };
 
 void populateLowerPasses(mlir::RewritePatternSet& PS,
-                         ::TypeConverter const* TC) {
+                         ::TypeConverter const* TC, bool Deterministic) {
   mlir::MLIRContext* Ctx = PS.getContext();
   PS.add<CMulToMul,
          SumToVector,
@@ -619,14 +780,21 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
          DotToArith,
          InverseToArith,
          ScalarToMath<SqrtOp, math::SqrtOp>,
-         ScalarToMath<SinOp, math::SinOp>,
-         ScalarToMath<CosOp, math::CosOp>,
-         ScalarToMath<Atan2Op, math::Atan2Op>,
          SelectLtToArith,
          LowerCast,
          LowerReturn,
          LowerCall
          >(*TC, Ctx);
+  if (Deterministic)
+    PS.add<ScalarToPoly<SinOp>,
+           ScalarToPoly<CosOp>,
+           ScalarToPoly<Atan2Op>
+           >(*TC, Ctx);
+  else
+    PS.add<ScalarToMath<SinOp, math::SinOp>,
+           ScalarToMath<CosOp, math::CosOp>,
+           ScalarToMath<Atan2Op, math::Atan2Op>
+           >(*TC, Ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(PS,
                                                                       *TC);
   mlir::populateCallOpTypeConversionPattern(PS, *TC);
@@ -634,12 +802,13 @@ void populateLowerPasses(mlir::RewritePatternSet& PS,
 }
 
 llvm::LogicalResult
-applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::ModuleOp Op) {
+applyLowerPatterns(mlir::MLIRContext* Ctx, mlir::ModuleOp Op,
+                   bool Deterministic) {
   mlir::RewritePatternSet PS(Ctx);
   mlir::Type ScalarT = mlir::Float32Type::get(Ctx);
   // Note that TypeConverter has its pointer captured.
   ::TypeConverter TC(ScalarT);
-  populateLowerPasses(PS, &TC);
+  populateLowerPasses(PS, &TC, Deterministic);
 
   // Do that actual Conversion.
   ::ConversionTarget Target(*Ctx, TC);
@@ -662,7 +831,7 @@ public:
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
 
-    llvm::LogicalResult Result = applyLowerPatterns(Ctx, M);
+    llvm::LogicalResult Result = applyLowerPatterns(Ctx, M, deterministic);
     if (llvm::failed(Result))
       signalPassFailure();
   }

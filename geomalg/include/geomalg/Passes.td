@@ -73,7 +73,18 @@ def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
   let summary = "Lower Geomalg to Arith and other dialects.";
   let description = [{
     Lower to dialects that themselves can lower to LLVM or SPIRV.
+
+    Unless deterministic is false, sin, cos, and atan2 are lowered to
+    polynomial approximations built from arith operations that are
+    correctly rounded under IEEE 754 (+, -, *, / and comparisons) so the
+    results do not depend on the platform's libm. Otherwise they are
+    lowered to the corresponding math operations (e.g. GLSL builtins for
+    SPIRV).
   }];
+  let options = [
+    Option<"deterministic", "deterministic", "bool", /*default=*/"true",
+           "Lower sin, cos, and atan2 to deterministic polynomials.">
+  ];
   let dependentDialects = ["geomalg::GeomalgDialect",
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
