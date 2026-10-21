@@ -504,10 +504,12 @@ def Geomalg_ConvertOp : Geomalg_Op<"convert"> {
     of the vector followed by a cast which would guarantee that
     the result squared would equal 1 and subsequent transformations
     could make that assumption based on the type.
+    Converting to a type that drops blades of the argument is an error.
   }];
 
   let arguments = (ins AnyType:$arg);
   let results   = (outs AnyType:$result);
+  let hasVerifier = 1;
 }
 
 def Geomalg_CMulOp : Geomalg_Op<"cmul", [ZeroAbsorb, IsMul]> {

@@ -238,6 +238,14 @@ llvm::LogicalResult geomalg::InverseOp::verify() {
                      "or even multivector operand");
 }
 
+llvm::LogicalResult geomalg::ConvertOp::verify() {
+  mlir::Type ArgT = getArg().getType();
+  mlir::Type ResultT = getResult().getType();
+  if (hasSupportedConversion(ArgT, ResultT))
+    return llvm::success();
+  return emitOpError() << "cannot convert " << ArgT << " to " << ResultT;
+}
+
 llvm::LogicalResult
 geomalg::InnerProdOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,

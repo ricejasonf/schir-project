@@ -113,6 +113,17 @@ bool hasSupportedInverse(mlir::Type T) {
   });
 }
 
+// Return true if a value of type From has a supported conversion to To.
+// (ie widening to a type that From is a narrowing of, or normalizing
+// a 1-vector to a unit_vector.)
+inline
+bool hasSupportedConversion(mlir::Type From, mlir::Type To) {
+  if (isUnknown(From) || isUnknown(To) || isValidNarrowing(To, From))
+    return true;
+  auto MV = dyn_cast<MultivectorLike>(From);
+  return MV && MV.isVector() && isa<UnitVectorType>(To);
+}
+
 }  // namespace geomalg
 
 #endif
