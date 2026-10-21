@@ -10,6 +10,8 @@
 #include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
 #include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
 #include <mlir/Conversion/LLVMCommon/TypeConverter.h>
+#include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
+#include <mlir/Conversion/MathToSPIRV/MathToSPIRV.h>
 #include <mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h>
 #include <mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h>
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
@@ -549,6 +551,7 @@ public:
     mlir::populateSCFToControlFlowConversionPatterns(PS);
     mlir::arith::populateArithToLLVMConversionPatterns(TC, PS);
     mlir::cf::populateControlFlowToLLVMConversionPatterns(TC, PS);
+    mlir::populateMathToLLVMConversionPatterns(TC, PS);
     mlir::populateFinalizeMemRefToLLVMConversionPatterns(TC, PS);
     mlir::populateFuncToLLVMConversionPatterns(TC, PS);
     mlir::populateVectorToLLVMConversionPatterns(TC, PS);
@@ -595,6 +598,7 @@ public:
     mlir::cf::populateControlFlowToSPIRVPatterns(TC, PS);
     mlir::populateFuncToSPIRVPatterns(TC, PS);
     mlir::populateBuiltinFuncToSPIRVPatterns(TC, PS);
+    mlir::populateMathToSPIRVPatterns(TC, PS);
     mlir::populateMemRefToSPIRVPatterns(TC, PS);
     mlir::populateVectorToSPIRVPatterns(TC, PS);
 

@@ -30,10 +30,11 @@ namespace foo {
 {
   (import (nbdl spec)
           (nbdl spec geomalg)
-          (geomalg base))
+          (geomalg base)
+          (geomalg motor))
 
-  (export-c test_dot test_add cancel_vec3)
-  (export-shader test_dot test_add)
+  (export-c test_dot test_add normalize_rotate cancel_vec3)
+  (export-shader test_dot test_add normalize_rotate)
   (export-cpp test_test_dot test_test_call)
 
   ; // Functions with geomalg operations exported to C are lowered to LLVM
@@ -51,6 +52,12 @@ namespace foo {
   ; // CHECK: "nbdl.return"
   (define-fn test_add ((A : !vec3) (B : !vec3)) -> (!nbdl.unknown)
     (return (sum A B)))
+
+  ; // The math dialect ops (e.g. math.sqrt) of the lowered geomalg
+  ; // operations are lowered to both LLVM and SPIRV.
+  (define-fn normalize_rotate ((X : !vec2) (A : !vec2) (B : !vec2))
+                              -> (!vec2)
+    (return (convert (vprod X (normalize (gprod B A))) !vec2)))
 
   ; // The trivector term of the reflection is
   ; // simplified away before the result type is inferred.
@@ -183,6 +190,9 @@ namespace foo {
   ; // SPIRV: spirv.func @"::foo::test_add"
   ; // SPIRV-SAME: (%arg0: vector<3xf32>, %arg1: vector<3xf32>) -> vector<3xf32>
   ; // SPIRV: spirv.ReturnValue {{%[0-9]+}} : vector<3xf32>
+  ; // SPIRV: spirv.func @"::foo::normalize_rotate"
+  ; // SPIRV: spirv.GL.Sqrt
+  ; // SPIRV: spirv.ReturnValue {{%[0-9]+}} : vector<2xf32>
   ; // SPIRV-NOT: cancel_vec3
   ; // SPIRV-LABEL: module @nbdl_spec_module_cpp
 
@@ -210,6 +220,11 @@ bool vec_equal(geomalg::vec3 A, geomalg::vec3 B) {
   return __builtin_reduce_and(A.value == B.value);
 }
 
+bool vec_near(geomalg::vec2 A, geomalg::vec2 B) {
+  auto D = A.value - B.value;
+  return __builtin_reduce_max(D * D) <= 1e-10f;
+}
+
 int main() {
   // Call the geomalg functions lowered to LLVM directly.
   SCHIR_ASSERT(foo::test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
@@ -219,6 +234,10 @@ int main() {
   SCHIR_ASSERT(vec_equal(foo::test_add({{1, 0, 0}}, {{0, 1, 0}}), {{1, 1, 0}}));
   SCHIR_ASSERT(vec_equal(foo::test_add({{-1, 2, 0.5}}, {{1, -2, -0.5}}),
                          {{0, 0, 0}}));
+
+  // Rotate by twice the angle from A to B.
+  SCHIR_ASSERT(vec_near(foo::normalize_rotate({{3, 2}}, {{2, 0}}, {{1, 1}}),
+                        {{-2, 3}}));
 
   SCHIR_ASSERT(vec_equal(foo::cancel_vec3({{3, 2, 4}}), {{0, 0, 0}}));
 
