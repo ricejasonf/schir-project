@@ -467,7 +467,9 @@ func.func @inverse_uv0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
 // CGA-LABEL: @inverse_convert_to_uv
 // CGA-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CGA: [[DOT:%[0-9]+]] = "geomalg.dot"([[ARG0]], [[ARG0]])
-// CGA: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"([[DOT]])
+// CGA: [[NORM:%[0-9]+]] = "geomalg.sqrt"([[DOT]])
+// CGA: [[INV_NORM:%[0-9]+]] = "geomalg.inverse"([[NORM]])
+// CGA: "geomalg.iprod"([[INV_NORM]], {{.*}}#0)
 // CHECK-LABEL: @inverse_convert_to_uv
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK: [[ELS:%[0-9]+]]:3 = "geomalg.expand"([[ARG0]])
@@ -484,7 +486,9 @@ func.func @inverse_uv0(%arg0: !geomalg.unit_vector<<1>, <2>, <4>>)
 // CHECK-SAME: [[DOT1]], [[DOT2]], [[DOT3]], [[DOT4]]
 // CHECK-SAME: [[DOT5]], [[DOT6]], [[DOT7]], [[DOT8]]
 // CHECK-SAME: [[DOT9]])
-// CHECK: [[INV_DOT:%[0-9]+]] = "geomalg.inverse"([[DOT]])
+// CHECK: [[NORM:%[0-9]+]] = "geomalg.sqrt"([[DOT]])
+// CHECK: [[INV_NORM:%[0-9]+]] = "geomalg.inverse"([[NORM]])
+// CHECK: "geomalg.iprod"([[INV_NORM]], [[ELS]]#0)
 // CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"
 // CHECK: [[CAST:%[0-9]+]] = "geomalg.cast"([[SUM]])
 // CHECK: return [[CAST]] : !geomalg.unit_vector<<1>, <2>, <4>>

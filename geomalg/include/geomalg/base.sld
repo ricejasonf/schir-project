@@ -10,6 +10,7 @@
     !basis-vector
     !blade
     !multivector
+    !unit-vector
     !scalar !e1 !e2 !e3 !no !ni ;; Conformal GA basis vectors (types)
     scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
     !zero
@@ -61,6 +62,11 @@
     ;; Sort terms by tag value.
     (define !multivector
       (load-builtin "geomalg_multivector_type"))
+
+    ;; Take a nonempty list of basis vectors for a vector
+    ;; that is assumed to square to 1.
+    (define !unit-vector
+      (load-builtin "geomalg_unitvector_type"))
 
     ; Expand function using current metric.
     (define apply-metric
@@ -121,8 +127,8 @@
 
     (define !vec2 (!multivector !e1 !e2))
     (define !vec3 (!multivector !e1 !e2 !e3))
-    (define !uvec2 (!multivector !e1 !e2))
-    (define !uvec3 (!multivector !e1 !e2 !e3))
+    (define !uvec2 (!unit-vector !e1 !e2))
+    (define !uvec3 (!unit-vector !e1 !e2 !e3))
 
     (define !vec4 (!multivector !e1 !e2 !e3 !no))
     (define !vec5 (!multivector !e1 !e2 !e3 !no !ni))

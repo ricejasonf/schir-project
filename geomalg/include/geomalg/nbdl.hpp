@@ -118,6 +118,8 @@ using vec2 = multivector<e1, e2>;
 using vec3 = multivector<e1, e2, e3>;
 using vec4 = multivector<e1, e2, e3, no>;
 using vec5 = multivector<e1, e2, e3, no, ni>;
+using uvec2 = unit_vector<e1, e2>;
+using uvec3 = unit_vector<e1, e2, e3>;
 
 // Instantiate the common types for use with c linkage declarations,
 // and perform some sanity checks on their byte sizes.

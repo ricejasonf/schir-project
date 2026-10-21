@@ -899,9 +899,10 @@ struct ExpandConvert : OpRewriteMetric<geomalg::ConvertOp> {
     if (auto MV = dyn_cast<MultivectorLike>(ArgT);
         MV && MV.isVector() && isa<UnitVectorType>(ResultT)) {
 
-      // Multiply the inverse of norm squared and the Arg vector.
-      mlir::Value SquareInverse = squareInverse(Rewriter, Metric, Loc, Arg);
-      mlir::Value IP = InnerProdOp::create(Rewriter, Loc, SquareInverse, Arg);
+      // Multiply the inverse of the norm and the Arg vector.
+      ScalarBuilder S(Rewriter, Loc);
+      mlir::Value Norm = S.sqrt(square(Rewriter, Metric, Loc, Arg));
+      mlir::Value IP = S.mul(S.inv(Norm), Arg);
       replaceOpWithNewOp<CastOp>(Rewriter, Op, ResultT, IP);
       return llvm::success();
     }
