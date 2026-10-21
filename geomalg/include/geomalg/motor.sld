@@ -11,6 +11,11 @@
 ;; by the angle θ from e₁ to e₂. Products of planes (e.g. translator and
 ;; rotor in (geomalg conformal)) are motors.
 ;;
+;; Interpolation with interp avoids trigonometric functions for a constant
+;; t = k / 2ⁿ in [0, 1] with n ≤ 4 (e.g. ½) by taking square roots of
+;; motors, and nlerp avoids them for any t while sacrificing constant
+;; velocity.
+;;
 ;; Results are motors and bivectors that may be used with vprod and gprod.
 ;; Scalar arguments may be scalar values or numbers.
 ;; Use (with-metric 'cga) before expanding.
@@ -19,10 +24,14 @@
     exp
     log
     interp
+    nlerp
+    normalize
     ;; Procedures taking an explicit source location
     exp-aux
     log-aux
     interp-aux
+    nlerp-aux
+    normalize-aux
     )
   (import (schir base)
           (schir mlir)
@@ -74,15 +83,50 @@
         ((log M)
          (log-aux (syntax-source-loc) M))))
 
+    ;; Motor ±M / |M| with M M̃ = 1 for a motor M
+    ;; choosing the sign with a nonnegative scalar part.
+    (define (normalize-aux Loc M)
+      (%create-motor-op "geomalg.normalize" Loc M))
+
+    (define-syntax normalize
+      (syntax-rules ()
+        ((normalize M)
+         (normalize-aux (syntax-source-loc) M))))
+
+    (define %exact (attr "#geomalg.interp_method<exact>"))
+    (define %nlerp (attr "#geomalg.interp_method<nlerp>"))
+
+    (define (%create-interp Method Loc V1 V2 t)
+      (define Op
+        (create-op "geomalg.interp"
+                   (loc: Loc)
+                   (operands: V1 V2 (%scalar Loc t))
+                   (attributes: ("method" Method))
+                   (result-types: !geomalg.unknown)))
+      (verify Op)
+      (result Op))
+
     ;; Motor M(t) = exp(t log(V₂ Ṽ₁)) for the motion from V₁ to V₂.
     ;; As a versor: M(t) applied after V₁ interpolates from V₁ (t = 0)
     ;; to V₂ (t = 1) and M(1/N) applied N times after V₁ is V₂.
     (define (interp-aux Loc V1 V2 t)
-      (exp-aux Loc (iprod-aux Loc (%scalar Loc t)
-                     (log-aux Loc (gprod-aux Loc V2 (rev-aux Loc V1))))))
+      (%create-interp %exact Loc V1 V2 t))
 
     (define-syntax interp
       (syntax-rules ()
         ((interp V1 V2 t)
          (interp-aux (syntax-source-loc) V1 V2 t))))
+
+    ;; Motor M(t) = normalize((1 - t) + t normalize(V₂ Ṽ₁))
+    ;; for the motion from V₁ to V₂.
+    ;; As a versor: M(t) applied after V₁ interpolates from V₁ (t = 0)
+    ;; to V₂ (t = 1) about the same screw axis as interp but not with
+    ;; constant velocity. It is the same as interp for t = 0, ½, and 1.
+    (define (nlerp-aux Loc V1 V2 t)
+      (%create-interp %nlerp Loc V1 V2 t))
+
+    (define-syntax nlerp
+      (syntax-rules ()
+        ((nlerp V1 V2 t)
+         (nlerp-aux (syntax-source-loc) V1 V2 t))))
     )) ;; define-library

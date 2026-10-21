@@ -181,3 +181,94 @@ func.func @inverse_motor(%m: !motor2) -> !geomalg.unknown {
   %0 = "geomalg.inverse"(%m) : (!motor2) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
 }
+
+// normalize(M) = σ M / √⟨M M̃⟩₀ in 2D with σ the sign of the scalar part.
+// CHECK-LABEL: func.func @normalize_2d
+// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK: [[E:%[0-9]+]]:4 = "geomalg.expand"
+// CHECK: [[SQRT:%[0-9]+]] = "geomalg.sqrt"
+// CHECK: [[INV:%[0-9]+]] = "geomalg.inverse"([[SQRT]])
+// CHECK: [[NEG:%[0-9]+]] = "geomalg.negate"([[INV]])
+// CHECK: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 0.0{{.*}}}>
+// CHECK: "geomalg.select_lt"([[E]]#0, [[ZERO]], [[NEG]], [[INV]])
+// CHECK-NOT: "geomalg.sqrt"
+// CHECK: geomalg.return
+func.func @normalize_2d(%m: !motor2) -> !geomalg.unknown {
+  %0 = "geomalg.normalize"(%m) : (!motor2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// Interpolation with a run-time t is exp(t log(V₂ Ṽ₁)).
+// CHECK-LABEL: func.func @interp_exact
+// CHECK: "geomalg.atan2"
+// CHECK: "geomalg.cos"
+// CHECK: "geomalg.sin"
+// CHECK: geomalg.return
+func.func @interp_exact(%a: !motor2, %b: !motor2, %t: !scalar) -> !geomalg.unknown {
+  %0 = "geomalg.interp"(%a, %b, %t) : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// The motor at t = 0 is the identity.
+// CHECK-LABEL: func.func @interp_zero
+// CHECK-SAME: -> !geomalg.blade<0>
+// CHECK-NEXT: [[ONE:%[0-9]+]] = "geomalg.blade"() <{coefficient = 1.0{{.*}}}>
+// CHECK-NEXT: geomalg.return [[ONE]]
+func.func @interp_zero(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
+  %t = "geomalg.blade"() <{coefficient = 0.0 : f32}> : () -> !scalar
+  %0 = "geomalg.interp"(%a, %b, %t) : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// The motor at t = 1 is normalize(V₂ Ṽ₁).
+// CHECK-LABEL: func.func @interp_one
+// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.atan2"
+// CHECK: geomalg.return
+func.func @interp_one(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
+  %t = "geomalg.blade"() <{coefficient = 1.0 : f32}> : () -> !scalar
+  %0 = "geomalg.interp"(%a, %b, %t) : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// A constant t that is not k / 2ⁿ with n ≤ 4 uses exp and log.
+// CHECK-LABEL: func.func @interp_tenth
+// CHECK: "geomalg.atan2"
+// CHECK: geomalg.return
+func.func @interp_tenth(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
+  %t = "geomalg.blade"() <{coefficient = 0.1 : f32}> : () -> !scalar
+  %0 = "geomalg.interp"(%a, %b, %t) : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// nlerp is normalize((1 - t) + t D) with D = normalize(V₂ Ṽ₁).
+// CHECK-LABEL: func.func @nlerp
+// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK-COUNT-2: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.atan2"
+// CHECK-NOT: "geomalg.cos"
+// CHECK: geomalg.return
+// SPIRV-LABEL: spirv.func @nlerp
+// SPIRV-NOT: spirv.GL.Atan2
+// SPIRV-NOT: spirv.GL.Cos
+// SPIRV: spirv.GL.Sqrt
+// SPIRV: spirv.GL.Sqrt
+// SPIRV: spirv.ReturnValue
+func.func @nlerp(%a: !motor2, %b: !motor2, %t: !scalar) -> !geomalg.unknown {
+  %0 = "geomalg.interp"(%a, %b, %t) <{method = #geomalg.interp_method<nlerp>}> : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// nlerp at t = ½ is √D like interp.
+// CHECK-LABEL: func.func @nlerp_half
+// CHECK-COUNT-2: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.sqrt"
+// CHECK: geomalg.return
+func.func @nlerp_half(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
+  %t = "geomalg.blade"() <{coefficient = 0.5 : f32}> : () -> !scalar
+  %0 = "geomalg.interp"(%a, %b, %t) <{method = #geomalg.interp_method<nlerp>}> : (!motor2, !motor2, !scalar) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}

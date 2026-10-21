@@ -5,6 +5,7 @@
 // RUN: %t
 
 #include <schir/SCHIR_ASSERT.h>
+#include <array>
 #include <cmath>
 #include <numbers>
 
@@ -71,12 +72,31 @@ extern "C" vec3 apply_translation_interp_tenth(vec3, vec3);
 extern "C" vec3 undo_exp_log(vec3, vec3, float, vec3, vec3, vec3);
 extern "C" vec2 apply_motor_2d(vec2, vec2, float, vec2, vec2, vec2);
 extern "C" vec2 apply_exp_log_2d(vec2, vec2, float, vec2, vec2, vec2);
+extern "C" vec3 apply_interp_0(vec3, vec3, float, vec3, vec3, vec3,
+                               vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_interp_1(vec3, vec3, float, vec3, vec3, vec3,
+                               vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_interp_half(vec3, vec3, float, vec3, vec3, vec3,
+                                  vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_interp_3_4(vec3, vec3, float, vec3, vec3, vec3,
+                                 vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_interp_1_16(vec3, vec3, float, vec3, vec3, vec3,
+                                  vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_nlerp(vec3, vec3, float, vec3, vec3, vec3,
+                            vec3, float, vec3, vec3, vec3, float);
+extern "C" vec3 apply_nlerp_half(vec3, vec3, float, vec3, vec3, vec3,
+                                 vec3, float, vec3, vec3, vec3);
+extern "C" vec3 apply_normalize(vec3, float, vec3, float, vec3, vec3, vec3);
+extern "C" vec2 apply_interp_half_2d(vec2, vec2, vec2, vec2, float, vec2,
+                                     vec2);
 // FIXME vec2 arguments passed on the stack are not received correctly
 //       so these take at most eight arguments.
 extern "C" vec2 apply_interp_2d(vec2, vec2, vec2, vec2, float, vec2, vec2,
                                 float);
 extern "C" vec2 apply_interp_3_2d(vec2, vec2, vec2, vec2, float, vec2, vec2,
                                   float);
+extern "C" vec2 apply_nlerp_2d(vec2, vec2, vec2, vec2, float, vec2, vec2,
+                               float);
 
 #pragma schir_scheme
 {
@@ -214,6 +234,58 @@ extern "C" vec2 apply_interp_3_2d(vec2, vec2, vec2, vec2, float, vec2, vec2,
   (define V2 (motor n2 d2 (e1 1) b2 c2))
   (define M (interp V1 V2 t))
   (convert (down (vprod (up x) V1 M M M)) !vec2))
+
+;; // Interpolate with a constant t which uses square roots when t = k / 2ⁿ.
+(define-syntax define-interp-const
+  (syntax-rules ()
+    ((_ Name Interp T)
+     (define-func Name ((x : !vec3)
+                        (n1 : !vec3) (d1 : !scalar)
+                        (a1 : !vec3) (b1 : !vec3) (c1 : !vec3)
+                        (n2 : !vec3) (d2 : !scalar)
+                        (a2 : !vec3) (b2 : !vec3) (c2 : !vec3))
+       (define V1 (motor n1 d1 a1 b1 c1))
+       (define V2 (motor n2 d2 a2 b2 c2))
+       (convert (down (vprod (up x) V1 (Interp V1 V2 T))) !vec3)))))
+
+(define-interp-const apply_interp_0 interp 0)
+(define-interp-const apply_interp_1 interp 1)
+(define-interp-const apply_interp_half interp 0.5)
+(define-interp-const apply_interp_3_4 interp 0.75)
+(define-interp-const apply_interp_1_16 interp 0.0625)
+(define-interp-const apply_nlerp_half nlerp 0.5)
+
+(define-func apply_nlerp ((x : !vec3)
+                          (n1 : !vec3) (d1 : !scalar)
+                          (a1 : !vec3) (b1 : !vec3) (c1 : !vec3)
+                          (n2 : !vec3) (d2 : !scalar)
+                          (a2 : !vec3) (b2 : !vec3) (c2 : !vec3)
+                          (t : !scalar))
+  (define V1 (motor n1 d1 a1 b1 c1))
+  (define V2 (motor n2 d2 a2 b2 c2))
+  (convert (down (vprod (up x) V1 (nlerp V1 V2 t))) !vec3))
+
+; // Normalize the motor scaled by s.
+(define-func apply_normalize ((x : !vec3) (s : !scalar)
+                              (n : !vec3) (d : !scalar)
+                              (a : !vec3) (b : !vec3) (c : !vec3))
+  (define M (normalize (iprod s (motor n d a b c))))
+  (convert (down (vprod (up x) M)) !vec3))
+
+(define-func apply_interp_half_2d ((x : !vec2) (b1 : !vec2) (c1 : !vec2)
+                                   (n2 : !vec2) (d2 : !scalar)
+                                   (b2 : !vec2) (c2 : !vec2))
+  (define V1 (rotor (e1 1) b1 c1))
+  (define V2 (motor n2 d2 (e1 1) b2 c2))
+  (convert (down (vprod (up x) V1 (interp V1 V2 0.5))) !vec2))
+
+(define-func apply_nlerp_2d ((x : !vec2) (b1 : !vec2) (c1 : !vec2)
+                             (n2 : !vec2) (d2 : !scalar)
+                             (b2 : !vec2) (c2 : !vec2)
+                             (t : !scalar))
+  (define V1 (rotor (e1 1) b1 c1))
+  (define V2 (motor n2 d2 (e1 1) b2 c2))
+  (convert (down (vprod (up x) V1 (nlerp V1 V2 t))) !vec2))
 
 (run-passes geomalg-current-module
             "geomalg-to-llvm")
@@ -376,4 +448,59 @@ int main() {
                         rotate(Y, -Pi / 4, C2)));
   SCHIR_ASSERT(vec_near(apply_interp_2d(Y, U1, C2, N2, 4, U1, C2, 0.5f),
                         Y + 2 * N2));
+
+  // A constant t = k / 2ⁿ uses square roots of motors.
+  auto Motors = [&](auto f, auto ...rest) {
+    return f(X, E3, 1, E1, R90, C, N, 2, E1, RG, O, rest...);
+  };
+  SCHIR_ASSERT(vec_near(Motors(apply_interp_0), Interp(0)));
+  SCHIR_ASSERT(vec_near(Motors(apply_interp_1), Interp(1)));
+  SCHIR_ASSERT(vec_near(Motors(apply_interp_half), Interp(0.5f)));
+  SCHIR_ASSERT(vec_near(Motors(apply_interp_3_4), Interp(0.75f)));
+  SCHIR_ASSERT(vec_near(Motors(apply_interp_1_16), Interp(0.0625f)));
+  // Pure rotations, screws, and the branch with a scalar part ≥ 0.
+  auto IdHalf = [&](auto ...args) { return Id(apply_interp_half, X, args...); };
+  SCHIR_ASSERT(vec_near(IdHalf(E3, 4, E1, R90, C),
+                        rotate(X, E3, Pi / 4, C) + 2 * E3));
+  SCHIR_ASSERT(vec_near(IdHalf(N, -6, E1, E1, C), X - 3 * N));
+  SCHIR_ASSERT(vec_near(IdHalf(E3, 0, E1, R270, C),
+                        rotate(X, E3, -Pi / 4, C)));
+  SCHIR_ASSERT(vec_near(IdHalf(E3, 0, E1, E2, C), rotate(X, E3, Pi / 2, C)));
+  SCHIR_ASSERT(vec_near(Id(apply_interp_3_4, X, E3, 4, E1, RG, C),
+                        Id(apply_interp, X, E3, 4, E1, RG, C, 0.75f)));
+  SCHIR_ASSERT(vec_near(apply_interp_half_2d(Y, Q90, C2, N2, -2, Q270, U2),
+                        Interp2(0.5f)));
+  SCHIR_ASSERT(vec_near(apply_interp_half_2d(Y, U1, C2, U2, 0, Q270, C2),
+                        rotate(Y, -Pi / 4, C2)));
+
+  // nlerp is the same as interp at t = 0, ½, and 1.
+  SCHIR_ASSERT(vec_near(Motors(apply_nlerp, 0.0f), Interp(0)));
+  SCHIR_ASSERT(vec_near(Motors(apply_nlerp, 0.5f), Interp(0.5f)));
+  SCHIR_ASSERT(vec_near(Motors(apply_nlerp, 1.0f), Interp(1)));
+  SCHIR_ASSERT(vec_near(Motors(apply_nlerp_half), Interp(0.5f)));
+  SCHIR_ASSERT(vec_near(Id(apply_nlerp, X, E3, 0, E1, R270, C, 0.5f),
+                        rotate(X, E3, -Pi / 4, C)));
+  // Otherwise the rotation by 2φ becomes the rotation by 2α with
+  // tan α = t sin φ / ((1 - t) + t cos φ) and translations are linear.
+  auto NlerpAngle = [](float Phi, float t) {
+    return 2 * std::atan2(t * std::sin(Phi), (1 - t) + t * std::cos(Phi));
+  };
+  for (float t : std::array{0.1f, 0.3f, 0.7f}) {
+    float Phi = Pi / 3;
+    vec3 RPhi = vec3{std::cos(Phi), std::sin(Phi), 0};
+    SCHIR_ASSERT(vec_near(Id(apply_nlerp, X, E3, 0, E1, RPhi, C, t),
+                          rotate(X, E3, NlerpAngle(Phi, t), C)));
+    SCHIR_ASSERT(vec_near(Id(apply_nlerp, X, N, 5, E1, E1, C, t),
+                          X + 5 * t * N));
+    SCHIR_ASSERT(vec_near(apply_nlerp_2d(Y, U1, C2, U2, 0, Q90, C2, t),
+                          rotate(Y, NlerpAngle(Pi / 4, t), C2)));
+  }
+  SCHIR_ASSERT(vec_near(apply_nlerp_2d(Y, Q90, C2, N2, -2, Q270, U2, 1),
+                        Interp2(1)));
+
+  // Normalizing a scaled motor keeps its motion.
+  SCHIR_ASSERT(vec_near(apply_normalize(X, -3, N, 2, E1, RG, C),
+                        apply_motor(X, N, 2, E1, RG, C)));
+  SCHIR_ASSERT(vec_near(apply_normalize(X, 0.25f, E3, 4, E1, R270, C),
+                        apply_motor(X, E3, 4, E1, R270, C)));
 }

@@ -529,6 +529,32 @@ struct ExpandLog : OpRewriteMetric<geomalg::LogOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+// Expand the normalization of a motor.
+struct ExpandNormalize : OpRewriteMetric<geomalg::NormalizeOp> {
+  using Base::Base;
+
+  void initialize() {
+    setDebugName("ExpandNormalize");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::NormalizeOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+// Expand the interpolation of motors.
+struct ExpandInterp : OpRewriteMetric<geomalg::InterpOp> {
+  using Base::Base;
+
+  void initialize() {
+    setDebugName("ExpandInterp");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::InterpOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 // Expand the inner product as the left contraction to a multivector.
 struct ExpandLC : mlir::OpRewritePattern<geomalg::InnerProdOp> {
   using Base = mlir::OpRewritePattern<geomalg::InnerProdOp>;
@@ -1688,7 +1714,7 @@ llvm::LogicalResult ExpandVersorOperand::matchAndRewrite(
       mlir::Operation* Op,
       mlir::PatternRewriter& Rewriter) const {
   if (!isa<SumOp, OuterProdOp, InnerProdOp, GeomProdOp,
-           DotOp, VersorProdOp, LogOp>(Op))
+           DotOp, VersorProdOp, LogOp, NormalizeOp>(Op))
     return llvm::failure();
 
   // The versors of a versor product are expanded by ExpandVersorVP.
@@ -1878,6 +1904,130 @@ llvm::LogicalResult ExpandLog::matchAndRewrite(
     mlir::Value P = createSum(Rewriter, Loc, Parts.Quadvectors);
     mlir::Value BrP = GeomProdOp::create(Rewriter, Loc, Br, P);
     Result = S.sub(Result, S.mul(PCoeff, BrP));
+  }
+  replaceOp(Rewriter, Op, Result);
+  return llvm::success();
+}
+
+// normalize(M) = σ M (1 - P / (2a)) / √a
+// where M M̃ = a + P with a scalar a and a quadvector P (e.g. e₁₂₃∞)
+// that squares to zero and commutes with M, and σ = sign of the scalar
+// part of M so ((1 - P / (2a)) / √a)² (a + P) = 1.
+llvm::LogicalResult ExpandNormalize::matchAndRewrite(
+    geomalg::NormalizeOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Location Loc = Op.getLoc();
+  mlir::Value M = Op.getArg();
+  if (!Metric || isUnknown(M) || isZero(M))
+    return llvm::failure();
+
+  MotorParts Parts;
+  if (!Parts.init(Rewriter, M))
+    return Rewriter.notifyMatchFailure(Op, "expecting a motor");
+  if (Parts.Scalars.empty() && Parts.Rotations.empty())
+    return Rewriter.notifyMatchFailure(Op, "expecting an invertible motor");
+
+  ScalarBuilder S(Rewriter, Loc);
+  mlir::Type UnknownT = UnknownType::get(Rewriter.getContext());
+  mlir::Value MRev = ReverseOp::create(Rewriter, Loc, M);
+  mlir::Value NormSq = GeomProdOp::create(Rewriter, Loc, M, MRev);
+  mlir::Value A = GradeOp::create(Rewriter, Loc, UnknownT, NormSq, 0);
+  mlir::Value InvNorm = S.inv(S.sqrt(A));
+  if (!Parts.Scalars.empty()) {
+    mlir::Value Sc = createSum(Rewriter, Loc, Parts.Scalars);
+    InvNorm = S.selectLt(Sc, S.constant(0.0f), S.neg(InvNorm), InvNorm);
+  }
+  mlir::Value Result = S.mul(InvNorm, M);
+  if (!Parts.Quadvectors.empty()) {
+    mlir::Value P = GradeOp::create(Rewriter, Loc, UnknownT, NormSq, 4);
+    mlir::Value Half = S.mul(S.constant(0.5f), S.inv(A));
+    mlir::Value ResultP = GeomProdOp::create(Rewriter, Loc, Result, P);
+    Result = S.sub(Result, S.mul(Half, ResultP));
+  }
+  replaceOp(Rewriter, Op, Result);
+  return llvm::success();
+}
+
+// The largest n for which the exact interpolation with t = k / 2ⁿ
+// is computed with square roots of motors.
+static constexpr unsigned MaxRootDepth = 4;
+
+// interp(V₁, V₂, t) = D^t where D = normalize(V₂ Ṽ₁).
+// The square root of a normalized motor D with a nonnegative scalar part
+// is √D = normalize(1 + D) so D^(k / 2ⁿ) is a product of nested square
+// roots. Otherwise for the exact method D^t = exp(t log(V₂ Ṽ₁)), and
+// for nlerp D^t ≈ normalize((1 - t) + t D).
+llvm::LogicalResult ExpandInterp::matchAndRewrite(
+    geomalg::InterpOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  if (!Metric)
+    return llvm::failure();
+
+  mlir::Location Loc = Op.getLoc();
+  mlir::Value T = Op.getT();
+  ScalarBuilder S(Rewriter, Loc);
+  mlir::Value V1Rev = ReverseOp::create(Rewriter, Loc, Op.getV1());
+  mlir::Value Delta = GeomProdOp::create(Rewriter, Loc, Op.getV2(), V1Rev);
+  bool IsExact = Op.getMethod() == InterpMethod::exact;
+
+  // Find t = k / 2ⁿ with k odd (or t = 0).
+  std::optional<std::pair<uint32_t, unsigned>> Dyadic;
+  auto TBlade = T.getDefiningOp<BladeOp>();
+  if (TBlade && isa<BladeType>(T.getType())) {
+    float TF = TBlade.getFloat();
+    float Scaled = TF * (1u << MaxRootDepth);
+    if (TF >= 0.0f && TF <= 1.0f && Scaled == std::floor(Scaled)) {
+      uint32_t K = static_cast<uint32_t>(Scaled);
+      unsigned N = MaxRootDepth;
+      while (K != 0 && K % 2 == 0 && N != 0) {
+        K /= 2;
+        --N;
+      }
+      if (IsExact || N <= 1)
+        Dyadic = {K, N};
+    }
+  } else if (isZero(T)) {
+    Dyadic = {0, 0};
+  }
+
+  if (Dyadic) {
+    auto [K, N] = *Dyadic;
+    if (K == 0) {
+      replaceOp(Rewriter, Op, S.constant(1.0f));
+      return llvm::success();
+    }
+    // Roots[j] = D^(1 / 2ʲ)
+    llvm::SmallVector<mlir::Value, MaxRootDepth + 1> Roots;
+    Roots.push_back(NormalizeOp::create(Rewriter, Loc, Delta));
+    for (unsigned J = 1; J <= N; ++J) {
+      mlir::Value OnePlus = S.add(S.constant(1.0f), Roots.back());
+      Roots.push_back(NormalizeOp::create(Rewriter, Loc, OnePlus));
+    }
+    // D^(k / 2ⁿ) is the product of D^(1 / 2ʲ) for each bit 2ⁿ⁻ʲ of k.
+    mlir::Value Result;
+    for (unsigned J = 0; J <= N; ++J) {
+      if (!(K & (1u << (N - J))))
+        continue;
+      Result = Result ? GeomProdOp::create(Rewriter, Loc, Result, Roots[J])
+                      : Roots[J];
+    }
+    replaceOp(Rewriter, Op, Result);
+    return llvm::success();
+  }
+
+  mlir::Value Result;
+  switch (Op.getMethod()) {
+  case InterpMethod::exact: {
+    mlir::Value Log = LogOp::create(Rewriter, Loc, Delta);
+    Result = ExpOp::create(Rewriter, Loc, S.mul(T, Log));
+    break;
+  }
+  case InterpMethod::nlerp: {
+    mlir::Value D = NormalizeOp::create(Rewriter, Loc, Delta);
+    mlir::Value Lerp = S.add(S.sub(S.constant(1.0f), T), S.mul(T, D));
+    Result = NormalizeOp::create(Rewriter, Loc, Lerp);
+    break;
+  }
   }
   replaceOp(Rewriter, Op, Result);
   return llvm::success();
@@ -2445,7 +2595,9 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
   PS.add<ExpandInverse,
          ExpandConvert,
          ExpandExp,
-         ExpandLog
+         ExpandLog,
+         ExpandNormalize,
+         ExpandInterp
            >(Metric::get(MK), Ctx, mlir::PatternBenefit(5));
   PS.add<ExpandVP>(Metric::get(MK), Ctx, mlir::PatternBenefit(2));
   PS.add<ExpandVersorVP,

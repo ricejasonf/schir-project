@@ -6,6 +6,7 @@
 
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/BuiltinAttributes.td"
+include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
@@ -17,6 +18,23 @@ include "schir/Interfaces/Interfaces.td"
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
   let useDefaultTypePrinterParser = 1;
+  let useDefaultAttributePrinterParser = 1;
+}
+
+// Attributes
+
+def Geomalg_InterpMethod : I32EnumAttr<"InterpMethod",
+    "algorithm for the interpolation of motors", [
+      I32EnumAttrCase<"exact", 0>,
+      I32EnumAttrCase<"nlerp", 1>
+    ]> {
+  let cppNamespace = "::geomalg";
+  let genSpecializedAttr = 0;
+}
+
+def Geomalg_InterpMethodAttr : EnumAttr<Geomalg_Dialect, Geomalg_InterpMethod,
+                                        "interp_method"> {
+  let assemblyFormat = "`<` $value `>`";
 }
 
 // Traits
@@ -627,6 +645,45 @@ def Geomalg_LogOp : Geomalg_Op<"log"> {
         $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
       }]>
   ];
+}
+
+def Geomalg_NormalizeOp : Geomalg_Op<"normalize"> {
+  let description = [{
+    Normalize a motor M of a rigid body motion to ±M / |M| so that
+    M M̃ = 1 choosing the sign with a nonnegative scalar part.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Unknown:$result);
+  let hasVerifier = 1;
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$Arg), [{
+        $_state.addOperands(Arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
+}
+
+def Geomalg_InterpOp : Geomalg_Op<"interp"> {
+  let description = [{
+    Interpolate the motion from the motor V₁ to the motor V₂ resulting
+    in the motor M(t) to be applied after V₁ with M(0) = 1 and
+    M(1) = V₂ Ṽ₁ (normalized). The method chooses the algorithm:
+
+      exact: M(t) = exp(t log(V₂ Ṽ₁)) with constant velocity.
+             For a constant t = k / 2ⁿ in [0, 1] with n ≤ 4 this is
+             computed with square roots of motors.
+      nlerp: M(t) = normalize((1 - t) + t normalize(V₂ Ṽ₁)) which
+             does not have constant velocity.
+             It is exact for t = 0, ½, and 1.
+  }];
+
+  let arguments = (ins Geomalg_Value:$v1, Geomalg_Value:$v2,
+                       Geomalg_ScalarValue:$t,
+                       DefaultValuedAttr<Geomalg_InterpMethodAttr,
+                         "::geomalg::InterpMethod::exact">:$method);
+  let results   = (outs Geomalg_Unknown:$result);
+  let hasVerifier = 1;
 }
 
 // Scalar functions

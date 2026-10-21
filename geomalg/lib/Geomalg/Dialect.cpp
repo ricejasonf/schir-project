@@ -14,10 +14,11 @@
 
 #include "geomalg/GeomalgTypeInterfaces.cpp.inc"
 
-#if 0 // We do not have custom attributes yet.
+#include "geomalg/GeomalgEnums.cpp.inc"
+
 #define GET_ATTRDEF_CLASSES
 #include "geomalg/GeomalgAttrs.cpp.inc"
-#endif
+
 #define GET_OP_CLASSES
 #include "geomalg/GeomalgOps.cpp.inc"
 
@@ -27,12 +28,10 @@ void geomalg::GeomalgDialect::initialize() {
 #include "geomalg/GeomalgTypes.cpp.inc"
     >();
 
-#if 0 // We do not have custom attributes yet.
   addAttributes<
 #define GET_ATTRDEF_LIST
 #include "geomalg/GeomalgAttrs.cpp.inc"
       >();
-#endif
 
   addOperations<
 #define GET_OP_LIST
@@ -391,4 +390,15 @@ llvm::LogicalResult geomalg::ExpOp::verify() {
 
 llvm::LogicalResult geomalg::LogOp::verify() {
   return verifyMotorBlades(*this, getArg().getType(), /*BivectorOnly=*/false);
+}
+
+llvm::LogicalResult geomalg::NormalizeOp::verify() {
+  return verifyMotorBlades(*this, getArg().getType(), /*BivectorOnly=*/false);
+}
+
+llvm::LogicalResult geomalg::InterpOp::verify() {
+  if (failed(verifyMotorBlades(*this, getV1().getType(),
+                               /*BivectorOnly=*/false)))
+    return llvm::failure();
+  return verifyMotorBlades(*this, getV2().getType(), /*BivectorOnly=*/false);
 }
