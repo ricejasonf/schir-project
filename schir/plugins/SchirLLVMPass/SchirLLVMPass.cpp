@@ -13,6 +13,7 @@
 #include <llvm/Linker/Linker.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Plugins/PassPlugin.h>
+#include <llvm/Support/raw_ostream.h>
 
 namespace mlir {
   class ModuleOp;
@@ -74,45 +75,80 @@ public:
   }
 };
 
+// Ensure injected functions match their declarations in MainModule so the
+// linker does not silently join mismatched ABIs.
+void checkSignatures(llvm::Module& MainModule, llvm::Module& M,
+                     llvm::SmallVectorImpl<std::string>& Errors) {
+  for (llvm::Function& F : M) {
+    if (F.hasLocalLinkage())
+      continue;
+    llvm::Function* MainF = MainModule.getFunction(F.getName());
+    if (!MainF || MainF->hasLocalLinkage() ||
+        MainF->getFunctionType() == F.getFunctionType())
+      continue;
+    std::string Msg;
+    llvm::raw_string_ostream OS(Msg);
+    OS << "Schir injected function '" << F.getName() << "' has type '"
+       << *F.getFunctionType() << "' but the module expects '"
+       << *MainF->getFunctionType() << "'";
+    Errors.push_back(std::move(Msg));
+  }
+}
+
 class InjectPass : public llvm::PassInfoMixin<InjectPass> {
-public:
-  llvm::PreservedAnalyses run(llvm::Module& MainModule,
-                              llvm::ModuleAnalysisManager& MA) {
-    schir::SchirScheme* SchirScheme = schir_clang::getSchirSchemeInstance();
-    if (!SchirScheme)
-      return llvm::PreservedAnalyses::all();
-    schir::Context& C = SchirScheme->getContext();
+  // Translate and link the injected modules, adding any errors to Errors.
+  static bool inject(schir::Context& C, llvm::Module& MainModule,
+                     llvm::SmallVectorImpl<std::string>& Errors) {
     llvm::LLVMContext& LLVMCtx = MainModule.getContext();
-    // Hijack the DiagnosticHandler temporarily.
-    // It prints to llvm::errs() by default.
-    DiagnosticHandlerHolder DHH(LLVMCtx);
     // If ModuleList is not defined or is empty just skip.
     schir::Value ModuleList = ::InjectedModules.get(C);
     if (!isa<schir::Pair>(ModuleList))
-      return llvm::PreservedAnalyses::all();
+      return false;
     for (schir::Value OpVal : ModuleList) {
       auto* Op = cast<mlir::Operation>(OpVal);
       if (mlir::isa<mlir::ModuleOp>(Op)) {
         std::unique_ptr<llvm::Module> M
           = mlir::translateModuleToLLVMIR(Op, LLVMCtx);
         if (!M) {
-          LLVMCtx.emitError("Schir mlir translate to llvm failed.");
-          return llvm::PreservedAnalyses::all();
-        } else {
-          M->setDataLayout(MainModule.getDataLayout());
-          M->setTargetTriple(MainModule.getTargetTriple());
-          if (llvm::Linker::linkModules(MainModule, std::move(M))) {
-            LLVMCtx.emitError("Schir llvm link module failed.");
-            return llvm::PreservedAnalyses::all();
-          }
+          Errors.push_back("Schir mlir translate to llvm failed.");
+          return false;
+        }
+        M->setDataLayout(MainModule.getDataLayout());
+        M->setTargetTriple(MainModule.getTargetTriple());
+        checkSignatures(MainModule, *M, Errors);
+        if (!Errors.empty())
+          return false;
+        if (llvm::Linker::linkModules(MainModule, std::move(M))) {
+          Errors.push_back("Schir llvm link module failed.");
+          return false;
         }
       } else {
-        LLVMCtx.emitError("SchirClang unsupported injected operation: ");
+        Errors.push_back("SchirClang unsupported injected operation: ");
         OpVal.dump();
       }
     }
+    return true;
+  }
 
-    return llvm::PreservedAnalyses::none();
+public:
+  llvm::PreservedAnalyses run(llvm::Module& MainModule,
+                              llvm::ModuleAnalysisManager& MA) {
+    schir::SchirScheme* SchirScheme = schir_clang::getSchirSchemeInstance();
+    if (!SchirScheme)
+      return llvm::PreservedAnalyses::all();
+    llvm::SmallVector<std::string> Errors;
+    bool Changed;
+    {
+      // Hijack the DiagnosticHandler temporarily.
+      // It prints to llvm::errs() by default.
+      DiagnosticHandlerHolder DHH(MainModule.getContext());
+      Changed = inject(SchirScheme->getContext(), MainModule, Errors);
+    }
+    // Emit errors with the original handler so that compilation fails.
+    for (const std::string& Msg : Errors)
+      MainModule.getContext().emitError(Msg);
+    return Changed ? llvm::PreservedAnalyses::none()
+                   : llvm::PreservedAnalyses::all();
   }
 
   constexpr static bool isRequired() { return true; }

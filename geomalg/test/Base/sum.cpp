@@ -23,7 +23,7 @@ extern "C" float test_basic_sum_1(float);
 extern "C" float test_basic_sum_2(float, float);
 extern "C" vec2 test_vec_sum_1(vec2);
 extern "C" vec2 test_vec_sum_2(vec2, vec2);
-extern "C" vec2 test_vec_sum_3(vec2, vec2, vec2);
+extern "C" vec3 test_vec_sum_3(vec2, vec2, vec3);
 extern "C" float test_negate(vec2);
 
 #pragma schir_scheme
@@ -70,7 +70,7 @@ int main() {
   SCHIR_ASSERT(vec_equal(test_vec_sum_2(vec2{2, 32}, vec2{-2, -32}),
                          vec2{0, 0}));
   SCHIR_ASSERT(vec_equal(test_vec_sum_3(vec2{2, 32}, vec2{-2, -32},
-                                        vec2{3.14, -3.14}),
-                         vec2{3.14, -3.14}));
+                                        vec3{3.14, -3.14, 5}),
+                         vec3{3.14, -3.14, 5}));
   SCHIR_ASSERT(test_negate(vec2{5, 6}) == 0.0);
 }
