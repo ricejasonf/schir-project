@@ -1,4 +1,5 @@
-// RUN: clang++ -std=c++26 -I %schir_module_path -I %geomalg_module_path \
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -I %geomalg_module_path \
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -o %t
@@ -7,22 +8,22 @@
 // The scalar functions are lowered to our own polynomials
 // (instead of libm) so check them against libm in double precision.
 
+#include <geomalg/nbdl.hpp>
 #include <schir/SCHIR_ASSERT.h>
 #include <cmath>
 #include <initializer_list>
 #include <numbers>
 
-extern "C" float test_sin(float);
-extern "C" float test_cos(float);
-extern "C" float test_atan2(float, float);
-
+namespace {
+namespace test {
 #pragma schir_scheme
 {
-(import (schir base)
-        (schir llvm pass)
-        (schir mlir)
-        (schir mlir all-passes)
-        (geomalg base))
+(import (nbdl spec)
+        (nbdl spec geomalg)
+        (geomalg base)
+        (only (schir mlir) create-op result))
+
+(export-c test_sin test_cos test_atan2)
 
 (define (scalar-op-aux Loc Name . Args)
   (result
@@ -37,19 +38,24 @@ extern "C" float test_atan2(float, float);
     ((scalar-op Name Arg ...)
      (scalar-op-aux (syntax-source-loc) Name Arg ...))))
 
-(define-func test_sin ((x : !scalar))
-  (scalar-op "geomalg.sin" x))
+(define-fn test_sin ((x : !scalar)) -> (!scalar)
+  (return (scalar-op "geomalg.sin" x)))
 
-(define-func test_cos ((x : !scalar))
-  (scalar-op "geomalg.cos" x))
+(define-fn test_cos ((x : !scalar)) -> (!scalar)
+  (return (scalar-op "geomalg.cos" x)))
 
-(define-func test_atan2 ((y : !scalar) (x : !scalar))
-  (scalar-op "geomalg.atan2" y x))
+(define-fn test_atan2 ((y : !scalar) (x : !scalar)) -> (!scalar)
+  (return (scalar-op "geomalg.atan2" y x)))
 
-(run-passes geomalg-current-module
-            "geomalg-to-llvm")
-(inject-module geomalg-current-module)
+(finalize-module)
 }
+} // namespace test
+
+// Compare the coefficients of the scalar results as floats.
+float test_sin(float x) { return test::test_sin(x).value; }
+float test_cos(float x) { return test::test_cos(x).value; }
+float test_atan2(float y, float x) { return test::test_atan2(y, x).value; }
+} // namespace
 
 // The error of the result in units in the last place of the exact value
 // (with the ulp of the smallest normal float near zero.)
