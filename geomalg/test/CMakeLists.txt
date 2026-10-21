@@ -10,6 +10,7 @@ add_lit_testsuite(check-geomalg "Running Geomalg tests"
   DEPENDS
   Geomalg
   geomalg-opt
+  Nbdl
   schir-scheme
   schir
   SchirClang

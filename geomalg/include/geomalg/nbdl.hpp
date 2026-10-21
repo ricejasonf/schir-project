@@ -8,6 +8,7 @@
 #define GEOMALG_NBDL_HPP
 
 #include <charconv>
+#include <concepts>
 #include <cstdint>
 #include <string>
 
@@ -27,20 +28,83 @@ struct zero {
 
 // Geomalg.Blade is implicitly defined as "basis k-blade".
 // See Geomalg.td.
+// A scalar converts implicitly from a float.
 template <uint32_t Tag>
 struct blade {
   float value;
+
+  constexpr blade() = default;
+  explicit(Tag != 0) constexpr blade(float v) : value(v) { }
 };
 
-template <typename... BasisVector>
+// The coefficients are in the order of the basis vectors.
+//  vec3{1, 2, 3}
+template <typename ...BasisVector>
 struct multivector {
-  nbdl::vec_f32<sizeof...(BasisVector)> value;
+  static constexpr unsigned size = sizeof...(BasisVector);
+  nbdl::vec_f32<size> value;
+
+  constexpr multivector() = default;
+
+  template <std::convertible_to<float> ...Coeffs>
+    requires (sizeof...(Coeffs) == size)
+  constexpr multivector(Coeffs ...coeffs)
+    : value{static_cast<float>(coeffs)...} { }
+
+  explicit constexpr multivector(nbdl::vec_f32<size> v) : value(v) { }
 };
 
-template <typename... BasisVector>
+template <typename ...BasisVector>
 struct unit_vector {
-  nbdl::vec_f32<sizeof...(BasisVector)> value;
+  static constexpr unsigned size = sizeof...(BasisVector);
+  nbdl::vec_f32<size> value;
+
+  constexpr unit_vector() = default;
+
+  template <std::convertible_to<float> ...Coeffs>
+    requires (sizeof...(Coeffs) == size)
+  constexpr unit_vector(Coeffs ...coeffs)
+    : value{static_cast<float>(coeffs)...} { }
+
+  explicit constexpr unit_vector(nbdl::vec_f32<size> v) : value(v) { }
 };
+
+// The vector space operations of multivectors with the same basis.
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator+(multivector<BasisVector...> a, multivector<BasisVector...> b) {
+  return multivector<BasisVector...>(a.value + b.value);
+}
+
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator-(multivector<BasisVector...> a, multivector<BasisVector...> b) {
+  return multivector<BasisVector...>(a.value - b.value);
+}
+
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator-(multivector<BasisVector...> a) {
+  return multivector<BasisVector...>(-a.value);
+}
+
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator*(float s, multivector<BasisVector...> a) {
+  return multivector<BasisVector...>(s * a.value);
+}
+
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator*(multivector<BasisVector...> a, float s) {
+  return multivector<BasisVector...>(a.value * s);
+}
+
+template <typename ...BasisVector>
+constexpr multivector<BasisVector...>
+operator/(multivector<BasisVector...> a, float s) {
+  return multivector<BasisVector...>(a.value / s);
+}
 
 // Basis vectors and common types (See base.sld.)
 using scalar = blade<0>;
@@ -68,6 +132,26 @@ static_assert(sizeof(vec2) == 8);
 static_assert(sizeof(vec3) == 16);
 static_assert(sizeof(vec4) == 16);
 static_assert(sizeof(vec5) == 32);
+
+// Compare the coefficients of a and b within an absolute tolerance.
+// (NaN coefficients are never near.)
+template <uint32_t Tag>
+constexpr bool near(blade<Tag> a, blade<Tag> b, float tol = 1e-5f) {
+  float d = a.value - b.value;
+  return d * d <= tol * tol;
+}
+
+// (Allow the implicit conversion of a float to a scalar.)
+constexpr bool near(scalar a, scalar b, float tol = 1e-5f) {
+  return near<0>(a, b, tol);
+}
+
+template <typename ...BasisVector>
+constexpr bool near(multivector<BasisVector...> a,
+                    multivector<BasisVector...> b, float tol = 1e-5f) {
+  auto d = a.value - b.value;
+  return __builtin_reduce_and(d * d <= tol * tol);
+}
 } // namespace geomalg
 
 namespace nbdl {
@@ -90,22 +174,22 @@ struct get_mlir_type<geomalg::blade<Tag>> {
   }
 };
 
-template <typename... basis_vecs>
-struct get_mlir_type<geomalg::multivector<basis_vecs...>> {
+template <typename ...BasisVector>
+struct get_mlir_type<geomalg::multivector<BasisVector...>> {
   static constexpr std::string apply() {
     std::string result = std::string("!geomalg.multivector<");
-    (result.append((get_mlir_type<basis_vecs>::apply() + ',')), ...);
+    (result.append((get_mlir_type<BasisVector>::apply() + ',')), ...);
     // Replace the trailing comma.
     result.back() = '>';
     return result;
   }
 };
 
-template <typename... basis_vecs>
-struct get_mlir_type<geomalg::unit_vector<basis_vecs...>> {
+template <typename ...BasisVector>
+struct get_mlir_type<geomalg::unit_vector<BasisVector...>> {
   static constexpr std::string apply() {
     std::string result = std::string("!geomalg.unit_vector<");
-    (result.append((get_mlir_type<basis_vecs>::apply() + ',')), ...);
+    (result.append((get_mlir_type<BasisVector>::apply() + ',')), ...);
     // Replace the trailing comma.
     result.back() = '>';
     return result;

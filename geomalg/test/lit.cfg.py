@@ -15,6 +15,7 @@ config.excludes = [
 ]
 config.substitutions.append(('%schir_module_path', config.schir_module_path))
 config.substitutions.append(('%geomalg_module_path', config.geomalg_module_path))
+config.substitutions.append(('%nbdl_module_path', config.nbdl_module_path))
 config.substitutions.append(('%geomalg_lib_dir', config.geomalg_lib_dir))
 
 llvm_config.with_environment('LD_LIBRARY_PATH', config.geomalg_lib_dir, append_path=True)

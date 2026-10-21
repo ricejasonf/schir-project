@@ -22,6 +22,7 @@
 #include <geomalg/nbdl.hpp>
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
+#include <type_traits>
 
 namespace {
 namespace foo {
@@ -216,35 +217,66 @@ struct vec3_pair {
   geomalg::vec3 b;
 };
 
-bool vec_equal(geomalg::vec3 A, geomalg::vec3 B) {
+using geomalg::near;
+using geomalg::scalar;
+using geomalg::vec2;
+using geomalg::vec3;
+
+bool vec_equal(vec3 A, vec3 B) {
   return __builtin_reduce_and(A.value == B.value);
 }
 
-bool vec_near(geomalg::vec2 A, geomalg::vec2 B) {
-  auto D = A.value - B.value;
-  return __builtin_reduce_max(D * D) <= 1e-10f;
-}
+// The geomalg types keep the layout of their values (for the C adapters.)
+static_assert(std::is_trivially_copyable_v<vec3>);
+static_assert(std::is_trivially_default_constructible_v<vec3>);
+static_assert(std::is_standard_layout_v<vec3>);
+static_assert(std::is_trivially_copyable_v<scalar>);
+static_assert(vec3{}.value.z == 0);
+
+// A scalar converts implicitly from a float, but other blades and
+// multivectors from their values do not.
+static_assert(std::is_convertible_v<float, scalar>);
+static_assert(!std::is_convertible_v<float, geomalg::e1>);
+static_assert(!std::is_convertible_v<nbdl::vec_f32<3>, vec3>);
+static_assert(vec3(nbdl::vec_f32<3>{1, 2, 3}).value.y == 2);
+
+static_assert(near(vec2{1, 2}, vec2{1, 2.000001f}));
+static_assert(!near(vec2{1, 2}, vec2{1, 2.0001f}));
+static_assert(near(scalar{1}, 1.000001f));
+static_assert(!near(scalar{1}, 1.0001f));
+
+// The vector space operations.
+static_assert(near(vec3{1, 2, 4} + 2 * vec3{0, 0, 1}, vec3{1, 2, 6}));
+static_assert(near(vec3{1, 2, 4} - vec3{1, 1, 1} * 2, vec3{-1, 0, 2}));
+static_assert(near(-vec3{1, 2, 4} / 2, vec3{-0.5, -1, -2}));
 
 int main() {
   // Call the geomalg functions lowered to LLVM directly.
-  SCHIR_ASSERT(foo::test_dot({{3, 2, 4}}, {{4, 2, 1}}).value == 20);
-  SCHIR_ASSERT(foo::test_dot({{1, 0, 0}}, {{0, 1, 0}}).value == 0);
-  SCHIR_ASSERT(foo::test_dot({{-1, 2, 0.5}}, {{2, 3, 4}}).value == 6);
-  SCHIR_ASSERT(vec_equal(foo::test_add({{3, 2, 4}}, {{4, 2, 1}}), {{7, 4, 5}}));
-  SCHIR_ASSERT(vec_equal(foo::test_add({{1, 0, 0}}, {{0, 1, 0}}), {{1, 1, 0}}));
-  SCHIR_ASSERT(vec_equal(foo::test_add({{-1, 2, 0.5}}, {{1, -2, -0.5}}),
-                         {{0, 0, 0}}));
+  SCHIR_ASSERT(foo::test_dot(vec3{3, 2, 4}, vec3{4, 2, 1}).value == 20);
+  SCHIR_ASSERT(foo::test_dot(vec3{1, 0, 0}, vec3{0, 1, 0}).value == 0);
+  SCHIR_ASSERT(foo::test_dot(vec3{-1, 2, 0.5}, vec3{2, 3, 4}).value == 6);
+  SCHIR_ASSERT(vec_equal(foo::test_add(vec3{3, 2, 4}, vec3{4, 2, 1}),
+                         vec3{7, 4, 5}));
+  SCHIR_ASSERT(vec_equal(foo::test_add(vec3{1, 0, 0}, vec3{0, 1, 0}),
+                         vec3{1, 1, 0}));
+  SCHIR_ASSERT(vec_equal(foo::test_add(vec3{-1, 2, 0.5}, vec3{1, -2, -0.5}),
+                         vec3{0, 0, 0}));
+
+  // NaN coefficients are never near.
+  float NaN = __builtin_nanf("");
+  SCHIR_ASSERT(!near(vec2{1, NaN}, vec2{1, NaN}));
+  SCHIR_ASSERT(!near(scalar{NaN}, NaN));
 
   // Rotate by twice the angle from A to B.
-  SCHIR_ASSERT(vec_near(foo::normalize_rotate({{3, 2}}, {{2, 0}}, {{1, 1}}),
-                        {{-2, 3}}));
+  SCHIR_ASSERT(near(foo::normalize_rotate(vec2{3, 2}, vec2{2, 0}, vec2{1, 1}),
+                    vec2{-2, 3}));
 
-  SCHIR_ASSERT(vec_equal(foo::cancel_vec3({{3, 2, 4}}), {{0, 0, 0}}));
+  SCHIR_ASSERT(vec_equal(foo::cancel_vec3(vec3{3, 2, 4}), vec3{0, 0, 0}));
 
-  vec3_pair Store{{{3, 2, 4}}, {{4, 2, 1}}};
+  vec3_pair Store{vec3{3, 2, 4}, vec3{4, 2, 1}};
 
   float Result = 0;
-  foo::test_test_dot(Store, [&](geomalg::scalar S) { Result = S.value; });
+  foo::test_test_dot(Store, [&](scalar S) { Result = S.value; });
   SCHIR_ASSERT(Result == 20);
 
   // The result is discarded.
