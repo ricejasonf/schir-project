@@ -422,11 +422,13 @@ def Geomalg_InverseOp : Geomalg_Op<"inverse", [InferredResult]> {
     Take the multiplicative inverse. For a single k-blade,
     this is defined as applying the multiplicative inverse of
     the norm squared to the reverse of the k-blade.
-    Other multivectors are assumed to be versors.
+    The operand must be a blade, a 1-vector, a versor, or an even
+    multivector which is assumed to be an even versor (e.g. a motor).
   }];
 
   let arguments = (ins Geomalg_Value:$arg);
   let results   = (outs Geomalg_Value:$result);
+  let hasVerifier = 1;
 }
 
 def Geomalg_ReverseOp : Geomalg_Op<"reverse",

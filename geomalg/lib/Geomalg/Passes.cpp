@@ -2187,10 +2187,12 @@ llvm::LogicalResult ExpandInverse::matchAndRewrite(
   auto MV = dyn_cast<geomalg::MultivectorLike>(Arg.getType());
 
   // Scalars are lowered to division in the dialect conversion.
-  if ((!BT && !MV) || (BT && BT.getGrade() == 0))
+  // Leave unsupported operands for the verifier to report.
+  if ((!BT && !MV) || (BT && BT.getGrade() == 0) ||
+      !hasSupportedInverse(Arg.getType()))
     return llvm::failure();
 
-  // V⁻¹ = Ṽ / ⟨V Ṽ⟩₀ for a multivector V assumed to be a versor.
+  // V⁻¹ = Ṽ / ⟨V Ṽ⟩₀ for an even multivector V assumed to be a versor.
   if (MV && !MV.isVector()) {
     mlir::Value NormSq = createVersorNormSq(Rewriter, Loc, Arg);
     mlir::Value Rev = geomalg::ReverseOp::create(Rewriter, Loc, Arg);

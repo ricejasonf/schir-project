@@ -100,6 +100,19 @@ llvm::SmallVector<BladeType, 8> getBladeTypes(mlir::Type T) {
   return {};
 }
 
+// Return true if the inverse of a value of type T has a supported
+// closed form. (ie A⁻¹ = Ã / (A ⌋ Ã) for a blade or 1-vector and
+// Ṽ / ⟨V Ṽ⟩₀ for a versor or an even multivector assumed to be a versor.)
+inline
+bool hasSupportedInverse(mlir::Type T) {
+  if (isUnknown(T) || isZero(T) || isVector(T) ||
+      isa<BladeType, VersorType>(T))
+    return true;
+  return llvm::none_of(getBladeTypes(T), [](BladeType BT) {
+    return BT.getGrade() % 2 != 0;
+  });
+}
+
 }  // namespace geomalg
 
 #endif

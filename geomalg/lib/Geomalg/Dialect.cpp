@@ -231,6 +231,13 @@ geomalg::InverseOp::inferReturnTypes(
   return llvm::success();
 }
 
+llvm::LogicalResult geomalg::InverseOp::verify() {
+  if (hasSupportedInverse(getArg().getType()))
+    return llvm::success();
+  return emitOpError("expecting a blade, 1-vector, versor, "
+                     "or even multivector operand");
+}
+
 llvm::LogicalResult
 geomalg::InnerProdOp::inferReturnTypes(
                   mlir::MLIRContext* Ctx,
