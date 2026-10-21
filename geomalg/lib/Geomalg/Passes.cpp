@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <optional>
 #include <string>
 
 // Generated stuff
@@ -669,19 +670,6 @@ struct SimplifyMul : mlir::OpTraitRewritePattern<geomalg::IsMul> {
 
   llvm::LogicalResult matchAndRewrite(
       mlir::Operation* Op,
-      mlir::PatternRewriter& Rewriter) const override;
-};
-
-struct SimplifyDoubling : mlir::OpRewritePattern<SumOp> {
-  using Base = mlir::OpRewritePattern<SumOp>;
-  using Base::OpRewritePattern;
-
-  void initialize() {
-    setDebugName("SimplifyDoubling");
-  }
-
-  llvm::LogicalResult matchAndRewrite(
-      SumOp Op,
       mlir::PatternRewriter& Rewriter) const override;
 };
 
@@ -2318,39 +2306,6 @@ auto GetDefiningOp = [](mlir::Value V) -> T {
   return V.getDefiningOp<T>();
 };
 
-// Maybe this is overkill.
-llvm::LogicalResult SimplifyDoubling::matchAndRewrite(
-    SumOp Op,
-    mlir::PatternRewriter& Rewriter) const {
-  mlir::Location Loc = Op->getLoc();
-  // For any sum with two of the same operand, replace
-  // those with a single term that multiplies by 2.
-  // We expect a sorted list of operands where duplicates
-  // are adjacent.
-  if (!isa<BladeType>(Op.getResult().getType()))
-    return llvm::failure();
-  mlir::ValueRange Operands = Op->getOperands();
-  auto Itr = std::adjacent_find(Operands.begin(), Operands.end());
-  if (Itr == Operands.end())
-    return llvm::failure();
-
-  mlir::ValueRange SubOperands(Itr, Operands.end());
-  mlir::Value Term = *Itr;
-  auto Count = llvm::count(SubOperands, Term);
-  auto EvenCount = (Count / 2) * 2; // Get highest even count.
-  mlir::Value CountV = BladeOp::create(Rewriter, Loc,
-                                       static_cast<float>(Count));
-  mlir::Value Mul = CMulOp::create(Rewriter, Loc, Term.getType(),
-                                   {CountV, Term});
-
-  llvm::SmallVector<mlir::Value, 8> NewOperands;
-  llvm::append_range(NewOperands, Operands.drop_back(SubOperands.size()));
-  NewOperands.push_back(Mul);
-  llvm::append_range(NewOperands, SubOperands.drop_front(EvenCount));
-  replaceOpWithNewOp<SumOp>(Rewriter, Op, NewOperands);
-  return llvm::success();
-}
-
 llvm::LogicalResult SimplifyMul::matchAndRewrite(
     mlir::Operation* Op,
     mlir::PatternRewriter& Rewriter) const {
@@ -2472,29 +2427,113 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
   return llvm::success();
 }
 
+namespace {
+// A term of a sum as a constant times a product of coefficients.
+struct SumTerm {
+  mlir::Type Type;
+  llvm::SmallVector<mlir::Value, 4> Factors;
+  double Coefficient = 1.0;
+};
+}  // namespace
+
+// Split a blade term into a constant and its sorted nonconstant factors.
+static SumTerm getSumTerm(mlir::Value V) {
+  SumTerm Term{V.getType(), {}, 1.0};
+  auto AddFactor = [&](mlir::Value F) {
+    if (auto NOp = F.getDefiningOp<NegateOp>();
+        NOp && NOp.getArg().getType() == F.getType()) {
+      Term.Coefficient = -Term.Coefficient;
+      F = NOp.getArg();
+    }
+    if (auto BOp = F.getDefiningOp<BladeOp>())
+      Term.Coefficient *= static_cast<double>(BOp.getFloat());
+    else
+      Term.Factors.push_back(F);
+  };
+
+  if (auto NOp = V.getDefiningOp<NegateOp>();
+      NOp && NOp.getArg().getType() == V.getType()) {
+    Term.Coefficient = -1.0;
+    V = NOp.getArg();
+  }
+  if (auto MOp = V.getDefiningOp<CMulOp>()) {
+    for (mlir::Value F : MOp.getArgs())
+      AddFactor(F);
+  } else {
+    AddFactor(V);
+  }
+  llvm::stable_sort(Term.Factors, compareBlockValues);
+  return Term;
+}
+
+// Create the value of a term with a combined coefficient.
+static mlir::Value createSumTerm(mlir::PatternRewriter& Rewriter,
+                                 mlir::Location Loc, SumTerm const& Term) {
+  if (Term.Factors.empty())
+    return BladeOp::create(Rewriter, Loc, Term.Type,
+                           static_cast<float>(Term.Coefficient));
+  float C = static_cast<float>(std::abs(Term.Coefficient));
+  mlir::Value Result;
+  if (C == 1.0f && Term.Factors.size() == 1 &&
+      Term.Factors.front().getType() == Term.Type) {
+    Result = Term.Factors.front();
+  } else {
+    llvm::SmallVector<mlir::Value, 4> Factors;
+    if (C != 1.0f)
+      Factors.push_back(BladeOp::create(Rewriter, Loc, C));
+    llvm::append_range(Factors, Term.Factors);
+    llvm::stable_sort(Factors, compareBlockValues);
+    Result = CMulOp::create(Rewriter, Loc, Term.Type, Factors);
+  }
+  if (Term.Coefficient < 0.0)
+    Result = NegateOp::create(Rewriter, Loc, Term.Type, Result);
+  return Result;
+}
+
 llvm::LogicalResult SimplifySum::matchAndRewrite(
     SumOp Op,
     mlir::PatternRewriter& Rewriter) const {
-  llvm::SmallVector<mlir::Value, 8> NewOperands(Op.getArgs().begin(),
-                                                Op.getArgs().end());
-  // Filter NewOperands by setting to mlir::Value().
-  for (mlir::Value& V : NewOperands) {
-    if (!V) continue;
+  // Combine blade terms with the same factors, discarding zeros.
+  // Other operands are kept in place.
+  struct Operand {
+    mlir::Value Value;
+    std::optional<SumTerm> Term;
+    bool IsCombined = false;
+  };
+  llvm::SmallVector<Operand, 8> Operands;
+  bool Changed = false;
+  for (mlir::Value V : Op.getArgs()) {
     if (isZero(V)) {
-      V = mlir::Value();
-    } else if (auto NOp = V.getDefiningOp<NegateOp>()) {
-      // Cancel negates if their operand is also an operand of the sum.
-      // (ie Additive cancellation: A - A = 0)
-      auto Itr = llvm::find(NewOperands, NOp.getArg());
-      if (Itr != NewOperands.end()) {
-        // Cancel by removing both values.
-        V = mlir::Value();
-        *Itr = mlir::Value();
-      }
+      Changed = true;
+      continue;
     }
+    if (!isa<BladeType>(V.getType())) {
+      Operands.push_back({V, std::nullopt});
+      continue;
+    }
+    SumTerm Term = getSumTerm(V);
+    auto IsLikeTerm = [&](Operand const& Other) {
+      return Other.Term && Other.Term->Type == Term.Type &&
+             Other.Term->Factors == Term.Factors;
+    };
+    auto Itr = llvm::find_if(Operands, IsLikeTerm);
+    if (Itr == Operands.end()) {
+      Operands.push_back({V, std::move(Term)});
+      continue;
+    }
+    Itr->Term->Coefficient += Term.Coefficient;
+    Itr->IsCombined = true;
+    Changed = true;
   }
 
-  llvm::erase(NewOperands, mlir::Value());
+  mlir::Location Loc = Op.getLoc();
+  llvm::SmallVector<mlir::Value, 8> NewOperands;
+  for (Operand const& O : Operands) {
+    if (!O.IsCombined)
+      NewOperands.push_back(O.Value);
+    else if (O.Term->Coefficient != 0.0)
+      NewOperands.push_back(createSumTerm(Rewriter, Loc, *O.Term));
+  }
 
   // If operands are equal to the results of an Expand,
   // remove the unnecessary expand and sum altogether.
@@ -2507,7 +2546,14 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
     }
   }
 
-  if (llvm::equal(NewOperands, Op.getArgs()))
+  // A sum of a single operand of the same type is that operand.
+  if (NewOperands.size() == 1 &&
+      NewOperands.front().getType() == Op.getResult().getType()) {
+    replaceOp(Rewriter, Op, NewOperands.front());
+    return llvm::success();
+  }
+
+  if (!Changed)
     return llvm::failure();
 
   replaceOpWithNewOp<SumOp>(Rewriter, Op, NewOperands);
@@ -2737,7 +2783,6 @@ public:
     // Create pattern rewriter thingy.
     mlir::RewritePatternSet PS(Ctx);
     PS.add<ZeroAbsorbToZero>(Ctx, mlir::PatternBenefit(10));
-    PS.add<SimplifyDoubling>(Ctx, mlir::PatternBenefit(0));
     PS.add<SimplifyMul,
            SimplifySum,
            SimplifyInverse,

@@ -6,6 +6,9 @@
 // RUN:             --geomalg-simplify %s \
 // RUN:| FileCheck --check-prefix="CGA"  %s
 
+// RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-lower %s \
+// RUN:| FileCheck --check-prefix="LOWER"  %s
+
 // CHECK-LABEL: func.func @versor_prod_0
 // CHECK-SAME: ([[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK: return [[ARG0]]
@@ -120,6 +123,14 @@ func.func @point_refl_4(%arg0: !point, %arg1: !vec3, %arg2: !vec2)
 
 // CGA-LABEL: func.func @point_refl_5
 // CGA: return %{{[0-9]+}} : !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+// The elements of each argument are extracted once.
+// LOWER-LABEL: func.func @point_refl_5
+// LOWER-NEXT: vector.to_elements %arg0
+// LOWER-NEXT: vector.to_elements %arg1
+// LOWER-NEXT: vector.to_elements %arg2
+// LOWER-NEXT: vector.to_elements %arg3
+// LOWER-NOT: vector.to_elements
+// LOWER: return
 func.func @point_refl_5(%arg0: !point, %arg1: !vec3, %arg2: !vec2, %arg3: !vec3)
     -> !geomalg.unknown {
   %0 = "geomalg.vprod"(%arg0, %arg1, %arg2, %arg3)

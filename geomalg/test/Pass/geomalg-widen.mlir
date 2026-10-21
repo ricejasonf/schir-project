@@ -15,7 +15,7 @@
 // CHECK-SAME: -> !geomalg.multivector<<1>, <2>>
 // CHECK: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 0.0{{.*}}}>
 // CHECK-SAME: -> !geomalg.blade<2>
-// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"(%{{[0-9]+}}, [[ZERO]])
+// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"(%arg0, [[ZERO]])
 // CHECK-NEXT: geomalg.return [[SUM]] : !geomalg.multivector<<1>, <2>>
 // LLVM-LABEL: llvm.func @widen_blade
 // LLVM-SAME: -> vector<2xf32>
@@ -44,7 +44,7 @@ func.func @widen_zero(%arg0: !e1) -> !e1 {
 // CHECK-LABEL: func.func @widen_call_arg
 // CHECK: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 0.0{{.*}}}>
 // CHECK-SAME: -> !geomalg.blade<2>
-// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"(%{{[0-9]+}}, [[ZERO]])
+// CHECK: [[SUM:%[0-9]+]] = "geomalg.sum"(%arg0, [[ZERO]])
 // CHECK-NEXT: geomalg.call @widen_call_arg_callee([[SUM]])
 // CHECK-SAME: (!geomalg.multivector<<1>, <2>>)
 // LLVM-LABEL: llvm.func @widen_call_arg

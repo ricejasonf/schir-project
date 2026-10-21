@@ -61,6 +61,15 @@ mlir::ValueRange expandVector(mlir::RewriterBase& R, mlir::Location Loc,
   assert(VT && VT.getRank() == 1 &&
       "expecting a 1-d vector");
   assert(R.getContext()->getLoadedDialect<vector::VectorDialect>());
+  // Extract the elements once right after the definition of the vector.
+  mlir::Block* DefBlock = InputVector.getParentBlock();
+  for (mlir::Operation* User : InputVector.getUsers()) {
+    auto ToElements = dyn_cast<vector::ToElementsOp>(User);
+    if (ToElements && ToElements->getBlock() == DefBlock)
+      return ToElements.getResults();
+  }
+  mlir::OpBuilder::InsertionGuard Guard(R);
+  R.setInsertionPointAfterValue(InputVector);
   auto NewOp = vector::ToElementsOp::create(R, Loc, InputVector);
   return NewOp.getResults();
 }
