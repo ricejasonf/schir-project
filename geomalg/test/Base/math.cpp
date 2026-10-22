@@ -76,8 +76,10 @@ int main() {
   constexpr float Pi = std::numbers::pi_v<float>;
 
   // Exact values.
-  SCHIR_ASSERT(test_sin(0.0f) == 0.0f);
+  SCHIR_ASSERT(test_sin(0.0f) == 0.0f && !std::signbit(test_sin(0.0f)));
+  SCHIR_ASSERT(test_sin(-0.0f) == 0.0f && std::signbit(test_sin(-0.0f)));
   SCHIR_ASSERT(test_cos(0.0f) == 1.0f);
+  SCHIR_ASSERT(test_cos(-0.0f) == 1.0f);
   SCHIR_ASSERT(test_atan2(0.0f, 1.0f) == 0.0f);
   SCHIR_ASSERT(std::signbit(test_atan2(-0.0f, 1.0f)));
   SCHIR_ASSERT(test_atan2(0.0f, 0.0f) == 0.0f);

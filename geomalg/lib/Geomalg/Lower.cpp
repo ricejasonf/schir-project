@@ -517,11 +517,11 @@ struct PolyBuilder {
                            add(M, constant(4.0f)), M);
     return {R, Q};
   }
-  // sin R for |R| ≤ π/4
+  // sin R for |R| ≤ π/4 (with the sign of R so sin(-0) = -0)
   mlir::Value sinPoly(mlir::Value R, mlir::Value Z) {
     mlir::Value P = poly(Z, {-1.9515295891e-4f, 8.3321608736e-3f,
                              -1.6666654611e-1f});
-    return add(mul(mul(P, Z), R), R);
+    return copySign(add(mul(mul(P, Z), R), R), R);
   }
   // cos R for |R| ≤ π/4
   mlir::Value cosPoly(mlir::Value Z) {
