@@ -1,7 +1,14 @@
 # -*- Python -*-
 
+import resource
+
 import lit.formats
 from lit.llvm import llvm_config
+
+# Limit the address space of each test process.
+_as_limit = 3 * 1024 * 1024 * 1024
+resource.setrlimit(resource.RLIMIT_AS,
+                   (_as_limit, resource.getrlimit(resource.RLIMIT_AS)[1]))
 
 config.name = 'nbdl'
 config.test_source_root = os.path.dirname(__file__)
