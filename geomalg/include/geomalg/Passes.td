@@ -69,10 +69,23 @@ def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
   let options = RewritePassUtils.options;
 }
 
+def FactorPass : GeomalgPass<"geomalg-factor", "mlir::func::FuncOp"> {
+  let summary = "Factor the sums and products of simplified operations.";
+  let description = [{
+    Factor common factors out of sums of blade terms, and multiply
+    factors that are shared by multiple products once.
+
+    The factored values are scalars, so the resulting IR is only
+    suitable for lowering.
+  }];
+  let options = RewritePassUtils.options;
+}
+
 def LowerPass : Pass<"geomalg-lower", "mlir::ModuleOp"> {
   let summary = "Lower Geomalg to Arith and other dialects.";
   let description = [{
     Lower to dialects that themselves can lower to LLVM or SPIRV.
+    FactorPass is run on each function first.
 
     Unless deterministic is false, sin, cos, and atan2 are lowered to
     polynomial approximations built from arith operations that are

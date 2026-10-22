@@ -1,5 +1,6 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Metric.h>
+#include <geomalg/Passes.h>
 #include <geomalg/Type.h>
 #include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
@@ -35,7 +36,6 @@
 
 // Generated stuff
 namespace geomalg {
-#define GEN_PASS_DECL_LOWERPASS
 #define GEN_PASS_DEF_LOWERPASS
 #define GEN_PASS_DEF_LOWERTOSPIRVPASS
 #define GEN_PASS_DEF_LOWERTOLLVMPASS
@@ -839,6 +839,11 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
+
+    mlir::OpPassManager PM(mlir::ModuleOp::getOperationName());
+    PM.addNestedPass<func::FuncOp>(geomalg::createFactorPass());
+    if (llvm::failed(runPipeline(PM, M)))
+      return signalPassFailure();
 
     llvm::LogicalResult Result = applyLowerPatterns(Ctx, M, deterministic);
     if (llvm::failed(Result))

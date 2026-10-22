@@ -2,6 +2,7 @@
 #include <geomalg/Dialect.h>
 #include <geomalg/Passes.h>
 #include <geomalg/Type.h>
+#include <llvm/ADT/MapVector.h>
 #include <llvm/ADT/STLExtras.h>
 #include <mlir/IR/Dominance.h>
 #include <mlir/IR/IRMapping.h>
@@ -22,6 +23,7 @@ namespace geomalg {
 #define GEN_PASS_DEF_EXPANDFUNCPASS
 #define GEN_PASS_DEF_EXPANDPASS
 #define GEN_PASS_DEF_SIMPLIFYPASS
+#define GEN_PASS_DEF_FACTORPASS
 #define GEN_PASS_DEF_MATRIXPASS
 #include "geomalg/GeomalgPasses.h.inc"
 }
@@ -693,6 +695,19 @@ struct SimplifySum : mlir::OpRewritePattern<geomalg::SumOp> {
 
   void initialize() {
     setDebugName("SimplifySum");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      SumOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
+struct FactorSum : mlir::OpRewritePattern<geomalg::SumOp> {
+  using Base = mlir::OpRewritePattern<geomalg::SumOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("FactorSum");
   }
 
   llvm::LogicalResult matchAndRewrite(
@@ -2627,6 +2642,167 @@ llvm::LogicalResult SimplifySum::matchAndRewrite(
   return llvm::success();
 }
 
+namespace {
+// Define a factor of a sum term as either a value or a constant magnitude.
+struct SumFactor {
+  mlir::Value Value;
+  double Constant = 1.0;
+
+  bool operator==(SumFactor const&) const = default;
+};
+}  // namespace
+
+// Get the factors of a term that are worth factoring out of it.
+// Count a factor only if removing it leaves a multiplication.
+static llvm::SmallVector<SumFactor, 4> getSumFactors(SumTerm const& Term) {
+  llvm::SmallVector<SumFactor, 4> Factors;
+  double C = std::abs(Term.Coefficient);
+  size_t NumOperands = Term.Factors.size() + (C != 1.0 ? 1 : 0);
+  if (NumOperands < 2)
+    return Factors;
+  if (C != 1.0 && C != 0.0)
+    Factors.push_back({mlir::Value(), C});
+  for (mlir::Value F : Term.Factors) {
+    SumFactor SF{F};
+    if (!llvm::is_contained(Factors, SF))
+      Factors.push_back(SF);
+  }
+  return Factors;
+}
+
+llvm::LogicalResult FactorSum::matchAndRewrite(
+    SumOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  // Factor the most common factor out of the terms of a blade sum.
+  mlir::Type ResultT = Op.getResult().getType();
+  if (!isa<BladeType>(ResultT) ||
+      !llvm::all_of(Op.getArgs().getTypes(), llvm::IsaPred<BladeType>))
+    return llvm::failure();
+
+  llvm::SmallVector<SumTerm, 8> Terms;
+  llvm::SmallVector<std::pair<SumFactor, unsigned>, 8> Counts;
+  for (mlir::Value V : Op.getArgs()) {
+    Terms.push_back(getSumTerm(V));
+    for (SumFactor const& F : getSumFactors(Terms.back())) {
+      auto Itr = llvm::find_if(Counts, [&](auto const& C) {
+        return C.first == F;
+      });
+      if (Itr == Counts.end())
+        Counts.push_back({F, 1});
+      else
+        ++Itr->second;
+    }
+  }
+
+  auto Best = std::max_element(Counts.begin(), Counts.end(),
+      [](auto const& A, auto const& B) { return A.second < B.second; });
+  if (Best == Counts.end() || Best->second < 2)
+    return llvm::failure();
+  SumFactor Common = Best->first;
+
+  // Sum the terms with the factor removed as scalars.
+  mlir::Location Loc = Op.getLoc();
+  mlir::Type ScalarT = BladeType::get(getContext(), 0);
+  llvm::SmallVector<mlir::Value, 8> Inner;
+  llvm::SmallVector<mlir::Value, 8> NewOperands;
+  for (auto [V, Term] : llvm::zip(Op.getArgs(), Terms)) {
+    if (!llvm::is_contained(getSumFactors(Term), Common)) {
+      NewOperands.push_back(V);
+      continue;
+    }
+    if (Common.Value)
+      Term.Factors.erase(llvm::find(Term.Factors, Common.Value));
+    else
+      Term.Coefficient /= Common.Constant;
+    Term.Type = ScalarT;
+    Inner.push_back(createSumTerm(Rewriter, Loc, Term));
+  }
+
+  mlir::Value Factor = Common.Value;
+  if (!Factor)
+    Factor = BladeOp::create(Rewriter, Loc,
+                             static_cast<float>(Common.Constant));
+  mlir::Value InnerSum = SumOp::create(Rewriter, Loc, Inner);
+  mlir::Value Product = CMulOp::create(Rewriter, Loc, ResultT,
+                                       mlir::ValueRange{Factor, InnerSum});
+  if (NewOperands.empty()) {
+    replaceOp(Rewriter, Op, Product);
+    return llvm::success();
+  }
+  NewOperands.insert(NewOperands.begin(), Product);
+  replaceOpWithNewOp<SumOp>(Rewriter, Op, NewOperands);
+  return llvm::success();
+}
+
+// Multiply a pair of factors shared by products in a block once,
+// repeating until no pair is shared.
+static void factorProducts(mlir::RewriterBase& Rewriter, mlir::Block& Block) {
+  using Pair = std::pair<mlir::Value, mlir::Value>;
+  struct PairCount {
+    unsigned Count = 0;
+    bool HasOtherFactors = false;
+  };
+  mlir::Type ScalarT = BladeType::get(Rewriter.getContext(), 0);
+  while (true) {
+    // Count the products that contain each pair and are not just the pair.
+    llvm::SmallVector<CMulOp, 16> Muls;
+    llvm::MapVector<Pair, PairCount> Counts;
+    for (CMulOp Op : Block.getOps<CMulOp>()) {
+      mlir::OperandRange Args = Op.getArgs();
+      if (Args.size() < 2)
+        continue;
+      Muls.push_back(Op);
+      llvm::SmallVector<Pair, 16> Seen;
+      for (size_t I = 0; I < Args.size(); ++I) {
+        for (size_t J = I + 1; J < Args.size(); ++J) {
+          Pair P = compareBlockValues(Args[J], Args[I])
+                     ? Pair(Args[J], Args[I]) : Pair(Args[I], Args[J]);
+          if (llvm::is_contained(Seen, P))
+            continue;
+          Seen.push_back(P);
+          PairCount& C = Counts[P];
+          ++C.Count;
+          C.HasOtherFactors |= Args.size() > 2;
+        }
+      }
+    }
+
+    // Choose the pair in the most products where one of them
+    // has another factor.
+    std::optional<Pair> Best;
+    unsigned BestCount = 1;
+    for (auto const& [P, C] : Counts) {
+      if (C.HasOtherFactors && C.Count > BestCount) {
+        Best = P;
+        BestCount = C.Count;
+      }
+    }
+    if (!Best)
+      return;
+    auto [U, V] = *Best;
+
+    mlir::Value Product;
+    for (CMulOp Op : Muls) {
+      llvm::SmallVector<mlir::Value, 8> Args(Op.getArgs());
+      auto UItr = llvm::find(Args, U);
+      if (UItr == Args.end())
+        continue;
+      Args.erase(UItr);
+      auto VItr = llvm::find(Args, V);
+      if (VItr == Args.end())
+        continue;
+      Args.erase(VItr);
+      if (!Product) {
+        Rewriter.setInsertionPoint(Op);
+        Product = CMulOp::create(Rewriter, Op.getLoc(), ScalarT,
+                                 mlir::ValueRange{U, V});
+      }
+      Args.insert(Args.begin(), Product);
+      Rewriter.modifyOpInPlace(Op, [&] { Op->setOperands(Args); });
+    }
+  }
+}
+
 llvm::LogicalResult SimplifyDot::matchAndRewrite(
     DotOp Op,
     mlir::PatternRewriter& Rewriter) const {
@@ -2864,6 +3040,39 @@ public:
     // by simplification. (No metric is needed to widen.)
     PS.add<ExpandConvert>(geomalg::Metric::get(MetricKind::unknown), Ctx,
                           mlir::PatternBenefit(1));
+    Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
+                          disabledPatterns,
+                          enabledPatterns);
+    return llvm::success();
+  }
+};
+
+class FactorPass : public geomalg::impl::FactorPassBase<FactorPass> {
+  using Base = geomalg::impl::FactorPassBase<FactorPass>;
+  mlir::FrozenRewritePatternSet Patterns;
+
+public:
+  using Base::Base;
+  void runOnOperation() override {
+    mlir::MLIRContext* Ctx = &getContext();
+    mlir::func::FuncOp FuncOp = getOperation();
+    if (!hasGeomalgOps(FuncOp))
+      return;
+
+    if (llvm::failed(mlir::applyPatternsGreedily(FuncOp, Patterns)))
+      return signalPassFailure();
+
+    mlir::IRRewriter Rewriter(Ctx);
+    mlir::DominanceInfo DI;
+    mlir::eliminateCommonSubExpressions(Rewriter, DI, FuncOp);
+    FuncOp->walk([&](mlir::Block* Block) {
+      factorProducts(Rewriter, *Block);
+    });
+  }
+
+  llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
+    mlir::RewritePatternSet PS(Ctx);
+    PS.add<FactorSum>(Ctx);
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                           disabledPatterns,
                           enabledPatterns);
