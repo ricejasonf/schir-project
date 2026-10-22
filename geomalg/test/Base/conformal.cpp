@@ -24,7 +24,7 @@ namespace test {
           translate_dist rotate rotate_about dilate transverse screw screw_undo
           reflect_line_2d reflect_point_2d motor_2d dilate_2d
           reflect_plane_point reflect_line_point invert_sphere_point
-          reflect_line_point_2d)
+          reflect_line_point_2d reflect_plane_weight reflect_point_weight)
 
 ; // Get the Euclidean part of a conformal point in 3D.
 (define (euclid X)
@@ -120,6 +120,13 @@ namespace test {
                                 -> (!vec3)
   (return (euclid (normalize-point (vprod (up x) (sphere c r))))))
 
+(define-fn reflect_plane_weight ((x : !vec3) (n : !vec3) (d : !scalar))
+                                 -> (!scalar)
+  (return (point-weight (vprod (up x) (plane n d)))))
+
+(define-fn reflect_point_weight ((x : !vec3) (c : !vec3)) -> (!scalar)
+  (return (point-weight (vprod (up x) (point c)))))
+
 (finalize-module)
 }
 } // namespace test
@@ -211,4 +218,8 @@ int main() {
   SCHIR_ASSERT(near(reflect_line_point(C + E2, C, U), C + E3));
   SCHIR_ASSERT(near(reflect_line_point_2d(Y, C2, vec2{1, 1}), vec2{1, 3}));
   SCHIR_ASSERT(near(invert_sphere_point(X, C, 2), C + 4 * D / dot(D, D)));
+
+  SCHIR_ASSERT(near(reflect_plane_weight(X, E3, 1), 1));
+  SCHIR_ASSERT(near(reflect_plane_weight(X, 2 * E12, 3), 1));
+  SCHIR_ASSERT(near(reflect_point_weight(X, C), -1));
 }

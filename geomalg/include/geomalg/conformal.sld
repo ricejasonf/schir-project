@@ -17,6 +17,7 @@
     up
     down
     normalize-point
+    point-weight
     plane
     bisector
     sphere
@@ -30,6 +31,7 @@
     up-aux
     down-aux
     normalize-point-aux
+    point-weight-aux
     plane-aux
     bisector-aux
     sphere-aux
@@ -86,13 +88,18 @@
          (up-aux (syntax-source-loc) x))))
 
     ;; Weight -∞·X of a point X.
-    (define (%weight Loc X)
+    (define (point-weight-aux Loc X)
       (negate-aux Loc (iprod-aux Loc (%blade Loc !ni 1) X)))
+
+    (define-syntax point-weight
+      (syntax-rules ()
+        ((point-weight X)
+         (point-weight-aux (syntax-source-loc) X))))
 
     ;; Euclidean point x = (E ⌋ (X ∧ E)) / (-∞·X) where E = o ∧ ∞.
     (define (down-aux Loc X)
       (define E (oprod-aux Loc (%blade Loc !no 1) (%blade Loc !ni 1)))
-      (iprod-aux Loc (inverse-aux Loc (%weight Loc X))
+      (iprod-aux Loc (inverse-aux Loc (point-weight-aux Loc X))
                      (iprod-aux Loc E (oprod-aux Loc X E))))
 
     (define-syntax down
@@ -102,7 +109,7 @@
 
     ;; Point X / (-∞·X) of weight 1 (i.e. o + x + ½x²∞).
     (define (normalize-point-aux Loc X)
-      (iprod-aux Loc (inverse-aux Loc (%weight Loc X)) X))
+      (iprod-aux Loc (inverse-aux Loc (point-weight-aux Loc X)) X))
 
     (define-syntax normalize-point
       (syntax-rules ()
