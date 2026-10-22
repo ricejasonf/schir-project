@@ -7,6 +7,9 @@
 // RUN: not geomalg-opt --geomalg-expand="func-name=external" %s 2>&1 \
 // RUN: | FileCheck --check-prefix=EXTERNAL %s
 
+// RUN: geomalg-opt --geomalg-expand="metric=cga" --geomalg-lower %s \
+// RUN: | FileCheck --check-prefix=LOWER %s
+
 !vec3 = !geomalg.multivector<<1>, <2>, <4>>
 
 // Only the named function is expanded and has its result type updated.
@@ -31,4 +34,5 @@ func.func @not_reflect(%arg0: !vec3, %arg1: !vec3) -> !geomalg.unknown {
 
 // MISSING: error: function not found: missing
 // EXTERNAL: error: cannot expand external function
+// LOWER: func.func private @external(vector<3xf32>) -> vector<3xf32>
 func.func private @external(!vec3) -> !vec3

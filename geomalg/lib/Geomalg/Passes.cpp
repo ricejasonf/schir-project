@@ -1241,7 +1241,7 @@ struct UpdateFuncReturnType : mlir::OpRewritePattern<mlir::func::FuncOp> {
   llvm::LogicalResult matchAndRewrite(mlir::func::FuncOp FuncOp,
                         mlir::PatternRewriter& Rewriter) const override {
     mlir::FunctionType FT = FuncOp.getFunctionType();
-    if (FT.getNumResults() != 1)
+    if (FuncOp.isExternal() || FT.getNumResults() != 1)
       return llvm::failure();
 
     auto ReturnOp = dyn_cast<geomalg::ReturnOp>(
