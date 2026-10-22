@@ -10,7 +10,7 @@
 ;; -∞·X of a point X. Others scale it (and dilators with s < 0 negate it),
 ;; so use normalize-point or down on their images.
 ;; Import (geomalg conformal-2d) or (geomalg conformal-3d) for these
-;; constructors along with point and line.
+;; constructors along with point, line and negative-dilator.
 ;;
 ;; Scalar arguments may be scalar values or numbers.
 ;; Use (with-metric 'cga) before expanding.
@@ -203,8 +203,8 @@
 
     ;; Dilator D = (C - ½s∞)(C - ½∞) as two dual spheres centered at c
     ;; (D ∝ (1 + s) + (s - 1) o ∧ ∞ for c = 0).
-    ;; As a versor: scaling x ↦ c + s(x - c) for s ≠ 0
-    ;; (s < 0 negates the weight of points).
+    ;; As a versor: scaling x ↦ c + s(x - c) for s > 0
+    ;; (s < 0 negates the weight of points, so use negative-dilator).
     (define (dilator-aux Loc c Scale)
       (define C (up-aux Loc c))
       (versor-aux Loc (%sphere Loc C (%scalar Loc Scale))

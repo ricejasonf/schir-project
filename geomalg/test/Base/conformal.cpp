@@ -17,9 +17,10 @@ namespace test {
         (geomalg base)
         (geomalg versor)
         (geomalg conformal-3d)
-        (rename (only (geomalg conformal-2d) point line)
+        (rename (only (geomalg conformal-2d) point line negative-dilator)
                 (point point-2d)
-                (line line-2d))
+                (line line-2d)
+                (negative-dilator negative-dilator-2d))
         (only (schir base) define-values))
 
 (export-c up_down reflect_plane reflect_bisector invert_sphere
@@ -28,7 +29,9 @@ namespace test {
           reflect_line_2d reflect_point_2d motor_2d dilate_2d
           reflect_plane_point reflect_line_point invert_sphere_point
           reflect_line_point_2d reflect_plane_weight reflect_point_weight
-          reflect_line_weight reflect_point_weight_2d dilate_weight)
+          reflect_line_weight reflect_point_weight_2d dilate_weight
+          negative_dilate negative_dilate_const negative_dilate_2d
+          negative_dilate_weight negative_dilate_weight_2d)
 
 ; // Get the Euclidean part of a conformal point in 3D.
 (define (euclid X)
@@ -141,6 +144,25 @@ namespace test {
 (define-fn dilate_weight ((x : !vec3) (c : !vec3) (s : !scalar)) -> (!scalar)
   (return (point-weight (vprod (up x) (dilator c s)))))
 
+(define-fn negative_dilate ((x : !vec3) (c : !vec3) (s : !scalar)) -> (!vec3)
+  (return (convert (down (vprod (up x) (negative-dilator c s))) !vec3)))
+
+(define-fn negative_dilate_const ((x : !vec3) (c : !vec3)) -> (!vec3)
+  (return (convert (down (vprod (up x) (negative-dilator c -2))) !vec3)))
+
+(define-fn negative_dilate_2d ((x : !vec2) (c : !vec2) (s : !scalar))
+                               -> (!vec2)
+  (return (convert (down (vprod (up x) (negative-dilator-2d c s))) !vec2)))
+
+; // Negative dilators keep the sign of the weight of a point.
+(define-fn negative_dilate_weight ((x : !vec3) (c : !vec3) (s : !scalar))
+                                   -> (!scalar)
+  (return (point-weight (vprod (up x) (negative-dilator c s)))))
+
+(define-fn negative_dilate_weight_2d ((x : !vec2) (c : !vec2) (s : !scalar))
+                                      -> (!scalar)
+  (return (point-weight (vprod (up x) (negative-dilator-2d c s)))))
+
 (finalize-module)
 }
 } // namespace test
@@ -207,6 +229,9 @@ int main() {
   SCHIR_ASSERT(near(dilate(X, C, 2.5), C + 2.5f * D, 1e-3));
   SCHIR_ASSERT(near(dilate(X, C, 1), X));
   SCHIR_ASSERT(near(dilate(X, C, -1), 2 * C - X));
+  SCHIR_ASSERT(near(negative_dilate(X, C, -1), 2 * C - X));
+  SCHIR_ASSERT(near(negative_dilate(X, C, -2.5), C - 2.5f * D, 1e-3));
+  SCHIR_ASSERT(near(negative_dilate_const(X, C), C - 2 * D, 1e-3));
 
   // x ↦ (x + x²b) / (1 + 2b·x + b²x²)
   constexpr vec3 B{0.5, -0.25, 1};
@@ -224,6 +249,8 @@ int main() {
   SCHIR_ASSERT(near(motor_2d(Y, vec2{1, 0}, vec2{1, 1}, C2, vec2{0, -2}),
                     vec2{1, 1}));
   SCHIR_ASSERT(near(dilate_2d(Y, C2, 3), vec2{7, 1}));
+  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -1), vec2{-1, 1}));
+  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -3), vec2{-5, 1}));
 
   SCHIR_ASSERT(near(reflect_plane_point(X, E3, 1), vec3{1, 2, -2}));
   SCHIR_ASSERT(near(reflect_plane_point(X, 2 * E3, 2), vec3{1, 2, -2}));
@@ -239,4 +266,8 @@ int main() {
   SCHIR_ASSERT(near(reflect_line_weight(X, C, U), 1));
   SCHIR_ASSERT(near(reflect_point_weight_2d(Y, C2), 1));
   SCHIR_ASSERT(near(dilate_weight(X, C, -1), -1));
+  SCHIR_ASSERT(near(negative_dilate_weight(X, C, -1), 1));
+  SCHIR_ASSERT(negative_dilate_weight(X, C, -2.5).value > 0);
+  SCHIR_ASSERT(near(negative_dilate_weight_2d(Y, C2, -1), 1));
+  SCHIR_ASSERT(negative_dilate_weight_2d(Y, C2, -3).value > 0);
 }

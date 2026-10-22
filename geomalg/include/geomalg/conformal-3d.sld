@@ -3,7 +3,8 @@
 ;; Conformal constructors for 3D Euclidean space.
 ;;
 ;; Export (geomalg conformal) along with point and line built from dual
-;; planes, so they keep the weight -∞·X of a point X.
+;; planes, so they keep the weight -∞·X of a point X, and negative-dilator
+;; for scaling by s < 0.
 ;;
 ;; Use (with-metric 'cga) before expanding.
 (define-library (geomalg conformal-3d)
@@ -20,6 +21,7 @@
     translator
     rotor
     dilator
+    negative-dilator
     transversor
     ;; Procedures taking an explicit source location
     up-aux
@@ -34,6 +36,7 @@
     translator-aux
     rotor-aux
     dilator-aux
+    negative-dilator-aux
     transversor-aux
     )
   (import (schir base)
@@ -81,4 +84,19 @@
       (syntax-rules ()
         ((line c u)
          (line-aux (syntax-source-loc) c u))))
+
+    ;; Negative dilator P D as the point P at c and the dilator D for -s,
+    ;; which is odd (an improper map) and keeps the sign of the weight -∞·X
+    ;; of a point X.
+    ;; As a versor: scaling x ↦ c + s(x - c) for s < 0.
+    (define (negative-dilator-aux Loc c Scale)
+      (versor-aux Loc (point-aux Loc c)
+                      (dilator-aux Loc c (if (number? Scale)
+                                           (- Scale)
+                                           (negate-aux Loc Scale)))))
+
+    (define-syntax negative-dilator
+      (syntax-rules ()
+        ((negative-dilator c Scale)
+         (negative-dilator-aux (syntax-source-loc) c Scale))))
     )) ;; define-library
