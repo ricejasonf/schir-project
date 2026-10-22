@@ -42,6 +42,42 @@ func.func @common_constant(%a: !scalar, %b: !scalar,
   geomalg.return %3 : !scalar
 }
 
+// Factor all of the factors shared by the terms at once.
+// CHECK-LABEL: func.func @common_cube
+// CHECK-SAME: ([[A:%arg[0-9]+]]: {{.*}}, [[B:%arg[0-9]+]]: {{.*}}, [[C:%arg[0-9]+]]: {{.*}}, [[D:%arg[0-9]+]]: {{.*}})
+// CHECK: [[S:%[0-9]+]] = "geomalg.sum"([[C]], [[D]])
+// CHECK: [[R:%[0-9]+]] = "geomalg.cmul"([[A]], [[B]], [[S]])
+// CHECK: geomalg.return [[R]]
+func.func @common_cube(%a: !scalar, %b: !scalar,
+                       %c: !scalar, %d: !scalar) -> !scalar {
+  %0 = "geomalg.cmul"(%a, %b, %c) : (!scalar, !scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%a, %b, %d) : (!scalar, !scalar, !scalar) -> !scalar
+  %2 = "geomalg.sum"(%0, %1) : (!scalar, !scalar) -> !scalar
+  geomalg.return %2 : !scalar
+}
+
+// Factor ab + ac + bd + ce into b(a + d) + c(a + e) rather than
+// a(b + c) + bd + ce.
+// CHECK-LABEL: func.func @lookahead
+// CHECK-SAME: ([[A:%arg[0-9]+]]: {{.*}}, [[B:%arg[0-9]+]]: {{.*}}, [[C:%arg[0-9]+]]: {{.*}}, [[D:%arg[0-9]+]]: {{.*}}, [[E:%arg[0-9]+]]: {{.*}})
+// CHECK-DAG: "geomalg.cmul"([[B]], {{%[0-9]+}})
+// CHECK-DAG: "geomalg.cmul"([[C]], {{%[0-9]+}})
+// CHECK-NOT: "geomalg.cmul"([[A]], {{%[0-9]+}})
+// CHECK: geomalg.return
+// LOWER-LABEL: func.func @lookahead
+// LOWER-COUNT-2: arith.mulf
+// LOWER-NOT: arith.mulf
+// LOWER: return
+func.func @lookahead(%a: !scalar, %b: !scalar, %c: !scalar,
+                     %d: !scalar, %e: !scalar) -> !scalar {
+  %0 = "geomalg.cmul"(%a, %b) : (!scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%a, %c) : (!scalar, !scalar) -> !scalar
+  %2 = "geomalg.cmul"(%b, %d) : (!scalar, !scalar) -> !scalar
+  %3 = "geomalg.cmul"(%c, %e) : (!scalar, !scalar) -> !scalar
+  %4 = "geomalg.sum"(%0, %1, %2, %3) : (!scalar, !scalar, !scalar, !scalar) -> !scalar
+  geomalg.return %4 : !scalar
+}
+
 // Do not factor out a zero coefficient.
 // CHECK-LABEL: func.func @zero_constant
 // CHECK-SAME: ([[A:%arg[0-9]+]]: {{.*}}, [[B:%arg[0-9]+]]: {{.*}})

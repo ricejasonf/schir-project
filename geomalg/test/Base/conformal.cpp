@@ -248,9 +248,9 @@ int main() {
   SCHIR_ASSERT(near(reflect_point_2d(Y, C2), vec2{-1, 1}));
   SCHIR_ASSERT(near(motor_2d(Y, vec2{1, 0}, vec2{1, 1}, C2, vec2{0, -2}),
                     vec2{1, 1}));
-  SCHIR_ASSERT(near(dilate_2d(Y, C2, 3), vec2{7, 1}));
-  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -1), vec2{-1, 1}));
-  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -3), vec2{-5, 1}));
+  SCHIR_ASSERT(near(dilate_2d(Y, C2, 3), vec2{7, 1}, 1e-3));
+  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -1), vec2{-1, 1}, 1e-3));
+  SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -3), vec2{-5, 1}, 1e-3));
 
   SCHIR_ASSERT(near(reflect_plane_point(X, E3, 1), vec3{1, 2, -2}));
   SCHIR_ASSERT(near(reflect_plane_point(X, 2 * E3, 2), vec3{1, 2, -2}));

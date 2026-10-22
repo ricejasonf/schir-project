@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -2689,81 +2690,226 @@ struct SumFactor {
 
   bool operator==(SumFactor const&) const = default;
 };
+
+// Define a product as the sorted ids of its factors.
+using FactorIds = llvm::SmallVector<unsigned, 6>;
+
+// Define a choice of terms and the factors they share.
+struct CubeChoice {
+  llvm::SmallVector<bool, 8> Mask;
+  FactorIds Cube;
+  int Savings = 0;
+};
+
+// Define the memoized costs of sums of products and the number of
+// factorings left to try before choosing greedily.
+struct FactorSearch {
+  std::map<std::vector<unsigned>, unsigned> Costs;
+  unsigned Budget = 16384;
+};
 }  // namespace
 
-// Get the factors of a term that are worth factoring out of it.
-// Count a factor only if removing it leaves a multiplication.
-static llvm::SmallVector<SumFactor, 4> getSumFactors(SumTerm const& Term) {
-  llvm::SmallVector<SumFactor, 4> Factors;
-  double C = std::abs(Term.Coefficient);
-  size_t NumOperands = Term.Factors.size() + (C != 1.0 ? 1 : 0);
-  if (NumOperands < 2)
-    return Factors;
-  if (C != 1.0 && C != 0.0)
-    Factors.push_back({mlir::Value(), C});
-  for (mlir::Value F : Term.Factors) {
-    SumFactor SF{F};
-    if (!llvm::is_contained(Factors, SF))
-      Factors.push_back(SF);
+// Get the number of multiplications in a sum of products.
+static unsigned getProductsCost(llvm::ArrayRef<FactorIds> Terms) {
+  unsigned Cost = 0;
+  for (FactorIds const& Term : Terms)
+    Cost += Term.empty() ? 0 : Term.size() - 1;
+  return Cost;
+}
+
+// Get the ways to factor shared factors out of a sum of products,
+// ordered by the multiplications they save.
+static llvm::SmallVector<CubeChoice, 8>
+getCubeChoices(llvm::ArrayRef<FactorIds> Terms) {
+  llvm::SmallVector<unsigned, 8> Ids;
+  for (FactorIds const& Term : Terms)
+    for (unsigned Id : Term)
+      if (!llvm::is_contained(Ids, Id))
+        Ids.push_back(Id);
+
+  // Try the terms containing each factor, with and without
+  // the terms that are only that factor.
+  llvm::SmallVector<CubeChoice, 8> Choices;
+  for (unsigned Id : Ids) {
+    for (bool SkipSingle : {false, true}) {
+      CubeChoice Choice;
+      unsigned NumChosen = 0;
+      for (FactorIds const& Term : Terms) {
+        bool IsChosen = llvm::is_contained(Term, Id) &&
+                        !(SkipSingle && Term.size() == 1);
+        Choice.Mask.push_back(IsChosen);
+        if (!IsChosen)
+          continue;
+        if (NumChosen++ == 0) {
+          Choice.Cube = Term;
+          continue;
+        }
+        FactorIds Cube;
+        std::set_intersection(Choice.Cube.begin(), Choice.Cube.end(),
+                              Term.begin(), Term.end(),
+                              std::back_inserter(Cube));
+        Choice.Cube = std::move(Cube);
+      }
+      if (NumChosen < 2)
+        continue;
+
+      // Do not count the multiplication by a term that is only the cube.
+      int Size = static_cast<int>(Choice.Cube.size());
+      Choice.Savings = (static_cast<int>(NumChosen) - 1) * Size;
+      for (auto [Term, IsChosen] : llvm::zip(Terms, Choice.Mask))
+        if (IsChosen && static_cast<int>(Term.size()) == Size)
+          --Choice.Savings;
+      if (Choice.Savings <= 0 ||
+          llvm::any_of(Choices, [&](CubeChoice const& C) {
+            return C.Mask == Choice.Mask;
+          }))
+        continue;
+      Choices.push_back(std::move(Choice));
+    }
   }
-  return Factors;
+  llvm::stable_sort(Choices, [](CubeChoice const& A, CubeChoice const& B) {
+    return A.Savings > B.Savings;
+  });
+  return Choices;
+}
+
+// Split a sum of products into the terms of the factored inner sum
+// and the outer sum with the product of the cube and a new inner sum id.
+static std::pair<llvm::SmallVector<FactorIds, 8>,
+                 llvm::SmallVector<FactorIds, 8>>
+applyCubeChoice(llvm::ArrayRef<FactorIds> Terms, CubeChoice const& Choice) {
+  unsigned NewId = 0;
+  for (FactorIds const& Term : Terms)
+    if (!Term.empty())
+      NewId = std::max(NewId, Term.back() + 1);
+
+  llvm::SmallVector<FactorIds, 8> Inner;
+  llvm::SmallVector<FactorIds, 8> Outer;
+  for (auto [Term, IsChosen] : llvm::zip(Terms, Choice.Mask)) {
+    if (!IsChosen) {
+      Outer.push_back(Term);
+      continue;
+    }
+    FactorIds Rest;
+    std::set_difference(Term.begin(), Term.end(),
+                        Choice.Cube.begin(), Choice.Cube.end(),
+                        std::back_inserter(Rest));
+    Inner.push_back(std::move(Rest));
+  }
+  FactorIds Product = Choice.Cube;
+  Product.push_back(NewId);
+  Outer.push_back(std::move(Product));
+  return {std::move(Inner), std::move(Outer)};
+}
+
+// Get the fewest multiplications of a sum of products after
+// factoring, searching greedily once the budget is spent.
+static unsigned getFactoredCost(llvm::ArrayRef<FactorIds> Terms,
+                                FactorSearch& Search) {
+  std::vector<unsigned> Key;
+  {
+    llvm::SmallVector<FactorIds, 8> Sorted(Terms);
+    llvm::sort(Sorted);
+    for (FactorIds const& Term : Sorted) {
+      Key.push_back(Term.size());
+      llvm::append_range(Key, Term);
+    }
+  }
+  if (auto Itr = Search.Costs.find(Key); Itr != Search.Costs.end())
+    return Itr->second;
+
+  unsigned Cost = getProductsCost(Terms);
+  llvm::SmallVector<CubeChoice, 8> Choices = getCubeChoices(Terms);
+  for (CubeChoice const& Choice : Choices) {
+    auto [Inner, Outer] = applyCubeChoice(Terms, Choice);
+    bool IsGreedy = Search.Budget == 0;
+    if (!IsGreedy)
+      --Search.Budget;
+    Cost = std::min(Cost, getFactoredCost(Inner, Search) +
+                          getFactoredCost(Outer, Search));
+    if (IsGreedy)
+      break;
+  }
+  Search.Costs[Key] = Cost;
+  return Cost;
 }
 
 llvm::LogicalResult FactorSum::matchAndRewrite(
     SumOp Op,
     mlir::PatternRewriter& Rewriter) const {
-  // Factor the most common factor out of the terms of a blade sum.
+  // Factor the factors shared by terms of a blade sum that
+  // lead to the fewest multiplications.
   mlir::Type ResultT = Op.getResult().getType();
   if (!isa<BladeType>(ResultT) ||
       !llvm::all_of(Op.getArgs().getTypes(), llvm::IsaPred<BladeType>))
     return llvm::failure();
 
+  // Number each distinct factor, counting a constant magnitude
+  // other than 0 or 1 as a factor.
   llvm::SmallVector<SumTerm, 8> Terms;
-  llvm::SmallVector<std::pair<SumFactor, unsigned>, 8> Counts;
+  llvm::SmallVector<SumFactor, 8> Factors;
+  llvm::SmallVector<FactorIds, 8> TermIds;
+  auto GetId = [&](SumFactor const& F) {
+    auto Itr = llvm::find(Factors, F);
+    if (Itr != Factors.end())
+      return static_cast<unsigned>(Itr - Factors.begin());
+    Factors.push_back(F);
+    return static_cast<unsigned>(Factors.size() - 1);
+  };
   for (mlir::Value V : Op.getArgs()) {
-    Terms.push_back(getSumTerm(V));
-    for (SumFactor const& F : getSumFactors(Terms.back())) {
-      auto Itr = llvm::find_if(Counts, [&](auto const& C) {
-        return C.first == F;
-      });
-      if (Itr == Counts.end())
-        Counts.push_back({F, 1});
-      else
-        ++Itr->second;
-    }
+    SumTerm& Term = Terms.emplace_back(getSumTerm(V));
+    FactorIds& Ids = TermIds.emplace_back();
+    if (double C = std::abs(Term.Coefficient); C != 0.0 && C != 1.0)
+      Ids.push_back(GetId({mlir::Value(), C}));
+    for (mlir::Value F : Term.Factors)
+      Ids.push_back(GetId({F}));
+    llvm::sort(Ids);
   }
 
-  auto Best = std::max_element(Counts.begin(), Counts.end(),
-      [](auto const& A, auto const& B) { return A.second < B.second; });
-  if (Best == Counts.end() || Best->second < 2)
+  FactorSearch Search;
+  unsigned BestCost = getProductsCost(TermIds);
+  std::optional<CubeChoice> Best;
+  for (CubeChoice& Choice : getCubeChoices(TermIds)) {
+    auto [Inner, Outer] = applyCubeChoice(TermIds, Choice);
+    unsigned Cost = getFactoredCost(Inner, Search) +
+                    getFactoredCost(Outer, Search);
+    if (Cost < BestCost) {
+      BestCost = Cost;
+      Best = std::move(Choice);
+    }
+  }
+  if (!Best)
     return llvm::failure();
-  SumFactor Common = Best->first;
 
-  // Sum the terms with the factor removed as scalars.
+  // Sum the chosen terms with the cube removed as scalars.
   mlir::Location Loc = Op.getLoc();
   mlir::Type ScalarT = BladeType::get(getContext(), 0);
+  llvm::SmallVector<mlir::Value, 4> CubeFactors;
+  for (unsigned Id : Best->Cube) {
+    SumFactor const& F = Factors[Id];
+    CubeFactors.push_back(F.Value ? F.Value :
+        BladeOp::create(Rewriter, Loc, static_cast<float>(F.Constant)));
+  }
   llvm::SmallVector<mlir::Value, 8> Inner;
   llvm::SmallVector<mlir::Value, 8> NewOperands;
-  for (auto [V, Term] : llvm::zip(Op.getArgs(), Terms)) {
-    if (!llvm::is_contained(getSumFactors(Term), Common)) {
+  for (auto [V, Term, IsChosen] : llvm::zip(Op.getArgs(), Terms, Best->Mask)) {
+    if (!IsChosen) {
       NewOperands.push_back(V);
       continue;
     }
-    if (Common.Value)
-      Term.Factors.erase(llvm::find(Term.Factors, Common.Value));
-    else
-      Term.Coefficient /= Common.Constant;
+    for (unsigned Id : Best->Cube) {
+      SumFactor const& F = Factors[Id];
+      if (F.Value)
+        Term.Factors.erase(llvm::find(Term.Factors, F.Value));
+      else
+        Term.Coefficient /= F.Constant;
+    }
     Term.Type = ScalarT;
     Inner.push_back(createSumTerm(Rewriter, Loc, Term));
   }
 
-  mlir::Value Factor = Common.Value;
-  if (!Factor)
-    Factor = BladeOp::create(Rewriter, Loc,
-                             static_cast<float>(Common.Constant));
-  mlir::Value InnerSum = SumOp::create(Rewriter, Loc, Inner);
-  mlir::Value Product = CMulOp::create(Rewriter, Loc, ResultT,
-                                       mlir::ValueRange{Factor, InnerSum});
+  CubeFactors.push_back(SumOp::create(Rewriter, Loc, Inner));
+  mlir::Value Product = CMulOp::create(Rewriter, Loc, ResultT, CubeFactors);
   if (NewOperands.empty()) {
     replaceOp(Rewriter, Op, Product);
     return llvm::success();
