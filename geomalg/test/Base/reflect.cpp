@@ -22,9 +22,9 @@ namespace test {
 (define-fn test_dot ((point : !vec3) (axis : !vec3)) -> (!nbdl.unknown)
   (return (dot point axis)))
 
-; // Reflect a point over the axis created by a unit vector.
+; // Reflect a point in the plane through the origin normal to a unit vector.
 ; // Let p be the euclidean part of a 3d point.
-; // Use ReflAxis to reflect on an axis through the origin.
+; // Take the euclidean part of the image which is a normalized point.
 ; // Bind the result of visiting test_dot for use with geomalg operations.
 (define-fn test_reflect_1 ((p : !vec3) (ReflAxis : !uvec3)) -> (!nbdl.unknown)
   (return
@@ -44,7 +44,7 @@ namespace test {
         (sum v1 v2 v3))
       (visit test_dot p p))))
 
-; // Reflect a vector over an axis given by a vector of any length.
+; // Reflect a vector in the plane normal to a vector of any length.
 (define-fn test_reflect_2 ((p : !vec3) (Axis : !vec3)) -> (!nbdl.unknown)
   (return (vprod p (convert Axis !uvec3))))
 
@@ -61,23 +61,23 @@ using geomalg::uvec3;
 int main() {
   SCHIR_ASSERT(test_dot(vec3{3, 2, 4}, vec3{4, 2, 1}).value == 20);
   SCHIR_ASSERT(near(test_reflect_1(vec3{1.0, 2, 4}, uvec3{0, 1, 0}),
-                    vec3{-1, 2, -4}, 0));
+                    vec3{1, -2, 4}, 0));
   SCHIR_ASSERT(near(test_reflect_1(vec3{1.0, 2, 4}, uvec3{0, 0, 1}),
-                    vec3{-1, -2, 4}, 0));
+                    vec3{1, 2, -4}, 0));
   SCHIR_ASSERT(near(test_reflect_1(vec3{1, 0, 0},
                                    uvec3{.707106, .707106, 0}),
-                    vec3{0, 1, 0}));
+                    vec3{0, -1, 0}));
   constexpr float PiDiv4 = .707106;
   constexpr uvec3 Axis45 = uvec3{PiDiv4, PiDiv4, 0};
   SCHIR_ASSERT(near(test_reflect_1(vec3{-1, 0, 0}, Axis45),
-                    vec3{0, -1, 0}));
+                    vec3{0, 1, 0}));
   SCHIR_ASSERT(near(test_reflect_1(vec3{0, 1, 0}, Axis45),
-                    vec3{1, 0, 0}));
+                    vec3{-1, 0, 0}));
   SCHIR_ASSERT(near(test_reflect_1(test_reflect_1(vec3{0, 1, 0}, Axis45),
                                    Axis45),
                     vec3{0, 1, 0}));
   SCHIR_ASSERT(near(test_reflect_2(vec3{1.0, 2, 4}, vec3{0, 3, 0}),
-                    vec3{-1, 2, -4}, 1e-6));
+                    vec3{1, -2, 4}, 1e-6));
   SCHIR_ASSERT(near(test_reflect_2(vec3{1, 0, 0}, vec3{2, 2, 0}),
-                    vec3{0, 1, 0}, 1e-6));
+                    vec3{0, -1, 0}, 1e-6));
 }

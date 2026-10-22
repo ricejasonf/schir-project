@@ -16,12 +16,27 @@ namespace test {
         (nbdl spec geomalg)
         (geomalg base)
         (geomalg versor)
-        (geomalg conformal))
+        (geomalg conformal)
+        (only (schir base) define-values))
 
 (export-c up_down reflect_plane reflect_bisector invert_sphere
           invert_unit_sphere reflect_point reflect_line translate
           translate_dist rotate rotate_about dilate transverse screw screw_undo
-          reflect_line_2d reflect_point_2d motor_2d dilate_2d)
+          reflect_line_2d reflect_point_2d motor_2d dilate_2d
+          reflect_plane_point reflect_line_point invert_sphere_point
+          reflect_line_point_2d)
+
+; // Get the Euclidean part of a conformal point in 3D.
+(define (euclid X)
+  (define-values (x1 x2 x3 xo xi)
+    (expand (convert X (!multivector !e1 !e2 !e3 !no !ni))))
+  (sum x1 x2 x3))
+
+; // Get the Euclidean part of a conformal point in 2D.
+(define (euclid-2d X)
+  (define-values (x1 x2 xo xi)
+    (expand (convert X (!multivector !e1 !e2 !no !ni))))
+  (sum x1 x2))
 
 (define-fn up_down ((x : !vec3)) -> (!vec3)
   (return (convert (down (up x)) !vec3)))
@@ -87,6 +102,23 @@ namespace test {
 
 (define-fn dilate_2d ((x : !vec2) (c : !vec2) (s : !scalar)) -> (!vec2)
   (return (convert (down (vprod (up x) (dilator c s))) !vec2)))
+
+; // Planes map normalized points to normalized points.
+(define-fn reflect_plane_point ((x : !vec3) (n : !vec3) (d : !scalar))
+                                -> (!vec3)
+  (return (euclid (vprod (up x) (plane n d)))))
+
+; // Flat points negate the weight of a point.
+(define-fn reflect_line_point ((x : !vec3) (c : !vec3) (u : !vec3)) -> (!vec3)
+  (return (euclid (normalize-point (vprod (up x) (line c u))))))
+
+(define-fn reflect_line_point_2d ((x : !vec2) (c : !vec2) (u : !vec2))
+                                  -> (!vec2)
+  (return (euclid-2d (normalize-point (vprod (up x) (line c u))))))
+
+(define-fn invert_sphere_point ((x : !vec3) (c : !vec3) (r : !scalar))
+                                -> (!vec3)
+  (return (euclid (normalize-point (vprod (up x) (sphere c r))))))
 
 (finalize-module)
 }
@@ -171,4 +203,12 @@ int main() {
   SCHIR_ASSERT(near(motor_2d(Y, vec2{1, 0}, vec2{1, 1}, C2, vec2{0, -2}),
                     vec2{1, 1}));
   SCHIR_ASSERT(near(dilate_2d(Y, C2, 3), vec2{7, 1}));
+
+  SCHIR_ASSERT(near(reflect_plane_point(X, E3, 1), vec3{1, 2, -2}));
+  SCHIR_ASSERT(near(reflect_plane_point(X, 2 * E3, 2), vec3{1, 2, -2}));
+  SCHIR_ASSERT(near(reflect_plane_point(X, E12, 0), vec3{-2, -1, 4}));
+  SCHIR_ASSERT(near(reflect_line_point(C + E1, C, U), C - E1));
+  SCHIR_ASSERT(near(reflect_line_point(C + E2, C, U), C + E3));
+  SCHIR_ASSERT(near(reflect_line_point_2d(Y, C2, vec2{1, 1}), vec2{1, 3}));
+  SCHIR_ASSERT(near(invert_sphere_point(X, C, 2), C + 4 * D / dot(D, D)));
 }

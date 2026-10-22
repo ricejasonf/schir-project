@@ -594,8 +594,10 @@ def Geomalg_BladeOp : Geomalg_Op<"blade"> {
 
 def Geomalg_VersorProdOp : Geomalg_Op<"vprod", [Multilinear, ZeroAbsorb]> {
   let description = [{
-    Given an ordered set of versors, apply each to an operand using the
-    sandwich product where the first versor is applied first.
+    Given an ordered set of versors, apply each to an operand where the
+    first versor is applied first. A versor V of parity p maps a grade k
+    blade X to (-1)ᵏᵖ V X V⁻¹ which preserves outer products
+    (e.g. a dual plane maps a conformal point to its reflection).
   }];
 
   let arguments = (ins Geomalg_Value:$arg,

@@ -6,10 +6,9 @@
 ;;   x is a Euclidean vector and X = o + x + ½x²∞ is its conformal point.
 ;;
 ;; Constructors return 1-vectors or factored versors for use with vprod.
-;; Since vprod computes V X V⁻¹, an odd versor maps a grade-k blade
-;; to (-1)ᵏ times its image which is the same subspace with the opposite
-;; orientation when k is odd. Images of points are generally not
-;; normalized so use down to get Euclidean coordinates.
+;; Versors made of planes (e.g. translators and rotors) keep the weight
+;; -∞·X of a point X. Others scale it (and flat points negate it since
+;; F∞F⁻¹ = -∞), so use normalize-point or down on their images.
 ;;
 ;; Scalar arguments may be scalar values or numbers.
 ;; Use (with-metric 'cga) before expanding.
@@ -17,6 +16,7 @@
   (export
     up
     down
+    normalize-point
     plane
     bisector
     sphere
@@ -29,6 +29,7 @@
     ;; Procedures taking an explicit source location
     up-aux
     down-aux
+    normalize-point-aux
     plane-aux
     bisector-aux
     sphere-aux
@@ -84,17 +85,29 @@
         ((up x)
          (up-aux (syntax-source-loc) x))))
 
+    ;; Weight -∞·X of a point X.
+    (define (%weight Loc X)
+      (negate-aux Loc (iprod-aux Loc (%blade Loc !ni 1) X)))
+
     ;; Euclidean point x = (E ⌋ (X ∧ E)) / (-∞·X) where E = o ∧ ∞.
     (define (down-aux Loc X)
       (define E (oprod-aux Loc (%blade Loc !no 1) (%blade Loc !ni 1)))
-      (define Weight (negate-aux Loc (iprod-aux Loc (%blade Loc !ni 1) X)))
-      (iprod-aux Loc (inverse-aux Loc Weight)
+      (iprod-aux Loc (inverse-aux Loc (%weight Loc X))
                      (iprod-aux Loc E (oprod-aux Loc X E))))
 
     (define-syntax down
       (syntax-rules ()
         ((down X)
          (down-aux (syntax-source-loc) X))))
+
+    ;; Point X / (-∞·X) of weight 1 (i.e. o + x + ½x²∞).
+    (define (normalize-point-aux Loc X)
+      (iprod-aux Loc (inverse-aux Loc (%weight Loc X)) X))
+
+    (define-syntax normalize-point
+      (syntax-rules ()
+        ((normalize-point X)
+         (normalize-point-aux (syntax-source-loc) X))))
 
     ;; Dual plane π = n + δ∞ of the points where n·x = δ.
     ;; As a versor: reflection in the plane (a line in 2D).

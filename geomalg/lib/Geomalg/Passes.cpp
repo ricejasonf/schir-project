@@ -1599,22 +1599,20 @@ static mlir::Value createVersorNormSq(mlir::PatternRewriter& Rewriter,
 }
 
 // Apply a versor that is a multivector to a blade.
-// (ie V A V⁻¹ = V A Ṽ / ⟨V Ṽ⟩₀ or V A Ṽ for a unit versor)
+// (ie (-1)ᵏᵖ V A V⁻¹ = (-1)ᵏᵖ V A Ṽ / ⟨V Ṽ⟩₀ or (-1)ᵏᵖ V A Ṽ for a unit
+// versor of parity p)
 static mlir::Value expandMultivectorVP(mlir::PatternRewriter& Rewriter,
                                        mlir::Location Loc,
                                        mlir::Value Arg, mlir::Value Versor,
                                        bool IsOrthogonal,
                                        llvm::ArrayRef<BladeType> VersorBTs) {
-  // An orthogonal blade commutes or anticommutes with a versor
-  // of a single parity.
+  // Keep an orthogonal blade since a versor of a single parity fixes it.
   auto Odd = [](BladeType BT) { return BT.getGrade() % 2 != 0; };
-  unsigned ArgGrade = cast<BladeType>(Arg.getType()).getGrade();
-  if (IsOrthogonal && llvm::all_equal(llvm::map_range(VersorBTs, Odd))) {
-    if (Odd(VersorBTs.front()) && ArgGrade % 2 != 0)
-      return NegateOp::create(Rewriter, Loc, Arg);
+  bool IsSingleParity = llvm::all_equal(llvm::map_range(VersorBTs, Odd));
+  if (IsOrthogonal && IsSingleParity)
     return Arg;
-  }
 
+  unsigned ArgGrade = cast<BladeType>(Arg.getType()).getGrade();
   mlir::Value Rev = ReverseOp::create(Rewriter, Loc, Versor);
   mlir::Value ArgRev = GeomProdOp::create(Rewriter, Loc, Arg, Rev);
   mlir::Value Result = GeomProdOp::create(Rewriter, Loc, Versor, ArgRev);
@@ -1623,9 +1621,12 @@ static mlir::Value expandMultivectorVP(mlir::PatternRewriter& Rewriter,
     mlir::Value InvNormSq = InverseOp::create(Rewriter, Loc, NormSq);
     Result = InnerProdOp::create(Rewriter, Loc, InvNormSq, Result);
   }
-  return GradeOp::create(Rewriter, Loc,
-                         UnknownType::get(Rewriter.getContext()),
-                         Result, ArgGrade);
+  Result = GradeOp::create(Rewriter, Loc,
+                           UnknownType::get(Rewriter.getContext()),
+                           Result, ArgGrade);
+  if (IsSingleParity && Odd(VersorBTs.front()) && ArgGrade % 2 != 0)
+    Result = NegateOp::create(Rewriter, Loc, Result);
+  return Result;
 }
 
 // Expand a versor product to the geometric product.
@@ -1661,9 +1662,6 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
   auto Negate = [&](mlir::Value V) {
     return mlir::Value(NegateOp::create(Rewriter, Loc, V));
   };
-  auto GradeInvo = [&](mlir::Value V) {
-    return mlir::Value(GradeInvoOp::create(Rewriter, Loc, V));
-  };
 
   mlir::Value Versor = Versors.front();
   BladeType SingleVBT = dyn_cast<BladeType>(Versor.getType());
@@ -1687,43 +1685,38 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
     }
   }
 
-  // v₂ (v₁ A v₁⁻¹) v₂⁻¹
+  // v₂[v₁[A]] where v[A] = (-1)ᵏᵖ v A v⁻¹ for a grade k blade A
+  // and a versor v of parity p.
   // Expand the application of one versor at a time
   // to tame the combinational explosions which requires
   // this pattern to have a relatively low "benefit".
 
-  // v₁ A v₁⁻¹
+  // v₁[A]
   mlir::Value Result;
   if (!SingleVBT && !isVector(Versor.getType())) {
     Result = expandMultivectorVP(Rewriter, Loc, Arg, Versor,
                                  IsOrthogonal, VersorBladeTypes);
-  } else if (BT.getGrade() == 0 ||
-             (IsOrthogonal && BT.getGrade() % 2 == 0)) {
-    // Scalars and orthogonal blades of even grade commute with the versor.
+  } else if (BT.getGrade() == 0 || IsOrthogonal) {
+    // Keep scalars and orthogonal blades since the versor fixes them.
     Result = Arg;
-  } else if (IsOrthogonal) {
-    // Use the antisymmetric property.
-    mlir::Value VL = Negate(GradeInvo(Versor));
-    mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, VL, Inverse(Versor));
-    Result = InnerProdOp::create(Rewriter, Loc, Dot, Arg); // scalar mult
-    Result = NegateOp::create(Rewriter, Loc, Result.getType(), Result);
   } else if (isVector(Versor.getType()) && BT.getGrade() == 1) {
-    // v a v⁻¹ = 2 (v ⌋ a) v⁻¹ - a
+    // v[a] = -v a v⁻¹ = a - 2 (v ⌋ a) v⁻¹
     mlir::Value Two = BladeOp::create(Rewriter, Loc, 2.0f);
     mlir::Value Dot = InnerProdOp::create(Rewriter, Loc, Versor, Arg);
     mlir::Value Scale = InnerProdOp::create(Rewriter, Loc, Two, Dot);
-    Result = SumOp::create(Rewriter, Loc,
-                           InnerProdOp::create(Rewriter, Loc, Scale,
-                                               Inverse(Versor)),
-                           Negate(Arg));
+    Result = SumOp::create(Rewriter, Loc, Arg,
+                           Negate(InnerProdOp::create(Rewriter, Loc, Scale,
+                                                      Inverse(Versor))));
   } else if (isVector(Versor.getType())) {
-    // v (a ∧ B) v⁻¹ = (v a v⁻¹) ∧ (v B v⁻¹)
+    // v[a ∧ B] = v[a] ∧ v[B]
     auto [a, B] = factorBlade(Rewriter, Arg);
     Result = createOuterProd(Rewriter, Loc,
                              VersorProdOp::create(Rewriter, Loc, a, Versor),
                              VersorProdOp::create(Rewriter, Loc, B, Versor));
   } else {
     Result = Mult(Versor, Mult(Arg, Inverse(Versor)));
+    if (SingleVBT.getGrade() % 2 != 0 && BT.getGrade() % 2 != 0)
+      Result = Negate(Result);
   }
 
   // Recreate VP for remaining versors.
@@ -1736,7 +1729,7 @@ llvm::LogicalResult ExpandVP::matchAndRewrite(
 }
 
 // A versor V = f₁ f₂ ⋯ fₖ applies its last factor first.
-// (ie V X V⁻¹ = f₁ (⋯ (fₖ X fₖ⁻¹) ⋯) f₁⁻¹)
+// (ie V[X] = f₁[⋯ fₖ[X] ⋯])
 llvm::LogicalResult ExpandVersorVP::matchAndRewrite(
       geomalg::VersorProdOp VP,
       mlir::PatternRewriter& Rewriter) const {

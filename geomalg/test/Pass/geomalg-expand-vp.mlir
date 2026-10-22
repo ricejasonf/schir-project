@@ -23,15 +23,15 @@ func.func @versor_prod_0(%arg0: !geomalg.multivector<<1>, <2>, <4>>)
 // CHECK-LABEL: func.func @versor_prod_1
 // CHECK-SAME: [[ARG0:%arg[0-9]+]]: !geomalg.multivector<<1>, <2>, <4>>
 // CHECK-SAME: [[ARG1:%arg[0-9]+]]: !geomalg.blade<1>
-// The reflection of a vector is v a v⁻¹ = 2 (v ⌋ a) v⁻¹ - a.
+// The reflection of a vector is -v a v⁻¹ = a - 2 (v ⌋ a) v⁻¹.
 // CHECK: [[MV:%[0-9]+]]:3 = "geomalg.expand"(%arg0)
 // CHECK: [[TWO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 2.0{{0*}}e+00 : f32}>
 // CHECK: [[D0:%[0-9]+]] = "geomalg.iprod"([[ARG1]], [[MV]]#0)
 // CHECK: [[S0:%[0-9]+]] = "geomalg.iprod"([[TWO]], [[D0]])
-// CHECK: [[N0:%[0-9]+]] = "geomalg.negate"([[MV]]#0)
 // CHECK: [[I0:%[0-9]+]] = "geomalg.inverse"([[ARG1]])
 // CHECK: [[R0:%[0-9]+]] = "geomalg.iprod"([[S0]], [[I0]])
-// CHECK: "geomalg.sum"([[R0]], [[N0]],
+// CHECK: [[N0:%[0-9]+]] = "geomalg.negate"([[R0]])
+// CHECK: "geomalg.sum"([[MV]]#0, [[N0]],
 // CHECK-NOT: "geomalg.gprod"
 // CHECK: return
 func.func @versor_prod_1(%arg0: !geomalg.multivector<<1>, <2>, <4>>,

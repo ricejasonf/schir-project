@@ -15,7 +15,7 @@
 !plane = !geomalg.multivector<<1>, <2>, <4>, <16>>
 !e3_ni = !geomalg.multivector<<4>, <16>>
 
-// Scalars and orthogonal blades of even grade commute with a 1-vector.
+// Scalars and orthogonal blades are invariant under a 1-vector.
 // CHECK-LABEL: func.func @orthogonal_scalar
 // CHECK-SAME: ([[X:%arg[0-9]+]]: !geomalg.blade<0>
 // CHECK-NEXT: geomalg.return [[X]] : !geomalg.blade<0>
@@ -34,8 +34,7 @@ func.func @orthogonal_bivector(%x: !e23, %v: !e1) -> !geomalg.unknown {
 
 // CHECK-LABEL: func.func @orthogonal_vector
 // CHECK-SAME: ([[X:%arg[0-9]+]]: !geomalg.blade<4>
-// CHECK: [[N:%[0-9]+]] = "geomalg.negate"
-// CHECK-NEXT: geomalg.return [[N]] : !geomalg.blade<4>
+// CHECK-NEXT: geomalg.return [[X]] : !geomalg.blade<4>
 func.func @orthogonal_vector(%x: !e3, %v: !e1) -> !geomalg.unknown {
   %0 = "geomalg.vprod"(%x, %v) : (!e3, !e1) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
