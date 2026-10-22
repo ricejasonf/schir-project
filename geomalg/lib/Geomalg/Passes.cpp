@@ -2274,6 +2274,14 @@ llvm::LogicalResult SimplifyInverse::matchAndRewrite(
       replaceOp(Rewriter, InvOp, Arg);
       return llvm::success();
     }
+
+    // Take the inverse of a negated scalar as the negated inverse.
+    if (auto NOp = Arg.getDefiningOp<NegateOp>();
+        NOp && NOp.getArg().getType() == Arg.getType()) {
+      mlir::Value Inv = InverseOp::create(Rewriter, Loc, BT, NOp.getArg());
+      replaceOpWithNewOp<NegateOp>(Rewriter, InvOp, BT, Inv);
+      return llvm::success();
+    }
   }
 
   // Inverse of a constant is a constant.
@@ -2427,6 +2435,36 @@ auto GetDefiningOp = [](mlir::Value V) -> T {
   return V.getDefiningOp<T>();
 };
 
+// Get the scalar whose inverse is V, or null.
+static mlir::Value getInvertedScalar(mlir::Value V) {
+  if (!V)
+    return {};
+  auto IOp = V.getDefiningOp<geomalg::InverseOp>();
+  if (!IOp)
+    return {};
+  auto BT = dyn_cast<geomalg::BladeType>(IOp.getArg().getType());
+  if (!BT || BT.getGrade() != 0)
+    return {};
+  return IOp.getArg();
+}
+
+// Replace each pair of a scalar and its inverse in Factors with nulls.
+static bool cancelInverses(llvm::MutableArrayRef<mlir::Value> Factors) {
+  bool Changed = false;
+  for (mlir::Value& V : Factors) {
+    mlir::Value S = getInvertedScalar(V);
+    if (!S)
+      continue;
+    auto Itr = llvm::find(Factors, S);
+    if (Itr == Factors.end())
+      continue;
+    *Itr = mlir::Value();
+    V = mlir::Value();
+    Changed = true;
+  }
+  return Changed;
+}
+
 llvm::LogicalResult SimplifyMul::matchAndRewrite(
     mlir::Operation* Op,
     mlir::PatternRewriter& Rewriter) const {
@@ -2450,8 +2488,11 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
       !llvm::any_of(Operands, GetDefiningOp<geomalg::NegateOp>) &&
       !llvm::any_of(Operands, GetDefiningOp<geomalg::CastOp>) &&
       llvm::count_if(Operands, GetDefiningOp<geomalg::BladeOp>) <= 1 &&
-      (llvm::none_of(Operands, isUnitBlade)))
-    return llvm::failure();
+      (llvm::none_of(Operands, isUnitBlade))) {
+    llvm::SmallVector<mlir::Value, 8> Factors(Operands);
+    if (!cancelInverses(Factors))
+      return llvm::failure();
+  }
 
   // Collect operands.
   llvm::SmallVector<mlir::Value, 8> NewOperands;
@@ -2495,6 +2536,9 @@ llvm::LogicalResult SimplifyMul::matchAndRewrite(
       V = COp.getArg();
     }
   }
+
+  // Cancel scalars with their inverses.
+  cancelInverses(NewOperands);
 
   // Remove nulls.
   llvm::erase(NewOperands, mlir::Value());
