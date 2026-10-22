@@ -7,8 +7,10 @@
 ;;
 ;; Constructors return 1-vectors or factored versors for use with vprod.
 ;; Versors made of planes (e.g. translators and rotors) keep the weight
-;; -∞·X of a point X. Others scale it (and flat points negate it since
-;; F∞F⁻¹ = -∞), so use normalize-point or down on their images.
+;; -∞·X of a point X. Others scale it (and dilators with s < 0 negate it),
+;; so use normalize-point or down on their images.
+;; Import (geomalg conformal-2d) or (geomalg conformal-3d) for these
+;; constructors along with point and line.
 ;;
 ;; Scalar arguments may be scalar values or numbers.
 ;; Use (with-metric 'cga) before expanding.
@@ -21,8 +23,6 @@
     plane
     bisector
     sphere
-    point
-    line
     translator
     rotor
     dilator
@@ -35,8 +35,6 @@
     plane-aux
     bisector-aux
     sphere-aux
-    point-aux
-    line-aux
     translator-aux
     rotor-aux
     dilator-aux
@@ -152,29 +150,6 @@
         ((sphere c Radius)
          (sphere-aux (syntax-source-loc) c Radius))))
 
-    ;; Flat point F = (C + ½∞)(C - ½∞) = -C ∧ ∞ at c.
-    ;; As a versor: point reflection x ↦ 2c - x.
-    (define (point-aux Loc c)
-      (dilator-aux Loc c -1))
-
-    (define-syntax point
-      (syntax-rules ()
-        ((point c)
-         (point-aux (syntax-source-loc) c))))
-
-    ;; Line Λ = π F = C ∧ u ∧ ∞ through c with direction u
-    ;; where π is the dual plane through c normal to u.
-    ;; As a versor: half-turn about the line in 3D
-    ;; (reflection in the line in 2D).
-    (define (line-aux Loc c u)
-      (versor-aux Loc (plane-aux Loc u (iprod-aux Loc u c))
-                      (point-aux Loc c)))
-
-    (define-syntax line
-      (syntax-rules ()
-        ((line c u)
-         (line-aux (syntax-source-loc) c u))))
-
     ;; Get t or e₁ if t = 0.
     (define (%direction Loc t)
       (define IsZero
@@ -228,7 +203,8 @@
 
     ;; Dilator D = (C - ½s∞)(C - ½∞) as two dual spheres centered at c
     ;; (D ∝ (1 + s) + (s - 1) o ∧ ∞ for c = 0).
-    ;; As a versor: scaling x ↦ c + s(x - c) for s ≠ 0.
+    ;; As a versor: scaling x ↦ c + s(x - c) for s ≠ 0
+    ;; (s < 0 negates the weight of points).
     (define (dilator-aux Loc c Scale)
       (define C (up-aux Loc c))
       (versor-aux Loc (%sphere Loc C (%scalar Loc Scale))

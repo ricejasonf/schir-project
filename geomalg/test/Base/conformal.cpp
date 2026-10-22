@@ -16,7 +16,10 @@ namespace test {
         (nbdl spec geomalg)
         (geomalg base)
         (geomalg versor)
-        (geomalg conformal)
+        (geomalg conformal-3d)
+        (rename (only (geomalg conformal-2d) point line)
+                (point point-2d)
+                (line line-2d))
         (only (schir base) define-values))
 
 (export-c up_down reflect_plane reflect_bisector invert_sphere
@@ -24,7 +27,8 @@ namespace test {
           translate_dist rotate rotate_about dilate transverse screw screw_undo
           reflect_line_2d reflect_point_2d motor_2d dilate_2d
           reflect_plane_point reflect_line_point invert_sphere_point
-          reflect_line_point_2d reflect_plane_weight reflect_point_weight)
+          reflect_line_point_2d reflect_plane_weight reflect_point_weight
+          reflect_line_weight reflect_point_weight_2d dilate_weight)
 
 ; // Get the Euclidean part of a conformal point in 3D.
 (define (euclid X)
@@ -89,10 +93,10 @@ namespace test {
   (return (convert (down (vprod (vprod (up x) M) (inverse M))) !vec3)))
 
 (define-fn reflect_line_2d ((x : !vec2) (c : !vec2) (u : !vec2)) -> (!vec2)
-  (return (convert (down (vprod (up x) (line c u))) !vec2)))
+  (return (convert (down (vprod (up x) (line-2d c u))) !vec2)))
 
 (define-fn reflect_point_2d ((x : !vec2) (c : !vec2)) -> (!vec2)
-  (return (convert (down (vprod (up x) (point c))) !vec2)))
+  (return (convert (down (vprod (up x) (point-2d c))) !vec2)))
 
 ; // Rotate about c then translate.
 (define-fn motor_2d ((x : !vec2) (a : !vec2) (b : !vec2) (c : !vec2)
@@ -108,13 +112,12 @@ namespace test {
                                 -> (!vec3)
   (return (euclid (vprod (up x) (plane n d)))))
 
-; // Flat points negate the weight of a point.
 (define-fn reflect_line_point ((x : !vec3) (c : !vec3) (u : !vec3)) -> (!vec3)
-  (return (euclid (normalize-point (vprod (up x) (line c u))))))
+  (return (euclid (vprod (up x) (line c u)))))
 
 (define-fn reflect_line_point_2d ((x : !vec2) (c : !vec2) (u : !vec2))
                                   -> (!vec2)
-  (return (euclid-2d (normalize-point (vprod (up x) (line c u))))))
+  (return (euclid-2d (vprod (up x) (line-2d c u)))))
 
 (define-fn invert_sphere_point ((x : !vec3) (c : !vec3) (r : !scalar))
                                 -> (!vec3)
@@ -126,6 +129,17 @@ namespace test {
 
 (define-fn reflect_point_weight ((x : !vec3) (c : !vec3)) -> (!scalar)
   (return (point-weight (vprod (up x) (point c)))))
+
+(define-fn reflect_line_weight ((x : !vec3) (c : !vec3) (u : !vec3))
+                                -> (!scalar)
+  (return (point-weight (vprod (up x) (line c u)))))
+
+(define-fn reflect_point_weight_2d ((x : !vec2) (c : !vec2)) -> (!scalar)
+  (return (point-weight (vprod (up x) (point-2d c)))))
+
+; // Dilators with s < 0 negate the weight of a point.
+(define-fn dilate_weight ((x : !vec3) (c : !vec3) (s : !scalar)) -> (!scalar)
+  (return (point-weight (vprod (up x) (dilator c s)))))
 
 (finalize-module)
 }
@@ -221,5 +235,8 @@ int main() {
 
   SCHIR_ASSERT(near(reflect_plane_weight(X, E3, 1), 1));
   SCHIR_ASSERT(near(reflect_plane_weight(X, 2 * E12, 3), 1));
-  SCHIR_ASSERT(near(reflect_point_weight(X, C), -1));
+  SCHIR_ASSERT(near(reflect_point_weight(X, C), 1));
+  SCHIR_ASSERT(near(reflect_line_weight(X, C, U), 1));
+  SCHIR_ASSERT(near(reflect_point_weight_2d(Y, C2), 1));
+  SCHIR_ASSERT(near(dilate_weight(X, C, -1), -1));
 }
