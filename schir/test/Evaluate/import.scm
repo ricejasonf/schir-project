@@ -10,6 +10,9 @@
         (rename (schir builtins)
                 (apply my-apply)
                 #;(apply moo-apply))
+        (rename (only (schir builtins) cons)
+                (cons my-cons))
+        (prefix (only (schir builtins) car) only.)
         )
 
 ; The name apply is not imported.
@@ -24,6 +27,14 @@
 
 ; CHECK: (3 2)
 (write (my-apply list 3 '(2)))
+(newline)
+
+; CHECK: (5 . 2)
+(write (my-cons 5 2))
+(newline)
+
+; CHECK: 6
+(write (only.car '(6 2)))
 (newline)
 
 ; FIXME Multiple renames should be allowed.

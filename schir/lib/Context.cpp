@@ -833,6 +833,8 @@ String* ImportSet::FilterName(schir::Context& C, String* S) {
     return S;
   }
   S = Parent->FilterName(C, S);
+  if (!S)
+    return nullptr;
   switch(Kind) {
   case ImportKind::Only:
     // filter if not in the list
