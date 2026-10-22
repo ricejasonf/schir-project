@@ -11,6 +11,7 @@
     !blade
     !multivector
     !unit-vector
+    !unit-multivector
     !scalar !e1 !e2 !e3 !no !ni ;; Conformal GA basis vectors (types)
     scalar e1 e2 e3 no ni ;; Conformal GA basis vectors
     !zero
@@ -67,6 +68,11 @@
     ;; that is assumed to square to 1.
     (define !unit-vector
       (load-builtin "geomalg_unitvector_type"))
+
+    ;; Take a nonempty list of !blades for a versor V
+    ;; that is assumed to have V Ṽ = 1 (e.g. a normalized motor.)
+    (define !unit-multivector
+      (load-builtin "geomalg_unitmultivector_type"))
 
     ; Expand function using current metric.
     (define apply-metric

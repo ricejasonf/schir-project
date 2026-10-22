@@ -66,7 +66,8 @@ namespace test {
           apply_interp_3_2d apply_nlerp
           apply_normalize apply_interp_half_2d apply_nlerp_2d apply_interp_0
           apply_interp_1 apply_interp_half apply_interp_3_4 apply_interp_1_16
-          apply_nlerp_half)
+          apply_nlerp_half unit_motor_2d apply_unit_motor_2d
+          undo_unit_motor_2d)
 
 ; // Motors M = T R rotate in the a ∧ b plane by twice the angle from a to b
 ; // about c and then translate by d along the unit vector n.
@@ -261,6 +262,20 @@ namespace test {
   (define V1 (rotor (e1 1) b1 c1))
   (define V2 (motor n2 d2 (e1 1) b2 c2))
   (return (convert (down (vprod (up x) V1 (nlerp V1 V2 t))) !vec2)))
+
+; // Unit motors keep V Ṽ = 1 when passed between functions.
+(define !umotor2 (!unit-multivector !scalar (!blade !e1 !e2)
+                                    (!blade !e1 !ni) (!blade !e2 !ni)))
+
+(define-fn unit_motor_2d ((n : !vec2) (d : !scalar)
+                           (a : !vec2) (b : !vec2) (c : !vec2)) -> (!umotor2)
+  (return (normalize (gprod (motor n d a b c) (versor)))))
+
+(define-fn apply_unit_motor_2d ((x : !vec2) (M : !umotor2)) -> (!vec2)
+  (return (convert (down (vprod (up x) M)) !vec2)))
+
+(define-fn undo_unit_motor_2d ((x : !vec2) (M : !umotor2)) -> (!vec2)
+  (return (convert (down (vprod (up x) M (inverse M))) !vec2)))
 
 (finalize-module)
 }
@@ -480,6 +495,12 @@ int main() {
   }
   SCHIR_ASSERT(near(apply_nlerp_2d(Y, Q90, C2, N2, -2, Q270, U2, 1),
                     Interp2(1)));
+
+  // A unit motor from another function.
+  const auto M2 = unit_motor_2d(N2, -2, U1, Q270, C2);
+  SCHIR_ASSERT(near(apply_unit_motor_2d(Y, M2),
+                    apply_motor_2d(Y, N2, -2, U1, Q270, C2)));
+  SCHIR_ASSERT(near(undo_unit_motor_2d(Y, M2), Y));
 
   // Normalizing a scaled motor keeps its motion.
   SCHIR_ASSERT(near(apply_normalize(X, -3, N, 2, E1, RG, C),

@@ -504,6 +504,20 @@ struct ExpandGrade : mlir::OpRewritePattern<geomalg::GradeOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+// Cast a value assumed to be a unit versor to a unit type.
+struct ExpandCastUnitary : mlir::OpRewritePattern<geomalg::CastUnitaryOp> {
+  using Base = mlir::OpRewritePattern<geomalg::CastUnitaryOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("ExpandCastUnitary");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::CastUnitaryOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 // Expand the exponential of a bivector to a motor.
 struct ExpandExp : OpRewriteMetric<geomalg::ExpOp> {
   using Base::Base;
@@ -1111,6 +1125,13 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
   if (Itr == Op->getOpOperands().end())
     return llvm::failure();
 
+  // Wait to know if a product is of unit versors.
+  auto IsUnknown = [](mlir::Type T) { return isUnknown(T); };
+  if (isa<GeomProdOp>(Op) &&
+      llvm::any_of(Op->getOperandTypes(), geomalg::isUnitary) &&
+      llvm::any_of(Op->getOperandTypes(), IsUnknown))
+    return llvm::failure();
+
   // The multivector we want to expand and distribute over.
   mlir::OpOperand& OpOperand = *Itr;
   mlir::Value MV = OpOperand.get();
@@ -1141,8 +1162,14 @@ Distribute::matchAndRewrite(mlir::Operation* Op,
   }
 
   // Replace the original op with a shiny, new SumOp.
-  bool IsUnit = isa<UnitVectorType>(Op->getResult(0).getType());
-  replaceOpWithNewOp<geomalg::SumOp>(Rewriter, Op, IsUnit, Results);
+  bool IsUnitary = geomalg::isUnitary(Op->getResult(0).getType());
+  mlir::Location Loc = Op->getLoc();
+  mlir::Value Sum = geomalg::SumOp::create(Rewriter, Loc, IsUnitary, Results);
+  // The product of unit versors is a unit versor.
+  if (isa<GeomProdOp>(Op) &&
+      llvm::all_of(Op->getOperandTypes(), geomalg::isUnitary))
+    Sum = CastUnitaryOp::create(Rewriter, Loc, Sum);
+  replaceOp(Rewriter, Op, Sum);
 
   return llvm::success();
 }
@@ -1511,7 +1538,7 @@ static mlir::Value createVersorNormSq(mlir::PatternRewriter& Rewriter,
 }
 
 // Apply a versor that is a multivector to a blade.
-// (ie V A V⁻¹ = V A Ṽ / ⟨V Ṽ⟩₀)
+// (ie V A V⁻¹ = V A Ṽ / ⟨V Ṽ⟩₀ or V A Ṽ for a unit versor)
 static mlir::Value expandMultivectorVP(mlir::PatternRewriter& Rewriter,
                                        mlir::Location Loc,
                                        mlir::Value Arg, mlir::Value Versor,
@@ -1529,10 +1556,12 @@ static mlir::Value expandMultivectorVP(mlir::PatternRewriter& Rewriter,
 
   mlir::Value Rev = ReverseOp::create(Rewriter, Loc, Versor);
   mlir::Value ArgRev = GeomProdOp::create(Rewriter, Loc, Arg, Rev);
-  mlir::Value Sandwich = GeomProdOp::create(Rewriter, Loc, Versor, ArgRev);
-  mlir::Value NormSq = createVersorNormSq(Rewriter, Loc, Versor);
-  mlir::Value InvNormSq = InverseOp::create(Rewriter, Loc, NormSq);
-  mlir::Value Result = InnerProdOp::create(Rewriter, Loc, InvNormSq, Sandwich);
+  mlir::Value Result = GeomProdOp::create(Rewriter, Loc, Versor, ArgRev);
+  if (!isUnitary(Versor.getType())) {
+    mlir::Value NormSq = createVersorNormSq(Rewriter, Loc, Versor);
+    mlir::Value InvNormSq = InverseOp::create(Rewriter, Loc, NormSq);
+    Result = InnerProdOp::create(Rewriter, Loc, InvNormSq, Result);
+  }
   return GradeOp::create(Rewriter, Loc,
                          UnknownType::get(Rewriter.getContext()),
                          Result, ArgGrade);
@@ -1703,7 +1732,7 @@ llvm::LogicalResult ExpandVersorOperand::matchAndRewrite(
       mlir::Operation* Op,
       mlir::PatternRewriter& Rewriter) const {
   if (!isa<SumOp, OuterProdOp, InnerProdOp, GeomProdOp,
-           DotOp, VersorProdOp, LogOp, NormalizeOp>(Op))
+           DotOp, VersorProdOp, LogOp, NormalizeOp, CastUnitaryOp>(Op))
     return llvm::failure();
 
   // The versors of a versor product are expanded by ExpandVersorVP.
@@ -1762,6 +1791,24 @@ struct MotorParts {
 };
 }  // namespace
 
+llvm::LogicalResult ExpandCastUnitary::matchAndRewrite(
+    geomalg::CastUnitaryOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  mlir::Value Arg = Op.getArg();
+  if (isUnknown(Arg) || isa<VersorType>(Arg.getType()))
+    return llvm::failure();
+
+  auto MV = dyn_cast<MultivectorLike>(Arg.getType());
+  if (!MV || MV.isUnitary()) {
+    replaceOp(Rewriter, Op, Arg);
+    return llvm::success();
+  }
+
+  llvm::SmallVector<BladeType, 8> BladeTypes(MV.getBlades());
+  replaceOpWithNewOp<CastOp>(Rewriter, Op, createUnitType(BladeTypes), Arg);
+  return llvm::success();
+}
+
 llvm::LogicalResult ExpandGrade::matchAndRewrite(
     geomalg::GradeOp Op,
     mlir::PatternRewriter& Rewriter) const {
@@ -1809,7 +1856,7 @@ llvm::LogicalResult ExpandExp::matchAndRewrite(
 
   // exp(Bₜ) = 1 + Bₜ
   if (Parts.Rotations.empty()) {
-    replaceOpWithNewOp<SumOp>(Rewriter, Op, S.constant(1.0f), B);
+    replaceOpWithNewOp<CastUnitaryOp>(Rewriter, Op, S.add(S.constant(1.0f), B));
     return llvm::success();
   }
 
@@ -1834,7 +1881,7 @@ llvm::LogicalResult ExpandExp::matchAndRewrite(
                                         S.mul(Q, BrW)};
     Result = SumOp::create(Rewriter, Loc, Terms);
   }
-  replaceOp(Rewriter, Op, Result);
+  replaceOpWithNewOp<CastUnitaryOp>(Rewriter, Op, Result);
   return llvm::success();
 }
 
@@ -1917,6 +1964,19 @@ llvm::LogicalResult ExpandNormalize::matchAndRewrite(
     return Rewriter.notifyMatchFailure(Op, "expecting an invertible motor");
 
   ScalarBuilder S(Rewriter, Loc);
+
+  // normalize(M) = σ M for a unit motor M.
+  if (isUnitary(M.getType())) {
+    mlir::Value Result = M;
+    if (!Parts.Scalars.empty()) {
+      mlir::Value Sc = createSum(Rewriter, Loc, Parts.Scalars);
+      mlir::Value One = S.constant(1.0f);
+      Result = S.mul(S.selectLt(Sc, S.constant(0.0f), S.neg(One), One), M);
+    }
+    replaceOpWithNewOp<CastUnitaryOp>(Rewriter, Op, Result);
+    return llvm::success();
+  }
+
   mlir::Type UnknownT = UnknownType::get(Rewriter.getContext());
   mlir::Value MRev = ReverseOp::create(Rewriter, Loc, M);
   mlir::Value NormSq = GeomProdOp::create(Rewriter, Loc, M, MRev);
@@ -1933,7 +1993,7 @@ llvm::LogicalResult ExpandNormalize::matchAndRewrite(
     mlir::Value ResultP = GeomProdOp::create(Rewriter, Loc, Result, P);
     Result = S.sub(Result, S.mul(Half, ResultP));
   }
-  replaceOp(Rewriter, Op, Result);
+  replaceOpWithNewOp<CastUnitaryOp>(Rewriter, Op, Result);
   return llvm::success();
 }
 
@@ -2143,6 +2203,12 @@ llvm::LogicalResult SimplifyInverse::matchAndRewrite(
   // Inverse of a unit vector is always itself.
   if (auto UV = dyn_cast<UnitVectorType>(Arg.getType())) {
     replaceOp(Rewriter, InvOp, Arg);
+    return llvm::success();
+  }
+
+  // Inverse of a unit versor is its reverse.
+  if (isUnitary(Arg.getType())) {
+    replaceOpWithNewOp<ReverseOp>(Rewriter, InvOp, Arg);
     return llvm::success();
   }
 
@@ -2632,6 +2698,7 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
   PS.add<ExpandLC,
          ExpandGP,
          ExpandGrade,
+         ExpandCastUnitary,
          RemoveExpand,
          RemoveCast,
          RemoveConvert,

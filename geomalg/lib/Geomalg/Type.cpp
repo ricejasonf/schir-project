@@ -49,8 +49,7 @@ bool isValidNarrowing(mlir::Type A, mlir::Type B) {
 
   if (auto MLA = dyn_cast<MultivectorLike>(A)) {
     if (auto MLB = dyn_cast<MultivectorLike>(B)) {
-      bool IsUV = isa<UnitVectorType>(B);
-      if (IsUV || A.getTypeID() == B.getTypeID()) {
+      if (MLB.isUnitary() || A.getTypeID() == B.getTypeID()) {
         llvm::SmallVector<BladeType, 8> MLA_BTs(MLA.getBlades());
         llvm::SmallVector<BladeType, 8> MLB_BTs(MLB.getBlades());
         llvm::sort(MLA_BTs);
@@ -150,6 +149,24 @@ mlir::Type createMultivectorLikeType<MultivectorType>(
 template
 mlir::Type createMultivectorLikeType<UnitVectorType>(
                   llvm::MutableArrayRef<BladeType> BladeTypes);
+template
+mlir::Type createMultivectorLikeType<UnitMultivectorType>(
+                  llvm::MutableArrayRef<BladeType> BladeTypes);
+
+mlir::Type createUnitType(llvm::MutableArrayRef<BladeType> BladeTypes) {
+  if (llvm::all_of(BladeTypes, [](BladeType BT) { return BT.getGrade() == 1; }))
+    return createMultivectorLikeType<UnitVectorType>(BladeTypes);
+  return createMultivectorLikeType<UnitMultivectorType>(BladeTypes);
+}
+
+llvm::LogicalResult UnitMultivectorType::verify(
+    llvm::function_ref<mlir::InFlightDiagnostic()> EmitError,
+    llvm::ArrayRef<BladeType> Blades) {
+  if (llvm::all_of(Blades, [](BladeType BT) { return BT.getGrade() == 1; }))
+    return EmitError() << "expecting a blade of grade other than 1 "
+                          "(use unit_vector)";
+  return llvm::success();
+}
 
 llvm::LogicalResult VersorType::verify(
     llvm::function_ref<mlir::InFlightDiagnostic()> EmitError,

@@ -54,3 +54,10 @@ func.func @interp_odd_versor(%m: !geomalg.multivector<<0>, <3>>, %v: !geomalg.ve
   %0 = "geomalg.interp"(%m, %v, %t) : (!geomalg.multivector<<0>, <3>>, !geomalg.versor<!geomalg.blade<1>>, !geomalg.blade<0>) -> !geomalg.unknown
   return
 }
+
+// -----
+
+// expected-error@+1 {{expecting a blade of grade other than 1 (use unit_vector)}}
+func.func @unit_multivector_vector(%v: !geomalg.unit_multivector<<1>, <2>>) {
+  return
+}

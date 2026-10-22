@@ -69,6 +69,22 @@ struct unit_vector {
   explicit constexpr unit_vector(nbdl::vec_f32<size> v) : value(v) { }
 };
 
+// A versor V with V Ṽ = 1 (e.g. a normalized motor.)
+template <typename ...Blade>
+struct unit_multivector {
+  static constexpr unsigned size = sizeof...(Blade);
+  nbdl::vec_f32<size> value;
+
+  constexpr unit_multivector() = default;
+
+  template <std::convertible_to<float> ...Coeffs>
+    requires (sizeof...(Coeffs) == size)
+  constexpr unit_multivector(Coeffs ...coeffs)
+    : value{static_cast<float>(coeffs)...} { }
+
+  explicit constexpr unit_multivector(nbdl::vec_f32<size> v) : value(v) { }
+};
+
 // The vector space operations of multivectors with the same basis.
 template <typename ...BasisVector>
 constexpr multivector<BasisVector...>
@@ -192,6 +208,17 @@ struct get_mlir_type<geomalg::unit_vector<BasisVector...>> {
   static constexpr std::string apply() {
     std::string result = std::string("!geomalg.unit_vector<");
     (result.append((get_mlir_type<BasisVector>::apply() + ',')), ...);
+    // Replace the trailing comma.
+    result.back() = '>';
+    return result;
+  }
+};
+
+template <typename ...Blade>
+struct get_mlir_type<geomalg::unit_multivector<Blade...>> {
+  static constexpr std::string apply() {
+    std::string result = std::string("!geomalg.unit_multivector<");
+    (result.append((get_mlir_type<Blade>::apply() + ',')), ...);
     // Replace the trailing comma.
     result.back() = '>';
     return result;

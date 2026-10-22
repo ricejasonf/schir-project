@@ -19,13 +19,15 @@
 !biv3 = !geomalg.multivector<<3>, <5>, <6>, <17>, <18>, <20>>
 !motor2 = !geomalg.multivector<<0>, <3>, <17>, <18>>
 !motor3 = !geomalg.multivector<<0>, <3>, <5>, <6>, <17>, <18>, <20>, <23>>
+!umotor2 = !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
 
 // The exponential of a translation bivector is 1 + B.
 // CHECK-LABEL: func.func @exp_translation
-// CHECK-SAME: -> !geomalg.multivector<<0>, <17>, <18>, <20>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <17>, <18>, <20>>
 // CHECK-NOT: "geomalg.cos"
 // CHECK: [[ONE:%[0-9]+]] = "geomalg.blade"() <{coefficient = 1.0{{.*}}}>
 // CHECK-NEXT: "geomalg.sum"([[ONE]],
+// CHECK-NEXT: "geomalg.cast"
 // CHECK-NEXT: geomalg.return
 func.func @exp_translation(%b: !trans) -> !geomalg.unknown {
   %0 = "geomalg.exp"(%b) : (!trans) -> !geomalg.unknown
@@ -34,7 +36,7 @@ func.func @exp_translation(%b: !trans) -> !geomalg.unknown {
 
 // A 2D motor is cos φ + sinc φ B with sinc φ = 1 for small angles.
 // CHECK-LABEL: func.func @exp_2d
-// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
 // CHECK: [[PHI:%[0-9]+]] = "geomalg.sqrt"
 // CHECK: [[COS:%[0-9]+]] = "geomalg.cos"([[PHI]])
 // CHECK: "geomalg.sin"([[PHI]])
@@ -77,7 +79,7 @@ func.func @exp_2d(%b: !biv2) -> !geomalg.unknown {
 }
 
 // CHECK-LABEL: func.func @exp_3d
-// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <5>, <6>, <17>, <18>, <20>, <23>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <5>, <6>, <17>, <18>, <20>, <23>>
 // CHECK-NOT: "geomalg.gprod"
 // CHECK-NOT: "geomalg.oprod"
 // CHECK: geomalg.return
@@ -182,9 +184,72 @@ func.func @inverse_motor(%m: !motor2) -> !geomalg.unknown {
   geomalg.return %0 : !geomalg.unknown
 }
 
+// A unit motor is applied as V X Ṽ without dividing by ⟨V Ṽ⟩₀.
+// CHECK-LABEL: func.func @vprod_unit_motor
+// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+// CHECK-NOT: "geomalg.inverse"
+// CHECK: geomalg.return
+// LLVM-LABEL: llvm.func @vprod_unit_motor
+// LLVM-NOT: llvm.fdiv
+// LLVM: llvm.return
+func.func @vprod_unit_motor(%x: !point, %m: !umotor2) -> !geomalg.unknown {
+  %0 = "geomalg.vprod"(%x, %m) : (!point, !umotor2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// The motor exp(B) is a unit motor so only sinc φ divides.
+// CHECK-LABEL: func.func @vprod_exp
+// CHECK-SAME: -> !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
+// CHECK: [[PHI:%[0-9]+]] = "geomalg.sqrt"
+// CHECK: "geomalg.inverse"([[PHI]])
+// CHECK-NOT: "geomalg.inverse"
+// CHECK: geomalg.return
+func.func @vprod_exp(%x: !point, %b: !biv2) -> !geomalg.unknown {
+  %m = "geomalg.exp"(%b) : (!biv2) -> !geomalg.unknown
+  %0 = "geomalg.vprod"(%x, %m) : (!point, !geomalg.unknown) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// The product of unit motors is a unit motor.
+// CHECK-LABEL: func.func @gprod_unit_motors
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
+// CHECK-NOT: "geomalg.inverse"
+// CHECK: geomalg.return
+func.func @gprod_unit_motors(%a: !umotor2, %b: !umotor2) -> !geomalg.unknown {
+  %0 = "geomalg.gprod"(%a, %b) : (!umotor2, !umotor2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// The inverse of a unit motor is its reverse.
+// CHECK-LABEL: func.func @inverse_unit_motor
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
+// CHECK-NOT: "geomalg.inverse"
+// CHECK: [[E:%[0-9]+]]:4 = "geomalg.expand"
+// CHECK: [[N1:%[0-9]+]] = "geomalg.negate"([[E]]#1)
+// CHECK: [[N2:%[0-9]+]] = "geomalg.negate"([[E]]#2)
+// CHECK: [[N3:%[0-9]+]] = "geomalg.negate"([[E]]#3)
+// CHECK: "geomalg.sum"([[E]]#0, [[N1]], [[N2]], [[N3]])
+// CHECK: geomalg.return
+func.func @inverse_unit_motor(%m: !umotor2) -> !geomalg.unknown {
+  %0 = "geomalg.inverse"(%m) : (!umotor2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
+// normalize(M) = σ M for a unit motor M.
+// CHECK-LABEL: func.func @normalize_unit_motor
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
+// CHECK-NOT: "geomalg.sqrt"
+// CHECK-NOT: "geomalg.inverse"
+// CHECK: "geomalg.select_lt"
+// CHECK: geomalg.return
+func.func @normalize_unit_motor(%m: !umotor2) -> !geomalg.unknown {
+  %0 = "geomalg.normalize"(%m) : (!umotor2) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
+}
+
 // normalize(M) = σ M / √⟨M M̃⟩₀ in 2D with σ the sign of the scalar part.
 // CHECK-LABEL: func.func @normalize_2d
-// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
 // CHECK: [[E:%[0-9]+]]:4 = "geomalg.expand"
 // CHECK: [[SQRT:%[0-9]+]] = "geomalg.sqrt"
 // CHECK: [[INV:%[0-9]+]] = "geomalg.inverse"([[SQRT]])
@@ -222,7 +287,7 @@ func.func @interp_zero(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
 
 // The motor at t = 1 is normalize(V₂ Ṽ₁).
 // CHECK-LABEL: func.func @interp_one
-// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
 // CHECK: "geomalg.sqrt"
 // CHECK-NOT: "geomalg.sqrt"
 // CHECK-NOT: "geomalg.atan2"
@@ -245,7 +310,7 @@ func.func @interp_tenth(%a: !motor2, %b: !motor2) -> !geomalg.unknown {
 
 // nlerp is normalize((1 - t) + t D) with D = normalize(V₂ Ṽ₁).
 // CHECK-LABEL: func.func @nlerp
-// CHECK-SAME: -> !geomalg.multivector<<0>, <3>, <17>, <18>>
+// CHECK-SAME: -> !geomalg.unit_multivector<<0>, <3>, <17>, <18>>
 // CHECK-COUNT-2: "geomalg.sqrt"
 // CHECK-NOT: "geomalg.sqrt"
 // CHECK-NOT: "geomalg.atan2"

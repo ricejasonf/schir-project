@@ -70,6 +70,8 @@ struct GeomalgMappableToCpp : schir::MappableToCpp {
       appendMultivectorLike(OS, "multivector", MT.getBlades());
     else if (auto UT = dyn_cast<geomalg::UnitVectorType>(T))
       appendMultivectorLike(OS, "unit_vector", UT.getBlades());
+    else if (auto UT = dyn_cast<geomalg::UnitMultivectorType>(T))
+      appendMultivectorLike(OS, "unit_multivector", UT.getBlades());
     else
       return false;
     return true;
@@ -168,6 +170,20 @@ void geomalg_multivector_type(schir::Context& C, schir::ValueRefs Args) {
 
 void geomalg_unitvector_type(schir::Context& C, schir::ValueRefs Args) {
   CreateMultivectorLikeType<geomalg::UnitVectorType>(C, Args);
+}
+
+void geomalg_unitmultivector_type(schir::Context& C,
+                                  schir::ValueRefs Args) {
+  // A unit 1-vector is a unit_vector.
+  for (schir::Value List : Args) {
+    for (schir::Value BVArg : List) {
+      auto BT = dyn_cast_if_present<geomalg::BladeType>(
+                  schir::any_cast<mlir::Type>(BVArg));
+      if (!BT || BT.getGrade() != 1)
+        return CreateMultivectorLikeType<geomalg::UnitMultivectorType>(C, Args);
+    }
+  }
+  C.RaiseError("expecting a blade of grade other than 1 (use !unit-vector)");
 }
 
 // Construct a versor type from 1-vector and versor types

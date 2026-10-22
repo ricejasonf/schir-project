@@ -82,10 +82,10 @@ def Geomalg_MultivectorLike : TypeInterface<"MultivectorLike"> {
       /*ReturnType*/"llvm::ArrayRef<geomalg::BladeType>",
       /*MethodName*/"getBlades">,
     InterfaceMethod<[{
-      Check if multivector is known to have unit length (ie ∑( cᵢ)² = 1)
+      Check if multivector is known to be a unit versor (ie V Ṽ = 1)
       }],
       /*ReturnType*/"bool",
-      /*MethodName*/"isUnit">,
+      /*MethodName*/"isUnitary">,
     InterfaceMethod<[{
       Check if multivector is known to be a sum of basis 1-blades.
       }],
@@ -222,7 +222,7 @@ def Geomalg_Multivector : TypeDef<Geomalg_Dialect, "Multivector",
 
   let assemblyFormat = "`<` $blades `>`";
   let extraClassDeclaration = [{
-    bool isUnit() const { return false; }
+    bool isUnitary() const { return false; }
     bool isVector() const;
   }];
 }
@@ -244,13 +244,35 @@ def Geomalg_Unitvector : TypeDef<Geomalg_Dialect, "UnitVector",
   let parameters = (ins ArrayRefParameter<"geomalg::BladeType">:$blades);
   let assemblyFormat = "`<` $blades `>`";
   let extraClassDeclaration = [{
-    bool isUnit() const { return true; }
+    bool isUnitary() const { return true; }
     bool isVector() const { return true; }
     static llvm::LogicalResult verifyInvariants(
               auto EmitError, llvm::ArrayRef<geomalg::BladeType> Blades) {
       return llvm::success(llvm::all_of(Blades,
         [](geomalg::BladeType BT) { return BT.getGrade() == 1; }));
     }
+  }];
+}
+
+def Geomalg_UnitMultivector : TypeDef<Geomalg_Dialect, "UnitMultivector",
+                                      [Geomalg_MultivectorLike,
+                                       Geomalg_VersorLike]> {
+  let mnemonic = "unit_multivector";
+  let description = [{
+    A unit multivector is a sum of basis blades that is assumed to be
+    a versor with V Ṽ = 1 (e.g. a normalized motor.) It has a blade
+    of grade other than 1 since a unit 1-vector is a unit_vector.
+
+    We also get the property:
+      V⁻¹ = Ṽ (inverse)
+  }];
+
+  let parameters = (ins ArrayRefParameter<"geomalg::BladeType">:$blades);
+  let assemblyFormat = "`<` $blades `>`";
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    bool isUnitary() const { return true; }
+    bool isVector() const { return false; }
   }];
 }
 
@@ -317,11 +339,11 @@ def Geomalg_SumOp : Geomalg_Op<"sum", [InferredResult]> {
   let description = [{
     Take a sum of k-blades to produce a multivector.
 
-    If the $IsUnit attribute is set the sum returns a unit_vector.
-    This is known to happen when negating a unit_vector.
+    If the $IsUnitary attribute is set the sum returns a unit_vector
+    or unit_multivector. This is known to happen when negating one.
   }];
 
-  let arguments = (ins UnitAttr:$IsUnit, Variadic<Geomalg_Value>:$args);
+  let arguments = (ins UnitAttr:$IsUnitary, Variadic<Geomalg_Value>:$args);
   let results   = (outs Geomalg_Value:$result);
   let builders = [
     OpBuilder<(ins "::mlir::Value":$LHS, "::mlir::Value":$RHS), [{
@@ -615,6 +637,22 @@ def Geomalg_GradeOp : Geomalg_Op<"grade"> {
 
   let arguments = (ins Geomalg_Value:$arg, I32Attr:$grade);
   let results   = (outs Geomalg_Unknown:$result);
+}
+
+def Geomalg_CastUnitaryOp : Geomalg_Op<"cast_unitary"> {
+  let description = [{
+    Assume that a versor V has V Ṽ = 1 resulting in a unit_vector
+    or unit_multivector once the blades of V are known.
+  }];
+
+  let arguments = (ins Geomalg_Value:$arg);
+  let results   = (outs Geomalg_Unknown:$result);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$Arg), [{
+        $_state.addOperands(Arg);
+        $_state.addTypes(geomalg::UnknownType::get($_builder.getContext()));
+      }]>
+  ];
 }
 
 def Geomalg_ExpOp : Geomalg_Op<"exp"> {

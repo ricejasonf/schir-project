@@ -112,12 +112,12 @@ geomalg::SumOp::inferReturnTypes(
                   mlir::RegionRange Regions,
                   llvm::SmallVectorImpl<mlir::Type>& InferredTypes) {
   SumOpAdaptor Adaptor(Operands, Attributes, Properties, Regions);
-  bool IsUnit = Adaptor.getIsUnit();
+  bool IsUnitary = Adaptor.getIsUnitary();
   llvm::SmallVector<geomalg::BladeType, 8> BladeTypes;
   mlir::Type ResultT;
   for (mlir::Value V : Operands) {
     mlir::Type Type = V.getType();
-    if (isUnknown(Type) || isa<MultivectorType, VersorType>(Type)) {
+    if (isUnknown(Type) || isa<MultivectorLike, VersorType>(Type)) {
       InferredTypes.push_back(geomalg::UnknownType::get(Ctx));
       return llvm::success();
     } else if (isa<ZeroType>(V.getType())) {
@@ -136,8 +136,8 @@ geomalg::SumOp::inferReturnTypes(
     ResultT = geomalg::ZeroType::get(Ctx);
   else if (llvm::all_equal(BladeTypes))
     ResultT = BladeTypes.front();
-  else if (IsUnit)
-    ResultT = createMultivectorLikeType<UnitVectorType>(BladeTypes);
+  else if (IsUnitary)
+    ResultT = createUnitType(BladeTypes);
   else
     ResultT = createMultivectorLikeType<MultivectorType>(BladeTypes);
 

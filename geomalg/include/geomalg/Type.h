@@ -34,6 +34,13 @@ bool isUnitVector(mlir::Value V) {
   return isa<geomalg::UnitVectorType>(V.getType());
 }
 
+// Return true if the type is known to be a unit versor (ie V Ṽ = 1.)
+inline
+bool isUnitary(mlir::Type T) {
+  auto MV = dyn_cast<geomalg::MultivectorLike>(T);
+  return MV && MV.isUnitary();
+}
+
 bool isValidNarrowing(mlir::Type A, mlir::Type B);
 
 // Return true if the type is a blade of grade 1 or a sum of them.
@@ -83,6 +90,10 @@ mlir::Type inferOuterProdResult(mlir::Value LHS, mlir::Value RHS);
 template <typename T>
 mlir::Type
 createMultivectorLikeType(llvm::MutableArrayRef<BladeType> BladeTypes);
+
+// Create a unit_vector or unit_multivector type
+// (or a BladeType for a single term.)
+mlir::Type createUnitType(llvm::MutableArrayRef<BladeType> BladeTypes);
 
 bool isOrthogonalBasis(Metric const& M, MultivectorLike A, MultivectorLike B);
 
