@@ -387,6 +387,18 @@ struct RemoveCast : mlir::OpRewritePattern<geomalg::CastOp> {
       geomalg::CastOp, mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct WidenCastArg : mlir::OpRewritePattern<geomalg::CastOp> {
+  using Base = mlir::OpRewritePattern<geomalg::CastOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("WidenCastArg");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      geomalg::CastOp, mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct RemoveExpand : mlir::OpRewritePattern<geomalg::ExpandOp> {
   using Base = mlir::OpRewritePattern<geomalg::ExpandOp>;
   using Base::OpRewritePattern;
@@ -1376,6 +1388,31 @@ llvm::LogicalResult RemoveCast::matchAndRewrite(
   return llvm::success();
 }
 
+llvm::LogicalResult WidenCastArg::matchAndRewrite(
+    geomalg::CastOp CastOp,
+    mlir::PatternRewriter& Rewriter) const {
+  // Widen an argument that lacks some blades of a multivector result.
+  auto ResultMV = dyn_cast<MultivectorLike>(CastOp.getResult().getType());
+  if (!ResultMV)
+    return llvm::failure();
+  llvm::SmallVector<BladeType, 8> ArgBlades
+    = getBladeTypes(CastOp.getArg().getType());
+  llvm::SmallVector<BladeType, 8> ResultBlades(ResultMV.getBlades());
+  if (ArgBlades.empty() || ArgBlades.size() >= ResultBlades.size())
+    return llvm::failure();
+  llvm::sort(ArgBlades, compareBladeTypes);
+  llvm::sort(ResultBlades, compareBladeTypes);
+  if (!llvm::includes(ResultBlades, ArgBlades, compareBladeTypes))
+    return llvm::failure();
+
+  mlir::Value Widened = liftToMultivector(Rewriter, ResultMV,
+                                          CastOp.getArg());
+  Rewriter.modifyOpInPlace(CastOp, [&] {
+    CastOp.getArgMutable().assign(Widened);
+  });
+  return llvm::success();
+}
+
 llvm::LogicalResult RemoveExpand::matchAndRewrite(
     geomalg::ExpandOp ExpandOp,
     mlir::PatternRewriter& Rewriter) const {
@@ -1413,6 +1450,15 @@ llvm::LogicalResult ZeroAbsorbToZero::matchAndRewrite(
     mlir::PatternRewriter& Rewriter) const {
   for (mlir::Value V : Op->getOperands()) {
     if (geomalg::isZero(V))
+      return replaceWithZero(Rewriter, Op);
+  }
+
+  // Fold products with a zero constant blade operand.
+  if (!Op->hasTrait<geomalg::IsMul>() && !isa<GeomProdOp, DotOp>(Op))
+    return llvm::failure();
+  for (mlir::Value V : Op->getOperands()) {
+    auto BOp = V.getDefiningOp<BladeOp>();
+    if (BOp && BOp.getFloat() == 0.0f)
       return replaceWithZero(Rewriter, Op);
   }
 
@@ -2845,6 +2891,7 @@ void populateExpandPatterns(mlir::RewritePatternSet& PS, MetricKind MK) {
          ExpandCastUnitary,
          RemoveExpand,
          RemoveCast,
+         WidenCastArg,
          RemoveConvert,
          ExpandReverse,
          ExpandGradeInvo,
@@ -3000,6 +3047,7 @@ public:
            SimplifyNegate,
            SimplifyDot,
            RemoveExpand,
+           WidenCastArg,
            RemoveConvert,
            ConvertNarrowedReturn,
            ConvertNarrowedCallArgs
