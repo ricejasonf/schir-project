@@ -10,6 +10,7 @@
 !no = !geomalg.blade<8>
 !ni = !geomalg.blade<16>
 !vec3 = !geomalg.multivector<<1>, <2>, <4>>
+!uvec3 = !geomalg.unit_vector<<1>, <2>, <4>>
 !point = !geomalg.multivector<<1>, <2>, <4>, <8>, <16>>
 !plane = !geomalg.multivector<<1>, <2>, <4>, <16>>
 !e3_ni = !geomalg.multivector<<4>, <16>>
@@ -139,4 +140,20 @@ func.func @dilate(%X: !point, %C: !point, %s: !scalar) -> !geomalg.unknown {
     -> !geomalg.unknown
   %5 = "geomalg.vprod"(%X, %D) : (!point, !geomalg.unknown) -> !geomalg.unknown
   geomalg.return %5 : !geomalg.unknown
+}
+
+// CHECK-LABEL: func.func @dot_unit_vector
+// CHECK-NEXT: [[X:%[0-9]+]] = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !geomalg.blade<0>
+// CHECK-NEXT: geomalg.return [[X]] : !geomalg.blade<0>
+func.func @dot_unit_vector(%u: !uvec3) -> !geomalg.unknown {
+  %0 = "geomalg.dot"(%u, %u) : (!uvec3, !uvec3) -> !scalar
+  geomalg.return %0 : !scalar
+}
+
+// CHECK-LABEL: func.func @iprod_unit_vector
+// CHECK-NEXT: [[X:%[0-9]+]] = "geomalg.blade"() <{coefficient = 1.000000e+00 : f32}> : () -> !geomalg.blade<0>
+// CHECK-NEXT: geomalg.return [[X]] : !geomalg.blade<0>
+func.func @iprod_unit_vector(%u: !uvec3) -> !geomalg.unknown {
+  %0 = "geomalg.iprod"(%u, %u) : (!uvec3, !uvec3) -> !geomalg.unknown
+  geomalg.return %0 : !geomalg.unknown
 }

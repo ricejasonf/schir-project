@@ -2806,46 +2806,14 @@ static void factorProducts(mlir::RewriterBase& Rewriter, mlir::Block& Block) {
 llvm::LogicalResult SimplifyDot::matchAndRewrite(
     DotOp Op,
     mlir::PatternRewriter& Rewriter) const {
-  if (Op.getLHS() != Op.getRHS())
+  // Replace the square of a unit vector or unit blade with 1.
+  mlir::Value LHS = Op.getLHS();
+  if (LHS != Op.getRHS() || !(isUnitVector(LHS) || isUnitBlade(LHS)))
     return llvm::failure();
 
-  mlir::Value LHS = Op.getLHS();
-  mlir::Value RHS = Op.getRHS();
-
-  mlir::Type T = LHS.getType();
-  if (LHS == RHS && (isUnitVector(LHS) || isUnitBlade(LHS))) {
-    auto ScalarT = geomalg::BladeType::get(getContext(), 0);
-    replaceOpWithNewOp<BladeOp>(Rewriter, Op, ScalarT, 1.0f);
-    return llvm::success();
-  }
-
-  // Expand Dot product of constants. (The user created it probably.)
-  // TODO Maybe we should have a ConstantSumOp or something.
-  if (auto Sum1 = LHS.getDefiningOp<SumOp>()) {
-    if (auto Sum2 = RHS.getDefiningOp<SumOp>()) {
-      if (Sum1.getArgs().size() == Sum2.getArgs().size()) {
-        mlir::Location Loc = Op->getLoc();
-        float Dot = 0.0f;
-        // Create a constant... duh!
-        for (auto [V1, V2] : llvm::zip(Sum1.getArgs(), Sum2.getArgs())) {
-          auto B1 = V1.getDefiningOp<BladeOp>();
-          auto B2 = V1.getDefiningOp<BladeOp>();
-          if (B1 && B2) {
-            Dot += B1.getFloat() * B2.getFloat();
-          } else {
-            Dot = NAN;
-            break;
-          }
-        }
-        if (!std::isnan(Dot)) {
-          replaceOpWithNewOp<BladeOp>(Rewriter, Op, Dot);
-          return llvm::success();
-        }
-      }
-    }
-  }
-
-  return llvm::failure();
+  auto ScalarT = geomalg::BladeType::get(getContext(), 0);
+  replaceOpWithNewOp<BladeOp>(Rewriter, Op, ScalarT, 1.0f);
+  return llvm::success();
 }
 
 namespace {
