@@ -83,6 +83,8 @@ func.func @exp_2d(%b: !biv2) -> !geomalg.unknown {
 // CHECK-NOT: "geomalg.gprod"
 // CHECK-NOT: "geomalg.oprod"
 // CHECK: geomalg.return
+// SPIRV-LABEL: spirv.func @exp_3d
+// SPIRV-SAME: (%{{.*}}: !spirv.array<6 x f32>) -> !spirv.array<8 x f32>
 func.func @exp_3d(%b: !biv3) -> !geomalg.unknown {
   %0 = "geomalg.exp"(%b) : (!biv3) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
@@ -103,6 +105,8 @@ func.func @exp_3d(%b: !biv3) -> !geomalg.unknown {
 // LLVM-NOT: llvm.call
 // LLVM: llvm.intr.copysign
 // LLVM: llvm.return
+// SPIRV-LABEL: spirv.func @log_3d
+// SPIRV-SAME: (%{{.*}}: !spirv.array<8 x f32>) -> !spirv.array<6 x f32>
 func.func @log_3d(%m: !motor3) -> !geomalg.unknown {
   %0 = "geomalg.log"(%m) : (!motor3) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown

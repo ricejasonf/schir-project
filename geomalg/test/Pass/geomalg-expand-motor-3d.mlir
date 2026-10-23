@@ -2,8 +2,9 @@
 
 // RUN: geomalg-opt --geomalg-to-llvm %s | FileCheck --check-prefix="LLVM" %s
 
-// 3D motors are vector<8xf32> which SPIRV does not support without Vector16
-// so these are not lowered to SPIRV.
+// RUN: geomalg-opt --geomalg-to-spirv %s | FileCheck --check-prefix="SPIRV" %s
+
+// 3D motors lower to SPIRV arrays since vector<8xf32> needs Vector16.
 
 !scalar = !geomalg.blade<0>
 !motor3 = !geomalg.multivector<<0>, <3>, <5>, <6>, <17>, <18>, <20>, <23>>
@@ -20,6 +21,11 @@
 // LLVM: llvm.intr.sqrt
 // LLVM-NOT: llvm.call
 // LLVM: llvm.return
+// SPIRV-LABEL: spirv.func @normalize_3d
+// SPIRV-SAME: (%{{.*}}: !spirv.array<8 x f32>) -> !spirv.array<8 x f32>
+// SPIRV: spirv.CompositeConstruct
+// SPIRV-SAME: -> !spirv.array<8 x f32>
+// SPIRV-NEXT: spirv.ReturnValue
 func.func @normalize_3d(%m: !motor3) -> !geomalg.unknown {
   %0 = "geomalg.normalize"(%m) : (!motor3) -> !geomalg.unknown
   geomalg.return %0 : !geomalg.unknown
@@ -38,6 +44,11 @@ func.func @normalize_3d(%m: !motor3) -> !geomalg.unknown {
 // LLVM-LABEL: llvm.func @interp_three_quarters
 // LLVM-NOT: llvm.call
 // LLVM: llvm.return
+// SPIRV-LABEL: spirv.func @interp_three_quarters
+// SPIRV-SAME: !spirv.array<8 x f32>, %{{.*}}: !spirv.array<8 x f32>)
+// SPIRV-SAME: -> !spirv.array<8 x f32>
+// SPIRV-NOT: func.return
+// SPIRV: spirv.ReturnValue
 func.func @interp_three_quarters(%a: !motor3, %b: !motor3) -> !geomalg.unknown {
   %t = "geomalg.blade"() <{coefficient = 0.75 : f32}> : () -> !scalar
   %0 = "geomalg.interp"(%a, %b, %t) : (!motor3, !motor3, !scalar) -> !geomalg.unknown

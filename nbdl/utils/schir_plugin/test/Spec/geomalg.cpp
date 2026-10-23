@@ -32,10 +32,11 @@ namespace foo {
   (import (nbdl spec)
           (nbdl spec geomalg)
           (geomalg base)
+          (geomalg conformal)
           (geomalg motor))
 
   (export-c test_dot test_add normalize_rotate cancel_vec3)
-  (export-shader test_dot test_add normalize_rotate)
+  (export-shader test_dot test_add normalize_rotate motor_3d)
   (export-cpp test_test_dot test_test_call)
 
   ; // Functions with geomalg operations exported to C are lowered to LLVM
@@ -59,6 +60,11 @@ namespace foo {
   (define-fn normalize_rotate ((X : !vec2) (A : !vec2) (B : !vec2))
                               -> (!vec2)
     (return (convert (vprod X (normalize (gprod B A))) !vec2)))
+
+  ; // A 3D motor is lowered to an array in SPIRV.
+  (define-fn motor_3d ((N : !vec3) (D : !scalar)
+                       (A : !vec3) (B : !vec3) (C : !vec3)) -> (!nbdl.unknown)
+    (return (normalize (gprod (translator N D) (rotor A B C)))))
 
   ; // The trivector term of the reflection is
   ; // simplified away before the result type is inferred.
@@ -194,6 +200,11 @@ namespace foo {
   ; // SPIRV: spirv.func @"::foo::normalize_rotate"
   ; // SPIRV: spirv.GL.Sqrt
   ; // SPIRV: spirv.ReturnValue {{%[0-9]+}} : vector<2xf32>
+  ; // SPIRV: spirv.func @"::foo::motor_3d"
+  ; // SPIRV-SAME: -> !spirv.array<8 x f32>
+  ; // SPIRV: spirv.CompositeConstruct
+  ; // SPIRV-SAME: -> !spirv.array<8 x f32>
+  ; // SPIRV-NEXT: spirv.ReturnValue {{%[0-9]+}} : !spirv.array<8 x f32>
   ; // SPIRV-NOT: cancel_vec3
   ; // SPIRV-LABEL: module @nbdl_spec_module_cpp
 
