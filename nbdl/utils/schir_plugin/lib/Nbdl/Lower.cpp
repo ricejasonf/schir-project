@@ -1,6 +1,7 @@
 // Copyright Jason Rice 2026
 
 #include <nbdl_spec/NbdlDialect.h>
+#include <schir_common/SPIRVConversion.h>
 #include <mlir/Conversion/AffineToStandard/AffineToStandard.h>
 #include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
 #include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
@@ -568,53 +569,6 @@ public:
   }
 };
 
-// Check that a vector type is valid with the capabilities of the target.
-bool isSupportedSPIRVVector(spirv::TargetEnv const& TE, mlir::VectorType VT) {
-  if (!spirv::CompositeType::isValid(VT))
-    return false;
-  llvm::SmallVector<llvm::ArrayRef<spirv::Capability>, 2> Capabilities;
-  llvm::cast<spirv::CompositeType>(VT).getCapabilities(Capabilities);
-  return llvm::all_of(Capabilities,
-                      [&](llvm::ArrayRef<spirv::Capability> AnyOf) {
-                        return TE.allows(AnyOf).has_value();
-                      });
-}
-
-// Convert vectors with no SPIRV vector type (e.g. vector<8xf32>) to arrays.
-struct SPIRVTypeConverter : mlir::SPIRVTypeConverter {
-  SPIRVTypeConverter(spirv::TargetEnvAttr TEA)
-    : mlir::SPIRVTypeConverter(TEA)
-  {
-    addConversion([this](mlir::VectorType VT) -> std::optional<mlir::Type> {
-      if (VT.getRank() != 1 || VT.getNumElements() == 1 ||
-          isSupportedSPIRVVector(getTargetEnv(), VT))
-        return std::nullopt;
-      mlir::Type ElementT = convertType(VT.getElementType());
-      if (!ElementT)
-        return std::nullopt;
-      return spirv::ArrayType::get(ElementT, VT.getNumElements());
-    });
-  }
-};
-
-// Construct arrays from elements.
-struct FromElementsToArray
-    : mlir::OpConversionPattern<vector::FromElementsOp> {
-  using Base::Base;
-
-  llvm::LogicalResult matchAndRewrite(
-        vector::FromElementsOp Op, vector::FromElementsOp::Adaptor Adaptor,
-        mlir::ConversionPatternRewriter& R) const override {
-    mlir::Type ResultT = getTypeConverter()->convertType(Op.getType());
-    auto ArrayT = dyn_cast_or_null<spirv::ArrayType>(ResultT);
-    if (!ArrayT)
-      return llvm::failure();
-    R.replaceOpWithNewOp<spirv::CompositeConstructOp>(Op, ArrayT,
-                                                      Adaptor.getElements());
-    return llvm::success();
-  }
-};
-
 // Lower the mid level dialects that nbdl-lower produces to SPIRV.
 class LowerToSPIRVPass
     : public nbdl_spec::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
@@ -636,14 +590,13 @@ public:
     }
 
     spirv::TargetEnvAttr TEA = spirv::lookupTargetEnvOrDefault(M);
-    ::SPIRVTypeConverter TC(TEA);
+    schir_common::SPIRVTypeConverter TC(TEA);
     std::unique_ptr<mlir::SPIRVConversionTarget>
       Target = mlir::SPIRVConversionTarget::get(TEA);
 
     mlir::ScfToSPIRVContext ScfContext;
     mlir::RewritePatternSet PS(Ctx);
-    // Try arrays before the vector.from_elements pattern which expects vectors.
-    PS.add<FromElementsToArray>(TC, Ctx, /*benefit=*/2);
+    schir_common::populateFromElementsToArrayPatterns(TC, PS);
     mlir::populateSCFToSPIRVPatterns(TC, ScfContext, PS);
     arith::populateArithToSPIRVPatterns(TC, PS);
     mlir::cf::populateControlFlowToSPIRVPatterns(TC, PS);
