@@ -2983,12 +2983,13 @@ using Monomial = llvm::SmallVector<std::pair<unsigned, int>, 4>;
 // Define a polynomial as the coefficients of its monomials.
 using Polynomial = std::map<Monomial, double>;
 
-// Define an atom of a polynomial as a value or the sum U + T·V
-// of other atoms.
+// Define an atom of a polynomial as
+//  - a mlir::Value OR
+//  - the sum U + T·V of other atoms.
 struct PolynomialAtom {
   mlir::Value Value;
-  unsigned U = 0;
-  unsigned V = 0;
+  unsigned U = 0; // Atom Id
+  unsigned V = 0; // Atom Id
   double T = 0.0;
 };
 
@@ -2999,6 +3000,7 @@ struct PolynomialBuilder {
 
   llvm::SmallVector<PolynomialAtom, 16> Atoms;
   llvm::DenseMap<mlir::Value, std::optional<Polynomial>> Cache;
+  // Note whether any terms or factors of the built polynomials cancelled.
   bool HasCancelled = false;
 
   unsigned getAtomId(mlir::Value V) {
@@ -3015,7 +3017,7 @@ struct PolynomialBuilder {
     return Polynomial{{Monomial{{getAtomId(V), 1}}, 1.0}};
   }
 
-  // Add C times Q to P.
+  // Add C·Q to P.
   void add(Polynomial& P, Polynomial const& Q, double C = 1.0) {
     for (auto const& [M, K] : Q) {
       if (C * K == 0.0)
@@ -3190,8 +3192,8 @@ struct PolynomialBuilder {
     return P;
   }
 
-  // Replace each k₁Mu² + 2k₁tMuv + k₁t²Mv² in P with k₁Mw²
-  // for the new atom w = u + tv.
+  // Replace each k₁·M·u² + 2·k₁·t·M·u·v + k₁·t²·M·v² in P with k₁·M·w²
+  // for the new atom w = u + t·v.
   bool completeSquare(Polynomial& P) {
     llvm::SmallVector<unsigned, 16> Ids;
     for (auto const& [M, K] : P)
