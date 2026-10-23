@@ -1011,8 +1011,8 @@ convertNarrowedOperands(mlir::PatternRewriter& Rewriter, mlir::Operation* Op,
 // Keep the result types of a function when the values returned
 // are narrowed. (This includes the returns of other dialects.)
 struct ConvertNarrowedReturn
-    : mlir::OpInterfaceRewritePattern<schir::InferableReturn> {
-  using Base = mlir::OpInterfaceRewritePattern<schir::InferableReturn>;
+    : mlir::OpInterfaceRewritePattern<schir_common::InferableReturn> {
+  using Base = mlir::OpInterfaceRewritePattern<schir_common::InferableReturn>;
   using Base::OpInterfaceRewritePattern;
 
   void initialize() {
@@ -1020,7 +1020,7 @@ struct ConvertNarrowedReturn
   }
 
   llvm::LogicalResult matchAndRewrite(
-      schir::InferableReturn Op,
+      schir_common::InferableReturn Op,
       mlir::PatternRewriter& Rewriter) const override {
     mlir::FunctionOpInterface FuncOp = Op.getReturnedFunction();
     if (!FuncOp)

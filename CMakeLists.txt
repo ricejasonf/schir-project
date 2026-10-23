@@ -19,6 +19,7 @@ include(AddMLIR)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 
+include_directories(${CMAKE_SOURCE_DIR}/common/include)
 include_directories(${CMAKE_SOURCE_DIR}/schir/include)
 
 # Scheme module paths (same as c++ headers)
@@ -40,6 +41,7 @@ if (GTest_FOUND)
   enable_testing()
 endif()
 
+add_subdirectory(common)
 add_subdirectory(schir)
 add_subdirectory(geomalg)
 add_subdirectory(nbdl/utils/schir_plugin)

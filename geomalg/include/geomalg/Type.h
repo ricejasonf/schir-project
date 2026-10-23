@@ -21,7 +21,7 @@ bool isZero(mlir::Type T) {
 // is not yet inferred (e.g. !geomalg.unknown.)
 inline
 bool isUnknown(mlir::Type T) {
-  return schir::isPlaceholder(T);
+  return schir_common::isPlaceholder(T);
 }
 
 inline

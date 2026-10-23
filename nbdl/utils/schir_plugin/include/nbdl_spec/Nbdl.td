@@ -12,7 +12,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "schir/Interfaces/Interfaces.td"
+include "schir_common/Interfaces.td"
 
 def Nbdl_Dialect : Dialect {
   let name = "nbdl";
@@ -41,7 +41,7 @@ def Nbdl_Unit : TypeDef<Nbdl_Dialect, "Unit", []> {
 }
 
 def Nbdl_Unknown : TypeDef<Nbdl_Dialect, "Unknown",
-                           [Schir_PlaceholderLike]> {
+                           [SchirCommon_PlaceholderLike]> {
   let mnemonic = "unknown";
   let description = [{
     A placeholder for the type of a value that is not yet inferred
@@ -412,7 +412,8 @@ def Nbdl_DiscardOp : Nbdl_Op<"discard", [Terminator]> {
 }
 
 def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
-    DeclareOpInterfaceMethods<Schir_InferableReturn, ["getReturnedFunction"]>]> {
+    DeclareOpInterfaceMethods<SchirCommon_InferableReturn,
+                              ["getReturnedFunction"]>]> {
   let description = [{
     Return the result from a FuncOp, or nothing if the FuncOp has no
     result. The operand must be of the result type unless either is a

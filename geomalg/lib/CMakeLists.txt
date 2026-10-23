@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.13.4)
 set(GEOMALG_SOURCE_GEN_DEPS
   GeomalgOpsIncGen
   GeomalgPassesIncGen
-  SchirInterfacesIncGen)
+  SchirCommonIncGen)
 
 set(GEOMALG_SOURCE_FILES
   Geomalg/Type.cpp;
@@ -16,12 +16,12 @@ target_compile_options(GeomalgDialect PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(GeomalgDialect ${GEOMALG_SOURCE_GEN_DEPS})
 target_link_libraries(GeomalgDialect
   PRIVATE
-    SchirInterfaces
+    SchirCommon
     LLVM
     MLIR)
 
 add_library(Geomalg MODULE Geomalg.cpp ${GEOMALG_SOURCE_FILES})
-target_link_libraries(Geomalg PRIVATE SchirInterfaces LLVM MLIR)
+target_link_libraries(Geomalg PRIVATE SchirCommon LLVM MLIR)
 target_compile_options(Geomalg PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Geomalg ${GEOMALG_SOURCE_GEN_DEPS})
 

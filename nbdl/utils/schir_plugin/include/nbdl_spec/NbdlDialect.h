@@ -7,7 +7,7 @@
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/Interfaces/ControlFlowInterfaces.h>
 #include <mlir/Interfaces/SideEffectInterfaces.h>
-#include <schir/Interfaces/Interfaces.h>
+#include <schir_common/Interfaces.h>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
 #include <string>

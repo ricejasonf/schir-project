@@ -159,7 +159,7 @@ llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
   if (llvm::isa<nbdl_spec::StoreType>(ValueT))
     return emitOpError("cannot lift a value that is already a store");
   // A placeholder value lifts to an unresolved store.
-  auto ExpectedT = schir::isPlaceholder(ValueT)
+  auto ExpectedT = schir_common::isPlaceholder(ValueT)
     ? nbdl_spec::StoreType::get(getContext())
     : nbdl_spec::StoreType::get(getContext(), mlir::TypeAttr::get(ValueT));
   if (getResult().getType() != ExpectedT)
@@ -171,7 +171,7 @@ llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
 // Return true if T is not yet inferred (ie a placeholder or
 // a !nbdl.store with no resolved alternatives.)
 static bool needsResolveT(mlir::Type T) {
-  if (schir::isPlaceholder(T))
+  if (schir_common::isPlaceholder(T))
     return true;
   auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(T);
   return ST && ST.getAlts().empty();

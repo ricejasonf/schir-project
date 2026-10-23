@@ -1,10 +1,10 @@
-// Interfaces.td - Interfaces shared by dialects using Schir
+// Interfaces.td - Interfaces shared by dialects of schir-project
 //
 // Copyright Jason Rice 2026
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-#ifndef SCHIR_INTERFACES_TD
-#define SCHIR_INTERFACES_TD
+#ifndef SCHIR_COMMON_INTERFACES_TD
+#define SCHIR_COMMON_INTERFACES_TD
 
 include "mlir/IR/OpBase.td"
 
@@ -12,20 +12,20 @@ include "mlir/IR/OpBase.td"
 // Type Interfaces
 //===----------------------------------------------------------------------===//
 
-def Schir_PlaceholderLike : TypeInterface<"PlaceholderLike"> {
+def SchirCommon_PlaceholderLike : TypeInterface<"PlaceholderLike"> {
   let description = [{
     Mark a type as a placeholder for the type of a value that is not yet
     inferred. This allows operations from one dialect to accept values
     of a type that will be inferred by the passes of another dialect.
   }];
-  let cppNamespace = "schir";
+  let cppNamespace = "schir_common";
 }
 
 //===----------------------------------------------------------------------===//
 // Operation Interfaces
 //===----------------------------------------------------------------------===//
 
-def Schir_InferableReturn : OpInterface<"InferableReturn"> {
+def SchirCommon_InferableReturn : OpInterface<"InferableReturn"> {
   let description = [{
     Mark a terminator as returning its operands from a function where
     the type of each operand may differ from the corresponding result
@@ -35,7 +35,7 @@ def Schir_InferableReturn : OpInterface<"InferableReturn"> {
     dialect to infer or convert the values returned by the operations
     of another dialect.
   }];
-  let cppNamespace = "schir";
+  let cppNamespace = "schir_common";
 
   let methods = [
     InterfaceMethod<[{
@@ -61,4 +61,4 @@ def Schir_InferableReturn : OpInterface<"InferableReturn"> {
   }];
 }
 
-#endif // SCHIR_INTERFACES_TD
+#endif // SCHIR_COMMON_INTERFACES_TD

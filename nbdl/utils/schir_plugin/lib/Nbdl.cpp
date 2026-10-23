@@ -343,7 +343,7 @@ void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
     auto Type = schir::any_cast<mlir::Type>(Arg);
     if (!Type)
       return C.RaiseError("expecting a mlir.type: {}", Arg);
-    HasPlaceholder |= schir::isPlaceholder(Type);
+    HasPlaceholder |= schir_common::isPlaceholder(Type);
     TypeAttrs.push_back(mlir::TypeAttr::get(Type));
   }
   // A store of a type that is not yet inferred is unresolved.

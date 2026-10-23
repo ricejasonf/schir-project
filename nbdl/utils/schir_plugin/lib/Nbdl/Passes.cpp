@@ -93,7 +93,7 @@ using OpRewriteSchirClang = RewriteSchirClangBase<mlir::OpRewritePattern<OpTy>>;
 // Return true if T is a placeholder or a
 // !nbdl.store with no resolved alternatives.
 bool needsResolveT(mlir::Type T) {
-  if (schir::isPlaceholder(T))
+  if (schir_common::isPlaceholder(T))
     return true;
   auto ST = dyn_cast<nbdl_spec::StoreType>(T);
   return ST && ST.getAlts().empty();
@@ -733,7 +733,7 @@ struct InferVisitResultType : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     if (!HasSchirClang())
       return Rewriter.notifyMatchFailure(Op, "no SchirClang available");
 
-    if (!schir::isPlaceholder(Op.getType()))
+    if (!schir_common::isPlaceholder(Op.getType()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
     if (needsResolve(Op.getFn()) ||
@@ -1078,7 +1078,7 @@ struct InferConstexprType : OpRewriteSchirClang<nbdl_spec::ConstexprOp> {
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::ConstexprOp Op,
       mlir::PatternRewriter& Rewriter) const override {
-    if (!schir::isPlaceholder(Op.getType()))
+    if (!schir_common::isPlaceholder(Op.getType()))
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
 
     std::string Typename;
@@ -1113,11 +1113,11 @@ struct InferFuncResultType : mlir::OpRewritePattern<mlir::func::FuncOp> {
     llvm::ArrayRef<mlir::Type> ResultTs = Op.getResultTypes();
     if (ResultTs.size() != 1)
       return Rewriter.notifyMatchFailure(Op, "function does not have one result");
-    if (!schir::isPlaceholder(ResultTs.front()))
+    if (!schir_common::isPlaceholder(ResultTs.front()))
       return Rewriter.notifyMatchFailure(Op, "result type already resolved");
 
-    llvm::SmallVector<schir::InferableReturn, 4> Returns;
-    Op.walk([&](schir::InferableReturn R) {
+    llvm::SmallVector<schir_common::InferableReturn, 4> Returns;
+    Op.walk([&](schir_common::InferableReturn R) {
       if (R.getReturnedFunction().getOperation() == Op.getOperation())
         Returns.push_back(R);
     });
@@ -1126,7 +1126,7 @@ struct InferFuncResultType : mlir::OpRewritePattern<mlir::func::FuncOp> {
 
     // Every return must resolve to the same type.
     mlir::Type InferredT;
-    for (schir::InferableReturn R : Returns) {
+    for (schir_common::InferableReturn R : Returns) {
       llvm::MutableArrayRef<mlir::OpOperand> Operands = R.getReturnedOperands();
       if (Operands.size() != 1)
         return Rewriter.notifyMatchFailure(Op, "return has no operand");
@@ -1430,7 +1430,7 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
   bool HasError = false;
   Op->walk([&](mlir::func::FuncOp FuncOp) {
     if (llvm::none_of(FuncOp.getResultTypes(), [](mlir::Type T) {
-          return schir::isPlaceholder(T); }))
+          return schir_common::isPlaceholder(T); }))
       return;
     FuncOp.emitError("unable to infer result type of function: ")
       << FuncOp.getSymName();

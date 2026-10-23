@@ -13,7 +13,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
-include "schir/Interfaces/Interfaces.td"
+include "schir_common/Interfaces.td"
 
 def Geomalg_Dialect : Dialect {
   let name = "geomalg";
@@ -295,7 +295,7 @@ def Geomalg_Versor : TypeDef<Geomalg_Dialect, "Versor",
 def Geomalg_Vector : Type<CPred<"::geomalg::isVector($_self)">, "1-vector">;
 
 def Geomalg_Unknown : TypeDef<Geomalg_Dialect, "Unknown",
-                              [Schir_PlaceholderLike]> {
+                              [SchirCommon_PlaceholderLike]> {
   let mnemonic = "unknown";
   let description = [{
     A blade or multivector whose type must be inferred.
@@ -308,7 +308,7 @@ def Geomalg_Value : AnyTypeOf<[Geomalg_Blade,
                                Geomalg_MultivectorLike,
                                Geomalg_Versor,
                                Geomalg_Zero,
-                               Schir_PlaceholderLike]>;
+                               SchirCommon_PlaceholderLike]>;
 
 // A scalar value whose type may not yet be inferred.
 def Geomalg_ScalarValue : AnyTypeOf<[
@@ -316,18 +316,18 @@ def Geomalg_ScalarValue : AnyTypeOf<[
                "::llvm::cast<::geomalg::BladeType>($_self).getGrade() == 0">,
          "scalar">,
     Geomalg_Zero,
-    Schir_PlaceholderLike], "scalar">;
+    SchirCommon_PlaceholderLike], "scalar">;
 
 // A value that may be applied with the sandwich product.
 def Geomalg_VersorValue : AnyTypeOf<[Geomalg_VersorLike,
                                      Geomalg_Zero,
-                                     Schir_PlaceholderLike]>;
+                                     SchirCommon_PlaceholderLike]>;
 
 // A value that may be a factor of a versor.
 def Geomalg_VersorFactor : AnyTypeOf<[Geomalg_Vector,
                                       Geomalg_Versor,
                                       Geomalg_Zero,
-                                      Schir_PlaceholderLike],
+                                      SchirCommon_PlaceholderLike],
                                      "1-vector or versor">;
 
 // Operations
@@ -764,7 +764,7 @@ def Geomalg_SelectLtOp : Geomalg_ScalarOp<"select_lt",
 }
 
 def Geomalg_ReturnOp : Op<Geomalg_Dialect, "return",
-                         [Terminator, Schir_InferableReturn]> {
+                         [Terminator, SchirCommon_InferableReturn]> {
   let description = [{
     Provide a return-like operation that does not verify types
     so we can deduce return types in a subsequent pass.
