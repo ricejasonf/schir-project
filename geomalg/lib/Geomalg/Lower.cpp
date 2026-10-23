@@ -2,24 +2,13 @@
 #include <geomalg/Metric.h>
 #include <geomalg/Passes.h>
 #include <geomalg/Type.h>
-#include <schir_common/SPIRVConversion.h>
-#include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
-#include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
-#include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
-#include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
-#include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
-#include <mlir/Conversion/MathToSPIRV/MathToSPIRV.h>
-#include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
-#include <mlir/Conversion/LLVMCommon/TypeConverter.h>
-#include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
-#include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
+#include <schir_common/Lower.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Func/Transforms/FuncConversions.h>
+#include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Math/IR/Math.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
-#include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
-#include <mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
@@ -47,7 +36,6 @@ namespace arith = mlir::arith;
 namespace func = mlir::func;
 namespace linalg = mlir::linalg;
 namespace math = mlir::math;
-namespace spirv = mlir::spirv;
 namespace tensor = mlir::tensor;
 namespace vector = mlir::vector;
 using namespace geomalg;
@@ -861,26 +849,7 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    mlir::MLIRContext* Ctx = &getContext();
-    mlir::ModuleOp M = getOperation();
-
-    spirv::TargetEnvAttr TEA = spirv::lookupTargetEnvOrDefault(M);
-    schir_common::SPIRVTypeConverter STC(TEA);
-    std::unique_ptr<mlir::SPIRVConversionTarget>
-      Target = mlir::SPIRVConversionTarget::get(TEA);
-
-    mlir::RewritePatternSet PS(Ctx);
-    // SPIRV conversion patterns
-    schir_common::populateFromElementsToArrayPatterns(STC, PS);
-    arith::populateArithToSPIRVPatterns(STC, PS);
-    mlir::populateFuncToSPIRVPatterns(STC, PS);
-    mlir::populateBuiltinFuncToSPIRVPatterns(STC, PS);
-    mlir::populateVectorToSPIRVPatterns(STC, PS);
-    mlir::populateMathToSPIRVPatterns(STC, PS);
-
-    mlir::LogicalResult
-      Result = mlir::applyPartialConversion(M, *Target, std::move(PS));
-    if (llvm::failed(Result))
+    if (llvm::failed(schir_common::lowerToSPIRV(getOperation())))
       signalPassFailure();
   }
 };
@@ -894,22 +863,7 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    mlir::MLIRContext* Ctx = &getContext();
-    mlir::ModuleOp M = getOperation();
-
-    mlir::LLVMTypeConverter TC = mlir::LLVMTypeConverter(Ctx);
-    mlir::LLVMConversionTarget Target(*Ctx);
-
-    mlir::RewritePatternSet PS(Ctx);
-    // LLVM conversion patterns
-    arith::populateArithToLLVMConversionPatterns(TC, PS);
-    mlir::populateFuncToLLVMConversionPatterns(TC, PS);
-    mlir::populateVectorToLLVMConversionPatterns(TC, PS);
-    mlir::populateMathToLLVMConversionPatterns(TC, PS);
-
-    mlir::LogicalResult
-      Result = mlir::applyPartialConversion(M, Target, std::move(PS));
-    if (llvm::failed(Result))
+    if (llvm::failed(schir_common::lowerToLLVM(getOperation())))
       signalPassFailure();
   }
 };

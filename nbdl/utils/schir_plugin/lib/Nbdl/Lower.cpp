@@ -1,36 +1,15 @@
 // Copyright Jason Rice 2026
 
 #include <nbdl_spec/NbdlDialect.h>
-#include <schir_common/SPIRVConversion.h>
-#include <mlir/Conversion/AffineToStandard/AffineToStandard.h>
-#include <mlir/Conversion/ArithToLLVM/ArithToLLVM.h>
-#include <mlir/Conversion/ArithToSPIRV/ArithToSPIRV.h>
-#include <mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h>
-#include <mlir/Conversion/ControlFlowToSPIRV/ControlFlowToSPIRV.h>
-#include <mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h>
-#include <mlir/Conversion/FuncToSPIRV/FuncToSPIRV.h>
-#include <mlir/Conversion/LLVMCommon/ConversionTarget.h>
-#include <mlir/Conversion/LLVMCommon/TypeConverter.h>
-#include <mlir/Conversion/MathToLLVM/MathToLLVM.h>
-#include <mlir/Conversion/MathToSPIRV/MathToSPIRV.h>
-#include <mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h>
-#include <mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h>
-#include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
-#include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
-#include <mlir/Conversion/SCFToSPIRV/SCFToSPIRV.h>
-#include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
-#include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
+#include <schir_common/Lower.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
-#include <mlir/Dialect/MemRef/Transforms/Transforms.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
-#include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
-#include <mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
@@ -53,7 +32,6 @@ namespace arith = mlir::arith;
 namespace func = mlir::func;
 namespace memref = mlir::memref;
 namespace scf = mlir::scf;
-namespace spirv = mlir::spirv;
 namespace vector = mlir::vector;
 using llvm::dyn_cast;
 using llvm::isa;
@@ -534,38 +512,8 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    mlir::MLIRContext* Ctx = &getContext();
-    mlir::ModuleOp M = getOperation();
-
-    // Expand memref view operations (e.g. subview) into operations
-    // on their strided metadata which MemRefToLLVM can lower.
-    {
-      mlir::RewritePatternSet PS(Ctx);
-      memref::populateExpandStridedMetadataPatterns(PS);
-      if (llvm::failed(mlir::applyPatternsGreedily(M, std::move(PS))))
-        return signalPassFailure();
-    }
-
-    mlir::LLVMTypeConverter TC(Ctx);
-    mlir::LLVMConversionTarget Target(*Ctx);
-
-    mlir::RewritePatternSet PS(Ctx);
-    mlir::populateAffineToStdConversionPatterns(PS);
-    mlir::populateSCFToControlFlowConversionPatterns(PS);
-    mlir::arith::populateArithToLLVMConversionPatterns(TC, PS);
-    mlir::cf::populateControlFlowToLLVMConversionPatterns(TC, PS);
-    mlir::populateMathToLLVMConversionPatterns(TC, PS);
-    mlir::populateFinalizeMemRefToLLVMConversionPatterns(TC, PS);
-    mlir::populateFuncToLLVMConversionPatterns(TC, PS);
-    mlir::populateVectorToLLVMConversionPatterns(TC, PS);
-
-    if (llvm::failed(mlir::applyPartialConversion(M, Target, std::move(PS))))
-      return signalPassFailure();
-
-    // Remove casts between types that are made equivalent.
-    llvm::SmallVector<mlir::UnrealizedConversionCastOp> Casts;
-    M.walk([&](mlir::UnrealizedConversionCastOp Op) { Casts.push_back(Op); });
-    mlir::reconcileUnrealizedCasts(Casts);
+    if (llvm::failed(schir_common::lowerToLLVM(getOperation())))
+      signalPassFailure();
   }
 };
 
@@ -578,36 +526,8 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    mlir::MLIRContext* Ctx = &getContext();
-    mlir::ModuleOp M = getOperation();
-
-    // Inline the regions of scf.execute_region which has no SPIRV lowering.
-    {
-      mlir::RewritePatternSet PS(Ctx);
-      scf::ExecuteRegionOp::getCanonicalizationPatterns(PS, Ctx);
-      if (llvm::failed(mlir::applyPatternsGreedily(M, std::move(PS))))
-        return signalPassFailure();
-    }
-
-    spirv::TargetEnvAttr TEA = spirv::lookupTargetEnvOrDefault(M);
-    schir_common::SPIRVTypeConverter TC(TEA);
-    std::unique_ptr<mlir::SPIRVConversionTarget>
-      Target = mlir::SPIRVConversionTarget::get(TEA);
-
-    mlir::ScfToSPIRVContext ScfContext;
-    mlir::RewritePatternSet PS(Ctx);
-    schir_common::populateFromElementsToArrayPatterns(TC, PS);
-    mlir::populateSCFToSPIRVPatterns(TC, ScfContext, PS);
-    arith::populateArithToSPIRVPatterns(TC, PS);
-    mlir::cf::populateControlFlowToSPIRVPatterns(TC, PS);
-    mlir::populateFuncToSPIRVPatterns(TC, PS);
-    mlir::populateBuiltinFuncToSPIRVPatterns(TC, PS);
-    mlir::populateMathToSPIRVPatterns(TC, PS);
-    mlir::populateMemRefToSPIRVPatterns(TC, PS);
-    mlir::populateVectorToSPIRVPatterns(TC, PS);
-
-    if (llvm::failed(mlir::applyPartialConversion(M, *Target, std::move(PS))))
-      return signalPassFailure();
+    if (llvm::failed(schir_common::lowerToSPIRV(getOperation())))
+      signalPassFailure();
   }
 };
 }  // namespace
