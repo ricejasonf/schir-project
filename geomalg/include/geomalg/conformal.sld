@@ -197,17 +197,14 @@
         ((rotor a b c)
          (rotor-aux (syntax-source-loc) a b c))))
 
-    ;; Dilator D = T (o - ½s∞)(o - ½∞) T⁻¹ as two dual spheres centered at
-    ;; the origin conjugated by the translator T for c
-    ;; ((o - ½s∞)(o - ½∞) ∝ (1 + s) + (s - 1) o ∧ ∞).
+    ;; Dilator D = (C - ½s∞)(C - ½∞) as two dual spheres centered at c
+    ;; (D ∝ (1 + s) + (s - 1) o ∧ ∞ for c = 0).
     ;; As a versor: scaling x ↦ c + s(x - c) for s > 0
     ;; (s < 0 negates the weight of points, so use negative-dilator).
     (define (dilator-aux Loc c Scale)
-      (define O (%blade Loc !no 1))
-      (versor-aux Loc (translator-aux Loc c)
-                      (%sphere Loc O (%scalar Loc Scale))
-                      (%sphere Loc O (%scalar Loc 1))
-                      (translator-aux Loc (negate-aux Loc c))))
+      (define C (up-aux Loc c))
+      (versor-aux Loc (%sphere Loc C (%scalar Loc Scale))
+                      (%sphere Loc C (%scalar Loc 1))))
 
     (define-syntax dilator
       (syntax-rules ()

@@ -246,8 +246,12 @@ int main() {
                     F + Q + G / dot(G, G), 1e-3));
   SCHIR_ASSERT(near(invert_sphere_point(F + R, F + Q, 2),
                     F + Q + 4 * G / dot(G, G), 1e-3));
-  SCHIR_ASSERT(near(dilate(F + D, F, 2.5), F + 2.5f * D, 1e-3));
-  SCHIR_ASSERT(near(negative_dilate(F + D, F, -2.5), F - 2.5f * D, 1e-3));
+  SCHIR_ASSERT(near(dilate(F + D, F, 2.5), F + 2.5f * D, 1e-4));
+  SCHIR_ASSERT(near(negative_dilate(F + D, F, -2.5), F - 2.5f * D, 1e-4));
+  SCHIR_ASSERT(near(dilate(F + vec3{1.3, -1.3, -2.2}, F, 3.7),
+                    F + 3.7f * vec3{1.3, -1.3, -2.2}, 1e-4));
+  SCHIR_ASSERT(near(negative_dilate(F + vec3{0.6, -1.3, -0.7}, F, -3.7),
+                    F - 3.7f * vec3{0.6, -1.3, -0.7}, 1e-4));
 
   // x ↦ (x + x²b) / (1 + 2b·x + b²x²)
   constexpr vec3 B{0.5, -0.25, 1};
@@ -268,7 +272,12 @@ int main() {
   SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -1), vec2{-1, 1}));
   SCHIR_ASSERT(near(negative_dilate_2d(Y, C2, -3), vec2{-5, 1}));
   SCHIR_ASSERT(near(dilate_2d(vec2{102, -100}, vec2{100, -100}, 3),
-                    vec2{106, -100}, 1e-3));
+                    vec2{106, -100}, 1e-4));
+  constexpr vec2 F2{100, -100};
+  SCHIR_ASSERT(near(dilate_2d(F2 + vec2{0.6, -2.2}, F2, 3.7),
+                    F2 + 3.7f * vec2{0.6, -2.2}, 1e-4));
+  SCHIR_ASSERT(near(negative_dilate_2d(F2 + vec2{0.6, 1.3}, F2, -3.7),
+                    F2 - 3.7f * vec2{0.6, 1.3}, 1e-4));
 
   SCHIR_ASSERT(near(reflect_plane_point(X, E3, 1), vec3{1, 2, -2}));
   SCHIR_ASSERT(near(reflect_plane_point(X, 2 * E3, 2), vec3{1, 2, -2}));
