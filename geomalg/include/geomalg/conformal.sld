@@ -124,15 +124,11 @@
         ((plane n Dist)
          (plane-aux (syntax-source-loc) n Dist))))
 
-    ;; Dual plane π = A - B = (a - b) + ½(a² - b²)∞ bisecting a and b.
+    ;; Dual plane π = A - B = (a - b) + ½(a - b)·(a + b)∞ bisecting a and b.
     ;; As a versor: reflection that swaps a and b.
     (define (bisector-aux Loc a b)
-      (sum-aux Loc a
-                   (negate-aux Loc b)
-                   (%scale Loc (%scale Loc .5 (sum-aux Loc (%square Loc a)
-                                                (negate-aux Loc
-                                                  (%square Loc b))))
-                           (%blade Loc !ni 1))))
+      (define n (sum-aux Loc a (negate-aux Loc b)))
+      (plane-aux Loc n (%scale Loc .5 (iprod-aux Loc n (sum-aux Loc a b)))))
 
     (define-syntax bisector
       (syntax-rules ()
