@@ -123,3 +123,105 @@ func.func @shared_pair(%x: !e1, %y: !e2, %s: !scalar, %t: !scalar)
   %2 = "geomalg.sum"(%0, %1) : (!e1, !e2) -> !geomalg.multivector<<1>, <2>>
   geomalg.return %2 : !geomalg.multivector<<1>, <2>>
 }
+
+// Complete the square ½x² - xc + ½c² as ½(x - c)².
+// CHECK-LABEL: func.func @complete_square
+// CHECK-SAME: ([[X:%arg[0-9]+]]: {{.*}}, [[C:%arg[0-9]+]]: {{.*}})
+// CHECK: [[NC:%[0-9]+]] = "geomalg.negate"([[C]])
+// CHECK: [[D:%[0-9]+]] = "geomalg.sum"([[X]], [[NC]])
+// CHECK: [[HALF:%[0-9]+]] = "geomalg.blade"() <{coefficient = 5.0{{.*}}e-01
+// CHECK: [[R:%[0-9]+]] = "geomalg.cmul"([[D]], [[D]], [[HALF]])
+// CHECK: geomalg.return [[R]]
+// LOWER-LABEL: func.func @complete_square
+// LOWER-COUNT-2: arith.mulf
+// LOWER-NOT: arith.mulf
+// LOWER: return
+func.func @complete_square(%x: !scalar, %c: !scalar) -> !scalar {
+  %half = "geomalg.blade"() <{coefficient = 0.5 : f32}> : () -> !scalar
+  %0 = "geomalg.cmul"(%half, %x, %x) : (!scalar, !scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%x, %c) : (!scalar, !scalar) -> !scalar
+  %2 = "geomalg.negate"(%1) : (!scalar) -> !scalar
+  %3 = "geomalg.cmul"(%half, %c, %c) : (!scalar, !scalar, !scalar) -> !scalar
+  %4 = "geomalg.sum"(%0, %2, %3) : (!scalar, !scalar, !scalar) -> !scalar
+  geomalg.return %4 : !scalar
+}
+
+// Cancel the components of a dot product with the like terms.
+// CHECK-LABEL: func.func @cancel_dot
+// CHECK-SAME: ([[V:%arg[0-9]+]]: {{.*}}, [[A:%arg[0-9]+]]: {{.*}})
+// CHECK-NEXT: geomalg.return [[A]]
+func.func @cancel_dot(%v: !geomalg.multivector<<1>, <2>>, %a: !scalar)
+    -> !scalar {
+  %0:2 = "geomalg.expand"(%v) : (!geomalg.multivector<<1>, <2>>) -> (!e1, !e2)
+  %1 = "geomalg.dot"(%v, %v) : (!geomalg.multivector<<1>, <2>>,
+                                !geomalg.multivector<<1>, <2>>) -> !scalar
+  %2 = "geomalg.cmul"(%0#0, %0#0) : (!e1, !e1) -> !scalar
+  %3 = "geomalg.negate"(%2) : (!scalar) -> !scalar
+  %4 = "geomalg.cmul"(%0#1, %0#1) : (!e2, !e2) -> !scalar
+  %5 = "geomalg.negate"(%4) : (!scalar) -> !scalar
+  %6 = "geomalg.sum"(%1, %3, %5, %a) : (!scalar, !scalar, !scalar, !scalar) -> !scalar
+  geomalg.return %6 : !scalar
+}
+
+// Cancel a factor with the inverse of a sum that reduces to it.
+// CHECK-LABEL: func.func @cancel_inverse
+// CHECK-SAME: ([[R:%arg[0-9]+]]: {{.*}}, [[C:%arg[0-9]+]]: {{.*}}, [[X:%arg[0-9]+]]: {{.*}}, [[Y:%arg[0-9]+]]: {{.*}})
+// CHECK-NEXT: [[S:%[0-9]+]] = "geomalg.sum"([[X]], [[Y]])
+// CHECK-NEXT: geomalg.return [[S]]
+func.func @cancel_inverse(%r: !scalar, %c: !scalar,
+                          %x: !scalar, %y: !scalar) -> !scalar {
+  %0 = "geomalg.cmul"(%r, %r) : (!scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%c, %c) : (!scalar, !scalar) -> !scalar
+  %2 = "geomalg.negate"(%1) : (!scalar) -> !scalar
+  %3 = "geomalg.sum"(%0, %1, %2) : (!scalar, !scalar, !scalar) -> !scalar
+  %4 = "geomalg.inverse"(%3) : (!scalar) -> !scalar
+  %5 = "geomalg.cmul"(%4, %r, %r, %x) : (!scalar, !scalar, !scalar, !scalar) -> !scalar
+  %6 = "geomalg.sum"(%5, %y) : (!scalar, !scalar) -> !scalar
+  geomalg.return %6 : !scalar
+}
+
+// Do not distribute the sums a - b and a + b in (a - b)x - ½(a - b)(a + b).
+// CHECK-LABEL: func.func @keep_difference
+// CHECK-SAME: ([[X:%arg[0-9]+]]: {{.*}}, [[A:%arg[0-9]+]]: {{.*}}, [[B:%arg[0-9]+]]: {{.*}})
+// CHECK-DAG: [[NB:%[0-9]+]] = "geomalg.negate"([[B]])
+// CHECK-DAG: [[N:%[0-9]+]] = "geomalg.sum"([[A]], [[NB]])
+// CHECK-DAG: [[S:%[0-9]+]] = "geomalg.sum"([[A]], [[B]])
+// CHECK-DAG: "geomalg.cmul"([[S]], {{%[0-9]+}})
+// CHECK: [[R:%[0-9]+]] = "geomalg.cmul"([[N]], {{%[0-9]+}})
+// CHECK: geomalg.return [[R]]
+func.func @keep_difference(%x: !scalar, %a: !scalar, %b: !scalar) -> !scalar {
+  %half = "geomalg.blade"() <{coefficient = 0.5 : f32}> : () -> !scalar
+  %nb = "geomalg.negate"(%b) : (!scalar) -> !scalar
+  %n = "geomalg.sum"(%a, %nb) : (!scalar, !scalar) -> !scalar
+  %s = "geomalg.sum"(%a, %b) : (!scalar, !scalar) -> !scalar
+  %0 = "geomalg.cmul"(%n, %x) : (!scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%half, %n, %s) : (!scalar, !scalar, !scalar) -> !scalar
+  %2 = "geomalg.negate"(%1) : (!scalar) -> !scalar
+  %3 = "geomalg.sum"(%0, %2) : (!scalar, !scalar) -> !scalar
+  geomalg.return %3 : !scalar
+}
+
+// Do not distribute (a + bc)(d + ef) into more terms than the sum has
+// even though g² - g² cancels.
+// CHECK-LABEL: func.func @no_growth
+// CHECK-SAME: ([[A:%arg[0-9]+]]: {{.*}}, [[B:%arg[0-9]+]]: {{.*}}, [[C:%arg[0-9]+]]: {{.*}}, [[D:%arg[0-9]+]]: {{.*}}, [[E:%arg[0-9]+]]: {{.*}}, [[F:%arg[0-9]+]]: {{.*}}, [[G:%arg[0-9]+]]: {{.*}})
+// CHECK: [[BC:%[0-9]+]] = "geomalg.cmul"([[B]], [[C]])
+// CHECK: [[EF:%[0-9]+]] = "geomalg.cmul"([[E]], [[F]])
+// CHECK: [[S:%[0-9]+]] = "geomalg.sum"([[A]], [[BC]])
+// CHECK: [[T:%[0-9]+]] = "geomalg.sum"([[D]], [[EF]])
+// CHECK: [[ST:%[0-9]+]] = "geomalg.cmul"([[S]], [[T]])
+// CHECK: [[GG:%[0-9]+]] = "geomalg.cmul"([[G]], [[G]])
+// CHECK: [[NGG:%[0-9]+]] = "geomalg.negate"([[GG]])
+// CHECK: "geomalg.sum"([[ST]], [[GG]], [[NGG]])
+func.func @no_growth(%a: !scalar, %b: !scalar, %c: !scalar, %d: !scalar,
+                     %e: !scalar, %f: !scalar, %g: !scalar) -> !scalar {
+  %bc = "geomalg.cmul"(%b, %c) : (!scalar, !scalar) -> !scalar
+  %ef = "geomalg.cmul"(%e, %f) : (!scalar, !scalar) -> !scalar
+  %s = "geomalg.sum"(%a, %bc) : (!scalar, !scalar) -> !scalar
+  %t = "geomalg.sum"(%d, %ef) : (!scalar, !scalar) -> !scalar
+  %0 = "geomalg.cmul"(%s, %t) : (!scalar, !scalar) -> !scalar
+  %1 = "geomalg.cmul"(%g, %g) : (!scalar, !scalar) -> !scalar
+  %2 = "geomalg.negate"(%1) : (!scalar) -> !scalar
+  %3 = "geomalg.sum"(%0, %1, %2) : (!scalar, !scalar, !scalar) -> !scalar
+  geomalg.return %3 : !scalar
+}

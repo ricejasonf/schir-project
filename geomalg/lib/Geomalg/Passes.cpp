@@ -728,6 +728,19 @@ struct FactorSum : mlir::OpRewritePattern<geomalg::SumOp> {
       mlir::PatternRewriter& Rewriter) const override;
 };
 
+struct SimplifyPolynomial : mlir::OpRewritePattern<geomalg::SumOp> {
+  using Base = mlir::OpRewritePattern<geomalg::SumOp>;
+  using Base::OpRewritePattern;
+
+  void initialize() {
+    setDebugName("SimplifyPolynomial");
+  }
+
+  llvm::LogicalResult matchAndRewrite(
+      SumOp Op,
+      mlir::PatternRewriter& Rewriter) const override;
+};
+
 struct SimplifyDot : mlir::OpRewritePattern<geomalg::DotOp> {
   using Base = mlir::OpRewritePattern<geomalg::DotOp>;
   using Base::OpRewritePattern;
@@ -2963,6 +2976,353 @@ llvm::LogicalResult FactorSum::matchAndRewrite(
   return llvm::success();
 }
 
+namespace {
+// Define a monomial as sorted pairs of atom ids and nonzero exponents.
+using Monomial = llvm::SmallVector<std::pair<unsigned, int>, 4>;
+
+// Define a polynomial as the coefficients of its monomials.
+using Polynomial = std::map<Monomial, double>;
+
+// Define an atom of a polynomial as a value or the sum U + T·V
+// of other atoms.
+struct PolynomialAtom {
+  mlir::Value Value;
+  unsigned U = 0;
+  unsigned V = 0;
+  double T = 0.0;
+};
+
+// Build polynomials of scalar expressions over atoms, noting
+// whether any terms or factors cancelled.
+struct PolynomialBuilder {
+  static constexpr size_t MaxTerms = 64;
+
+  llvm::SmallVector<PolynomialAtom, 16> Atoms;
+  llvm::DenseMap<mlir::Value, std::optional<Polynomial>> Cache;
+  bool HasCancelled = false;
+
+  unsigned getAtomId(mlir::Value V) {
+    auto Itr = llvm::find_if(Atoms, [&](PolynomialAtom const& A) {
+      return A.Value == V;
+    });
+    if (Itr != Atoms.end())
+      return static_cast<unsigned>(Itr - Atoms.begin());
+    Atoms.push_back({V});
+    return static_cast<unsigned>(Atoms.size() - 1);
+  }
+
+  Polynomial getAtom(mlir::Value V) {
+    return Polynomial{{Monomial{{getAtomId(V), 1}}, 1.0}};
+  }
+
+  // Add C times Q to P.
+  void add(Polynomial& P, Polynomial const& Q, double C = 1.0) {
+    for (auto const& [M, K] : Q) {
+      if (C * K == 0.0)
+        continue;
+      double& Sum = P[M];
+      Sum += C * K;
+      if (Sum == 0.0) {
+        P.erase(M);
+        HasCancelled = true;
+      }
+    }
+  }
+
+  // Multiply P and Q or get nothing if the product is too large.
+  std::optional<Polynomial> multiply(Polynomial const& P,
+                                     Polynomial const& Q) {
+    Polynomial Result;
+    for (auto const& [MP, KP] : P) {
+      for (auto const& [MQ, KQ] : Q) {
+        std::map<unsigned, int> Exponents(MP.begin(), MP.end());
+        for (auto [Id, E] : MQ)
+          if ((Exponents[Id] += E) == 0)
+            HasCancelled = true;
+        Monomial M;
+        for (auto [Id, E] : Exponents)
+          if (E != 0)
+            M.push_back({Id, E});
+        add(Result, Polynomial{{M, KP * KQ}});
+      }
+      if (Result.size() > MaxTerms)
+        return std::nullopt;
+    }
+    return Result;
+  }
+
+  // Get V as an atom if it is a sum of atoms, keeping
+  // differences like a - b from being distributed.
+  Polynomial getFactor(mlir::Value V) {
+    bool WasCancelled = HasCancelled;
+    std::optional<Polynomial> P = get(V);
+    if (!P) {
+      HasCancelled = WasCancelled;
+      return getAtom(V);
+    }
+    bool IsLinear = llvm::all_of(*P, [](auto const& Term) {
+      return Term.first.size() <= 1 &&
+             (Term.first.empty() || Term.first.front().second == 1);
+    });
+    if (V.getDefiningOp<SumOp>() && IsLinear && P->size() > 1) {
+      HasCancelled = WasCancelled;
+      return getAtom(V);
+    }
+    return std::move(*P);
+  }
+
+  // Get the scalar coefficients of the blades of a vector by blade type.
+  std::optional<llvm::SmallVector<mlir::Value, 8>>
+  getComponents(mlir::Value V) {
+    if (isa<BladeType>(V.getType()))
+      return llvm::SmallVector<mlir::Value, 8>{V};
+    if (auto SOp = V.getDefiningOp<SumOp>()) {
+      if (llvm::all_of(SOp.getArgs().getTypes(), llvm::IsaPred<BladeType>))
+        return llvm::SmallVector<mlir::Value, 8>(SOp.getArgs());
+      return std::nullopt;
+    }
+    for (mlir::Operation* User : V.getUsers())
+      if (auto ExOp = dyn_cast<ExpandOp>(User))
+        return llvm::SmallVector<mlir::Value, 8>(ExOp.getResults());
+    return std::nullopt;
+  }
+
+  std::optional<Polynomial> getDot(DotOp Op) {
+    auto LHS = getComponents(Op.getLHS());
+    auto RHS = getComponents(Op.getRHS());
+    if (!LHS || !RHS)
+      return std::nullopt;
+    bool WasCancelled = HasCancelled;
+    auto Fail = [&] {
+      HasCancelled = WasCancelled;
+      return std::nullopt;
+    };
+    Polynomial Result;
+    for (mlir::Value L : *LHS) {
+      for (mlir::Value R : *RHS) {
+        if (L.getType() != R.getType())
+          continue;
+        std::optional<Polynomial> PQ = multiply(getFactor(L), getFactor(R));
+        if (!PQ)
+          return Fail();
+        add(Result, *PQ);
+      }
+    }
+    return Result;
+  }
+
+  // Get the inverse of a scalar that is a single monomial.
+  std::optional<Polynomial> getInverse(InverseOp Op) {
+    auto BT = dyn_cast<BladeType>(Op.getArg().getType());
+    if (!BT || BT.getGrade() != 0)
+      return std::nullopt;
+    bool WasCancelled = HasCancelled;
+    std::optional<Polynomial> P = get(Op.getArg());
+    if (!P || P->size() != 1) {
+      HasCancelled = WasCancelled;
+      return std::nullopt;
+    }
+    auto const& [M, K] = *P->begin();
+    Monomial Inverse(M);
+    for (auto& [Id, E] : Inverse)
+      E = -E;
+    return Polynomial{{Inverse, 1.0 / K}};
+  }
+
+  std::optional<Polynomial> compute(mlir::Value V) {
+    if (isZero(V))
+      return Polynomial{};
+    mlir::Operation* Op = V.getDefiningOp();
+    if (auto BOp = dyn_cast_or_null<BladeOp>(Op)) {
+      Polynomial Result;
+      add(Result, Polynomial{{Monomial{}, 1.0}}, BOp.getFloat());
+      return Result;
+    }
+    if (auto NOp = dyn_cast_or_null<NegateOp>(Op)) {
+      if (!isa<BladeType>(NOp.getArg().getType()))
+        return std::nullopt;
+      std::optional<Polynomial> P = get(NOp.getArg());
+      if (!P)
+        return std::nullopt;
+      Polynomial Result;
+      add(Result, *P, -1.0);
+      return Result;
+    }
+    if (auto MOp = dyn_cast_or_null<CMulOp>(Op)) {
+      Polynomial Result{{Monomial{}, 1.0}};
+      for (mlir::Value F : MOp.getArgs()) {
+        std::optional<Polynomial> Product = multiply(Result, getFactor(F));
+        if (!Product)
+          return std::nullopt;
+        Result = std::move(*Product);
+      }
+      return Result;
+    }
+    if (auto SOp = dyn_cast_or_null<SumOp>(Op)) {
+      if (!llvm::all_of(SOp.getArgs().getTypes(), llvm::IsaPred<BladeType>))
+        return std::nullopt;
+      Polynomial Result;
+      for (mlir::Value Arg : SOp.getArgs()) {
+        std::optional<Polynomial> P = get(Arg);
+        if (!P)
+          return std::nullopt;
+        add(Result, *P);
+        if (Result.size() > MaxTerms)
+          return std::nullopt;
+      }
+      return Result;
+    }
+    if (auto DOp = dyn_cast_or_null<DotOp>(Op))
+      if (std::optional<Polynomial> P = getDot(DOp))
+        return P;
+    if (auto IOp = dyn_cast_or_null<InverseOp>(Op))
+      if (std::optional<Polynomial> P = getInverse(IOp))
+        return P;
+    return getAtom(V);
+  }
+
+  // Get the polynomial of a scalar expression or nothing if it is too large.
+  std::optional<Polynomial> get(mlir::Value V) {
+    if (auto Itr = Cache.find(V); Itr != Cache.end())
+      return Itr->second;
+    std::optional<Polynomial> P = compute(V);
+    Cache[V] = P;
+    return P;
+  }
+
+  // Replace each k₁Mu² + 2k₁tMuv + k₁t²Mv² in P with k₁Mw²
+  // for the new atom w = u + tv.
+  bool completeSquare(Polynomial& P) {
+    llvm::SmallVector<unsigned, 16> Ids;
+    for (auto const& [M, K] : P)
+      for (auto [Id, E] : M)
+        if (!llvm::is_contained(Ids, Id))
+          Ids.push_back(Id);
+
+    auto Multiply = [](Monomial const& M, unsigned Id, int E) {
+      std::map<unsigned, int> Exponents(M.begin(), M.end());
+      Exponents[Id] += E;
+      Monomial Result;
+      for (auto [I, X] : Exponents)
+        if (X != 0)
+          Result.push_back({I, X});
+      return Result;
+    };
+    auto IsNear = [](double A, double B) {
+      return std::abs(A - B) <= 1e-12 * std::max(std::abs(A), std::abs(B));
+    };
+
+    for (auto const& [MU2, KU2] : P) {
+      for (auto [U, EU] : MU2) {
+        if (EU < 2)
+          continue;
+        Monomial M = Multiply(MU2, U, -2);
+        for (unsigned V : Ids) {
+          if (V == U)
+            continue;
+          auto V2 = P.find(Multiply(M, V, 2));
+          auto UV = P.find(Multiply(Multiply(M, U, 1), V, 1));
+          if (V2 == P.end() || UV == P.end())
+            continue;
+          double K = KU2;
+          double T = UV->second / (2.0 * K);
+          if (!IsNear(V2->second, K * T * T))
+            continue;
+          Monomial MV2 = V2->first;
+          Monomial MUV = UV->first;
+          Monomial MU2Copy = MU2;
+          P.erase(MV2);
+          P.erase(MUV);
+          P.erase(MU2Copy);
+          Atoms.push_back({mlir::Value(), U, V, T});
+          unsigned W = static_cast<unsigned>(Atoms.size() - 1);
+          add(P, Polynomial{{Multiply(M, W, 2), K}});
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Create the value of an atom.
+  mlir::Value materializeAtom(mlir::PatternRewriter& Rewriter,
+                              mlir::Location Loc, unsigned Id) {
+    PolynomialAtom& A = Atoms[Id];
+    if (A.Value)
+      return A.Value;
+    mlir::Type ScalarT = BladeType::get(Rewriter.getContext(), 0);
+    mlir::Value U = materializeAtom(Rewriter, Loc, A.U);
+    mlir::Value V = materializeAtom(Rewriter, Loc, A.V);
+    mlir::Value Terms[] = {createSumTerm(Rewriter, Loc, {ScalarT, {U}, 1.0}),
+                           createSumTerm(Rewriter, Loc, {ScalarT, {V}, A.T})};
+    A.Value = SumOp::create(Rewriter, Loc, Terms);
+    return A.Value;
+  }
+
+  // Create the term K·M of type T.
+  mlir::Value materialize(mlir::PatternRewriter& Rewriter, mlir::Location Loc,
+                          mlir::Type T, Monomial const& M, double K) {
+    mlir::Type ScalarT = BladeType::get(Rewriter.getContext(), 0);
+    SumTerm Term{T, {}, K};
+    llvm::SmallVector<mlir::Value, 4> Denominator;
+    for (auto [Id, E] : M) {
+      mlir::Value V = materializeAtom(Rewriter, Loc, Id);
+      for (int I = 0; I < std::abs(E); ++I)
+        (E > 0 ? Term.Factors : Denominator).push_back(V);
+    }
+    if (!Denominator.empty()) {
+      mlir::Value D = Denominator.size() == 1 &&
+                      Denominator.front().getType() == ScalarT
+          ? Denominator.front()
+          : CMulOp::create(Rewriter, Loc, ScalarT, Denominator).getResult();
+      Term.Factors.push_back(InverseOp::create(Rewriter, Loc, D));
+    }
+    llvm::stable_sort(Term.Factors, compareBlockValues);
+    return createSumTerm(Rewriter, Loc, Term);
+  }
+};
+}  // namespace
+
+llvm::LogicalResult SimplifyPolynomial::matchAndRewrite(
+    SumOp Op,
+    mlir::PatternRewriter& Rewriter) const {
+  // Distribute a blade sum into a polynomial of its scalar factors,
+  // and rewrite it if terms cancel or squares can be completed
+  // without adding terms.
+  mlir::Type ResultT = Op.getResult().getType();
+  if (!isa<BladeType>(ResultT) ||
+      !llvm::all_of(Op.getArgs().getTypes(), llvm::IsaPred<BladeType>))
+    return llvm::failure();
+
+  PolynomialBuilder Builder;
+  std::optional<Polynomial> P = Builder.get(Op.getResult());
+  if (!P)
+    return llvm::failure();
+  bool HasSquares = false;
+  while (Builder.completeSquare(*P))
+    HasSquares = true;
+  if ((!Builder.HasCancelled && !HasSquares) ||
+      P->size() > Op.getArgs().size())
+    return llvm::failure();
+
+  mlir::Location Loc = Op.getLoc();
+  llvm::SmallVector<mlir::Value, 8> NewOperands;
+  for (auto const& [M, K] : *P)
+    NewOperands.push_back(Builder.materialize(Rewriter, Loc, ResultT, M, K));
+  if (NewOperands.empty()) {
+    replaceOpWithNewOp<BladeOp>(Rewriter, Op, ResultT, 0.0f);
+    return llvm::success();
+  }
+  if (NewOperands.size() == 1) {
+    replaceOp(Rewriter, Op, NewOperands.front());
+    return llvm::success();
+  }
+  // Do not use replaceOpWithNewOp, which asserts that sums do not grow.
+  replaceOp(Rewriter, Op,
+            SumOp::create(Rewriter, Loc, NewOperands).getResult());
+  return llvm::success();
+}
+
 // Multiply a pair of factors shared by products in a block once,
 // repeating until no pair is shared.
 static void factorProducts(mlir::RewriterBase& Rewriter, mlir::Block& Block) {
@@ -3272,6 +3632,7 @@ public:
   llvm::LogicalResult initialize(mlir::MLIRContext* Ctx) override {
     mlir::RewritePatternSet PS(Ctx);
     PS.add<FactorSum>(Ctx);
+    PS.add<SimplifyPolynomial>(Ctx, mlir::PatternBenefit(2));
     Patterns = mlir::FrozenRewritePatternSet(std::move(PS),
                           disabledPatterns,
                           enabledPatterns);

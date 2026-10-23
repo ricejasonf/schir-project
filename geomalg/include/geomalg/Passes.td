@@ -72,8 +72,10 @@ def SimplifyPass : GeomalgPass<"geomalg-simplify", "mlir::func::FuncOp"> {
 def FactorPass : GeomalgPass<"geomalg-factor", "mlir::func::FuncOp"> {
   let summary = "Factor the sums and products of simplified operations.";
   let description = [{
-    Factor common factors out of sums of blade terms, and multiply
-    factors that are shared by multiple products once.
+    Distribute sums of blade terms into polynomials where terms cancel
+    or squares can be completed (e.g. x² - 2xc + c² → (x - c)²), factor
+    common factors out of sums of blade terms, and multiply factors that
+    are shared by multiple products once.
 
     The factored values are scalars, so the resulting IR is only
     suitable for lowering.

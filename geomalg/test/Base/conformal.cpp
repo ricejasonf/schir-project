@@ -233,11 +233,19 @@ int main() {
   SCHIR_ASSERT(near(negative_dilate(X, C, -2.5), C - 2.5f * D));
   SCHIR_ASSERT(near(negative_dilate_const(X, C), C - 2 * D));
 
-  // Keep the precision of bisectors and dilations far from the origin.
+  // Keep the precision of bisectors, spheres and dilations far from the
+  // origin.
   constexpr vec3 F{100, -100, 100};
   constexpr vec3 R{-2.2, 0.6, 1.3};
+  constexpr vec3 G = R - Q;
   SCHIR_ASSERT(near(reflect_bisector(F + Q, F + Q, F + R), F + R, 1e-3));
   SCHIR_ASSERT(near(reflect_bisector(F + R, F + Q, F + R), F + Q, 1e-3));
+  SCHIR_ASSERT(near(invert_sphere(F + R, F + Q, 2),
+                    F + Q + 4 * G / dot(G, G), 1e-3));
+  SCHIR_ASSERT(near(invert_unit_sphere(F + R, F + Q),
+                    F + Q + G / dot(G, G), 1e-3));
+  SCHIR_ASSERT(near(invert_sphere_point(F + R, F + Q, 2),
+                    F + Q + 4 * G / dot(G, G), 1e-3));
   SCHIR_ASSERT(near(dilate(F + D, F, 2.5), F + 2.5f * D, 1e-3));
   SCHIR_ASSERT(near(negative_dilate(F + D, F, -2.5), F - 2.5f * D, 1e-3));
 
