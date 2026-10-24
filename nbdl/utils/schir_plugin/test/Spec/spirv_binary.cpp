@@ -45,6 +45,7 @@ namespace foo {
 (define InvocationId (shader-global 'builtin "GlobalInvocationId" !uvec3))
 (define Points (shader-global 'storage-buffer (type "memref<?xvector<4xf32>>")))
 (define Src (shader-global 'storage-buffer (type "memref<?xf32>")))
+(define Weights (shader-global 'storage-buffer (type "memref<4xf32>")))
 (define Dest (shader-global 'readwrite-storage-buffer (type "memref<?xf32>")))
 
 ; // A function exported to C and a shader is in both binaries.
@@ -59,7 +60,8 @@ namespace foo {
   (return Color))
 
 (define-shader-entrypoint vs_main "Vertex"
-    ((P : !vec4) (S : Scale) (O : Offset) (Ps : Points)) -> (Position)
+    ((P : !vec4) (S : Scale) (O : Offset) (W : Weights) (Ps : Points))
+    -> (Position)
   (return (visit scale P S)))
 
 (define-shader-entrypoint cs_main ("Compute" 64 2 1)
@@ -77,18 +79,26 @@ static_assert(foo::shaders_entries.size() == 3);
 static_assert(std::string_view(foo::shaders_entries[0].name) == "fs_main");
 static_assert(foo::shaders_entries[0].stage == nbdl::shader_stage::fragment);
 static_assert(foo::shaders_entries[0].num_uniform_buffers == 0);
+static_assert(foo::shaders_entries[0].length_uniform_slot == -1);
+static_assert(foo::shaders_entries[0].length_storage_buffers == 0);
 static_assert(std::string_view(foo::shaders_entries[1].name) == "vs_main");
 static_assert(foo::shaders_entries[1].stage == nbdl::shader_stage::vertex);
-static_assert(foo::shaders_entries[1].num_uniform_buffers == 2);
+// Count the uniform buffer of lengths after the uniform buffers.
+static_assert(foo::shaders_entries[1].num_uniform_buffers == 3);
+static_assert(foo::shaders_entries[1].length_uniform_slot == 2);
+static_assert(foo::shaders_entries[1].length_storage_buffers == 0b10);
 static_assert(foo::shaders_entries[1].num_samplers == 0);
 static_assert(foo::shaders_entries[1].num_storage_textures == 0);
-static_assert(foo::shaders_entries[1].num_storage_buffers == 1);
+static_assert(foo::shaders_entries[1].num_storage_buffers == 2);
 static_assert(foo::shaders_entries[1].num_readwrite_storage_buffers == 0);
 static_assert(std::string_view(foo::shaders_entries[2].name) == "cs_main");
 static_assert(foo::shaders_entries[2].stage == nbdl::shader_stage::compute);
 static_assert(foo::shaders_entries[2].num_storage_buffers == 1);
 static_assert(foo::shaders_entries[2].num_readwrite_storage_buffers == 2);
-static_assert(foo::shaders_entries[2].num_uniform_buffers == 0);
+static_assert(foo::shaders_entries[2].num_uniform_buffers == 1);
+static_assert(foo::shaders_entries[2].length_uniform_slot == 0);
+static_assert(foo::shaders_entries[2].length_storage_buffers == 0b1);
+static_assert(foo::shaders_entries[2].length_readwrite_storage_buffers == 0b11);
 static_assert(foo::shaders_entries[2].threadcount[0] == 64);
 static_assert(foo::shaders_entries[2].threadcount[1] == 2);
 static_assert(foo::shaders_entries[2].threadcount[2] == 1);

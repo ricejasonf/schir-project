@@ -495,6 +495,17 @@ void nbdl_spec_is_define_store(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(schir::Bool(isa<nbdl_spec::DefineStoreOp>(Op)));
 }
 
+// Return true if the mlir.type is a memref with a dynamic size.
+void nbdl_spec_is_dynamic_memref(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  auto T = schir::any_cast<mlir::Type>(Args.front());
+  if (!T)
+    return C.RaiseError("expecting mlir.type: {}", Args.front());
+  auto MemRefT = dyn_cast<mlir::MemRefType>(T);
+  C.Cont(schir::Bool(MemRefT && MemRefT.getNumDynamicDims() > 0));
+}
+
 // Replace each !nbdl.cpp_alias in an operation with the
 // !nbdl.cpp type of its canonical typename.
 // (canonicalize-cpp-types op schir-clang)

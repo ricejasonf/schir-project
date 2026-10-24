@@ -7,6 +7,7 @@
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
+#include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
@@ -22,6 +23,7 @@
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
+#include <mlir/IR/SymbolTable.h>
 #include <mlir/Pass/Pass.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/DialectConversion.h>
@@ -30,6 +32,7 @@
 #include <mlir/Transforms/InliningUtils.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/ADT/Twine.h>
 #include <optional>
 #include <string>
@@ -669,6 +672,75 @@ mlir::Value loadInterfaceVar(mlir::OpBuilder& B, mlir::Location Loc,
   return spirv::LoadOp::create(B, Loc, Ptr);
 }
 
+// Create the uniform buffer of the lengths of the runtime-sized storage
+// buffers of a shader entry and load each dynamic size from it.
+llvm::LogicalResult lowerBufferLengths(mlir::OpBuilder& B, func::FuncOp F,
+                                       llvm::StringRef Name,
+                                       mlir::DictionaryAttr Desc,
+                                       mlir::ArrayAttr InputDescs) {
+  // Map each runtime-sized storage buffer to its member of the struct.
+  llvm::SmallVector<std::pair<mlir::BlockArgument, int64_t>, 4> Lengths;
+  for (auto [Arg, InputDesc] :
+       llvm::zip_equal(F.front().getArguments(), InputDescs)) {
+    auto Member = cast<mlir::DictionaryAttr>(InputDesc)
+                    .getAs<mlir::IntegerAttr>("length");
+    if (!Member)
+      continue;
+    auto MemRefT = dyn_cast<mlir::MemRefType>(Arg.getType());
+    if (!MemRefT || MemRefT.getNumDynamicDims() != 1)
+      return F.emitError("unsupported shader storage buffer type: ")
+             << Arg.getType();
+    Lengths.emplace_back(Arg, Member.getInt());
+  }
+  auto Set = Desc.getAs<mlir::IntegerAttr>("descriptor_set");
+  auto Binding = Desc.getAs<mlir::IntegerAttr>("binding");
+  int64_t NumMembers = Lengths.size();
+  if (!Set || !Binding || NumMembers == 0 ||
+      llvm::any_of(Lengths, [&](auto const& L) {
+        return L.second < 0 || L.second >= NumMembers;
+      }))
+    return F.emitError("invalid shader length buffer: ") << Desc;
+
+  // Lay out the lengths as a struct of i32 since an array of i32 in a
+  // uniform buffer requires a stride of 16.
+  mlir::Type I32 = B.getI32Type();
+  llvm::SmallVector<mlir::Type, 4> MemberTs(NumMembers, I32);
+  llvm::SmallVector<spirv::StructType::OffsetInfo, 4> Offsets;
+  for (int64_t I = 0; I < NumMembers; ++I)
+    Offsets.push_back(I * 4);
+  auto PtrT = spirv::PointerType::get(
+      spirv::StructType::get(MemberTs, Offsets), spirv::StorageClass::Uniform);
+  auto Var = spirv::GlobalVariableOp::create(
+      B, F.getLoc(), mlir::TypeAttr::get(PtrT),
+      B.getStringAttr(Name + "_lengths"));
+  Var.setDescriptorSetAttr(Set);
+  Var.setBindingAttr(Binding);
+
+  // Replace each memref.dim of a dynamic size with its loaded length.
+  for (auto [Arg, Member] : Lengths) {
+    auto MemRefT = cast<mlir::MemRefType>(Arg.getType());
+    for (mlir::Operation* User : llvm::make_early_inc_range(Arg.getUsers())) {
+      auto Dim = dyn_cast<memref::DimOp>(User);
+      if (!Dim)
+        continue;
+      std::optional<int64_t> Index = Dim.getConstantIndex();
+      if (!Index || !MemRefT.isDynamicDim(*Index))
+        continue;
+      mlir::OpBuilder DimB(Dim);
+      mlir::Location Loc = Dim.getLoc();
+      mlir::Value Ptr = spirv::AddressOfOp::create(DimB, Loc, Var);
+      mlir::Value MemberIndex = spirv::ConstantOp::create(
+          DimB, Loc, I32, DimB.getI32IntegerAttr(Member));
+      Ptr = spirv::AccessChainOp::create(DimB, Loc, Ptr, MemberIndex);
+      mlir::Value Length = spirv::LoadOp::create(DimB, Loc, Ptr);
+      Dim.replaceAllUsesWith(arith::IndexCastOp::create(
+          DimB, Loc, DimB.getIndexType(), Length).getResult());
+      Dim.erase();
+    }
+  }
+  return llvm::success();
+}
+
 // Turn a function into the void() function of a shader entry point that
 // loads its parameters from and stores its results to global variables.
 llvm::FailureOr<ShaderEntry> createShaderEntry(func::FuncOp F,
@@ -718,6 +790,10 @@ llvm::FailureOr<ShaderEntry> createShaderEntry(func::FuncOp F,
       llvm::failed(CreateVars(OutputDescs, FT.getResults(), "_result",
                               OutputVars)))
     return llvm::failure();
+  if (auto LengthDesc = Desc.getAs<mlir::DictionaryAttr>("length_buffer"))
+    if (llvm::failed(lowerBufferLengths(B, F, Name.getValue(), LengthDesc,
+                                        InputDescs)))
+      return llvm::failure();
 
   // Load the parameters at the beginning of the body.
   mlir::Block& Body = F.front();
@@ -761,33 +837,42 @@ void createEntryPoint(mlir::OpBuilder& B, spirv::ModuleOp SPIRVModule,
                                    Entry.LocalSize);
 }
 
-// Inline each call with a storage buffer pointer which a call cannot pass
-// without variable pointers.
-llvm::LogicalResult inlineStorageBufferCalls(spirv::ModuleOp SPIRVModule) {
-  mlir::InlinerInterface Interface(SPIRVModule.getContext());
+// Inline each call within Scope that has an operand whose type satisfies
+// Pred until there are none.
+template <typename CallOpT, typename FuncOpT>
+llvm::LogicalResult inlineCalls(mlir::Operation* Scope,
+                                llvm::function_ref<bool(mlir::Type)> Pred) {
+  mlir::InlinerInterface Interface(Scope->getContext());
   mlir::InlinerConfig Config;
-  auto IsStorageBuffer = [](mlir::Type T) {
-    auto PtrT = dyn_cast<spirv::PointerType>(T);
-    return PtrT &&
-           PtrT.getStorageClass() == spirv::StorageClass::StorageBuffer;
-  };
-  llvm::SmallVector<spirv::FunctionCallOp, 4> Calls;
+  llvm::SmallVector<CallOpT, 4> Calls;
   do {
     Calls.clear();
-    SPIRVModule.walk([&](spirv::FunctionCallOp Call) {
-      if (llvm::any_of(Call.getOperandTypes(), IsStorageBuffer))
+    Scope->walk([&](CallOpT Call) {
+      if (llvm::any_of(Call->getOperandTypes(), Pred))
         Calls.push_back(Call);
     });
-    for (spirv::FunctionCallOp Call : Calls) {
-      auto Callee = SPIRVModule.lookupSymbol<spirv::FuncOp>(Call.getCallee());
-      if (!Callee || llvm::failed(mlir::inlineCall(
-                         Interface, Config.getCloneCallback(), Call, Callee,
-                         &Callee.getBody())))
+    for (CallOpT Call : Calls) {
+      auto Callee = mlir::SymbolTable::lookupNearestSymbolFrom<FuncOpT>(
+          Call, Call.getCalleeAttr());
+      if (!Callee || Callee.isExternal() ||
+          llvm::failed(mlir::inlineCall(Interface, Config.getCloneCallback(),
+                                        Call, Callee, &Callee.getBody())))
         return Call.emitError("cannot inline call with a storage buffer");
       Call.erase();
     }
   } while (!Calls.empty());
   return llvm::success();
+}
+
+// Inline each call with a storage buffer pointer which a call cannot pass
+// without variable pointers.
+llvm::LogicalResult inlineStorageBufferCalls(spirv::ModuleOp SPIRVModule) {
+  return inlineCalls<spirv::FunctionCallOp, spirv::FuncOp>(
+      SPIRVModule, [](mlir::Type T) {
+        auto PtrT = dyn_cast<spirv::PointerType>(T);
+        return PtrT &&
+               PtrT.getStorageClass() == spirv::StorageClass::StorageBuffer;
+      });
 }
 
 // Lower the mid level dialects that nbdl-lower produces to SPIRV.
@@ -797,6 +882,11 @@ class LowerToSPIRVPass
 
 public:
   using Base::Base;
+
+  void getDependentDialects(mlir::DialectRegistry& Registry) const override {
+    Base::getDependentDialects(Registry);
+    func::registerInlinerExtension(Registry);
+  }
 
   void runOnOperation() override {
     mlir::ModuleOp M = getOperation();
@@ -808,7 +898,26 @@ public:
         spirv::mapMemorySpaceToVulkanStorageClass);
     spirv::convertMemRefTypesAndAttrs(M, MSC);
 
-    // Reject dynamic memref sizes which have no SPIRV lowering.
+    // Turn the marked functions into entry point functions with each call
+    // with a memref inlined so the sizes of its storage buffers are known.
+    schir_common::SPIRVTypeConverter TC(TEA);
+    llvm::SmallVector<ShaderEntry, 4> Entries;
+    for (func::FuncOp F :
+         llvm::make_early_inc_range(M.getOps<func::FuncOp>())) {
+      auto Desc = F->getAttrOfType<mlir::DictionaryAttr>(
+          nbdl_spec::ShaderEntryAttrName);
+      if (!Desc)
+        continue;
+      if (llvm::failed(inlineCalls<func::CallOp, func::FuncOp>(
+              F, llvm::IsaPred<mlir::MemRefType>)))
+        return signalPassFailure();
+      llvm::FailureOr<ShaderEntry> Entry = createShaderEntry(F, Desc, TC);
+      if (llvm::failed(Entry))
+        return signalPassFailure();
+      Entries.push_back(std::move(*Entry));
+    }
+
+    // Reject the remaining dynamic memref sizes which have no SPIRV lowering.
     mlir::WalkResult DimResult = M.walk([](memref::DimOp Op) {
       std::optional<int64_t> Index = Op.getConstantIndex();
       auto SourceT = cast<mlir::ShapedType>(Op.getSource().getType());
@@ -819,21 +928,6 @@ public:
     });
     if (DimResult.wasInterrupted())
       return signalPassFailure();
-
-    // Turn the marked functions into entry point functions.
-    schir_common::SPIRVTypeConverter TC(TEA);
-    llvm::SmallVector<ShaderEntry, 4> Entries;
-    for (func::FuncOp F :
-         llvm::make_early_inc_range(M.getOps<func::FuncOp>())) {
-      auto Desc = F->getAttrOfType<mlir::DictionaryAttr>(
-          nbdl_spec::ShaderEntryAttrName);
-      if (!Desc)
-        continue;
-      llvm::FailureOr<ShaderEntry> Entry = createShaderEntry(F, Desc, TC);
-      if (llvm::failed(Entry))
-        return signalPassFailure();
-      Entries.push_back(std::move(*Entry));
-    }
 
     if (llvm::failed(schir_common::lowerToSPIRV(M)))
       return signalPassFailure();

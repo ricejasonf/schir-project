@@ -14,6 +14,8 @@
       (load-builtin "nbdl_spec_define_spirv_binary"))
     (define %write-spirv-binary
       (load-builtin "nbdl_spec_write_spirv_binary"))
+    (define %dynamic-memref?
+      (load-builtin "nbdl_spec_is_dynamic_memref"))
 
     (define %shader-global '%shader-global)
 
@@ -105,6 +107,49 @@
           ((eq? (%shader-kind (car Ts)) Kind) (Loop (cdr Ts) (+ N 1)))
           (else (Loop (cdr Ts) N)))))
 
+    ;; Determine if a type is a storage buffer with a dynamic size which
+    ;; has its length in the uniform buffer of lengths of its entrypoint.
+    (define (%runtime-sized? T)
+      (and (memq (%shader-kind T) '(storage-buffer readwrite-storage-buffer))
+           (%dynamic-memref? (%shader-type T))))
+
+    ;; Count the runtime-sized storage buffers of a kind.
+    (define (%count-runtime-sized Kind Ts)
+      (let Loop ((Ts Ts) (N 0))
+        (cond
+          ((null? Ts) N)
+          ((and (eq? (%shader-kind (car Ts)) Kind) (%runtime-sized? (car Ts)))
+           (Loop (cdr Ts) (+ N 1)))
+          (else (Loop (cdr Ts) N)))))
+
+    ;; Get the member of the uniform buffer of lengths of a runtime-sized
+    ;; storage buffer where read-only buffers precede read-write buffers
+    ;; and each is in order of binding.
+    (define (%length-member T Prev AllTs)
+      (if (eq? (%shader-kind T) 'storage-buffer)
+        (%count-runtime-sized 'storage-buffer Prev)
+        (+ (%count-runtime-sized 'storage-buffer AllTs)
+           (%count-runtime-sized 'readwrite-storage-buffer Prev))))
+
+    ;; Get the mask of the bindings of a storage buffer kind that are
+    ;; runtime-sized.
+    (define (%length-mask Kind Ts)
+      (let Loop ((Ts Ts) (Bit 1) (Mask 0))
+        (cond
+          ((null? Ts) Mask)
+          ((eq? (%shader-kind (car Ts)) Kind)
+           (Loop (cdr Ts) (* Bit 2)
+                 (if (%runtime-sized? (car Ts)) (+ Mask Bit) Mask)))
+          (else (Loop (cdr Ts) Bit Mask)))))
+
+    ;; Get the binding of the uniform buffer of lengths of an entrypoint
+    ;; (after its uniform buffers) or #f if it has no runtime-sized
+    ;; storage buffers.
+    (define (%length-binding ArgTs)
+      (and (or (> (%count-runtime-sized 'storage-buffer ArgTs) 0)
+               (> (%count-runtime-sized 'readwrite-storage-buffer ArgTs) 0))
+           (%count-kind 'uniform-buffer ArgTs)))
+
     ;; Get the descriptor set of a resource kind in the SDL3 layout.
     (define (%descriptor-set Model Kind)
       (cond
@@ -120,6 +165,7 @@
     ;; layout.
     (define (%shader-interface Loc Name Model Ts Input?)
       (define StorageClass (if Input? "Input" "Output"))
+      (define AllTs Ts)
       (let Loop ((Ts Ts) (Prev '()) (Result '()))
         (if (null? Ts)
           (reverse Result)
@@ -161,6 +207,12 @@
                      (number->string (%descriptor-set Model Kind))
                      " : i32, binding = " Index " : i32"
                      (if (eq? Kind 'storage-buffer) ", non_writable" "")
+                     (if (%runtime-sized? T)
+                       (string-append
+                         ", length = "
+                         (number->string (%length-member T Prev AllTs))
+                         " : i32")
+                       "")
                      "}")))
                 Result))))))
 
@@ -178,6 +230,7 @@
     (define (%shader-entry-row Name Model LocalSize ArgTs)
       (define (Count Kind)
         (number->string (%count-kind Kind ArgTs)))
+      (define LengthBinding (%length-binding ArgTs))
       (string-append
         "{" (%quote (string-copy Name 0)) ", ::nbdl::shader_stage::"
         (cond
@@ -185,9 +238,15 @@
           ((equal? Model "Fragment") "fragment")
           (else "compute"))
         ", 0, 0, " (Count 'storage-buffer) ", 0, "
-        (Count 'readwrite-storage-buffer) ", " (Count 'uniform-buffer) ", {"
+        (Count 'readwrite-storage-buffer) ", "
+        (number->string (+ (%count-kind 'uniform-buffer ArgTs)
+                           (if LengthBinding 1 0)))
+        ", {"
         (string-join (map number->string (or LocalSize '(0 0 0))) ", ")
-        "}}"))
+        "}, " (if LengthBinding (number->string LengthBinding) "-1") ", "
+        (number->string (%length-mask 'storage-buffer ArgTs)) ", "
+        (number->string (%length-mask 'readwrite-storage-buffer ArgTs))
+        "}"))
 
     ;; Create the func.func of a shader entrypoint via Thunk which receives
     ;; the symbol name and the parameter and result types, and record its
@@ -207,6 +266,7 @@
         (define LocalSize (cadr ModelAndLocalSize))
         (define Inputs (%shader-interface Loc Name Model ArgTs #t))
         (define Outputs (%shader-interface Loc Name Model RetTs #f))
+        (define LengthBinding (%length-binding ArgTs))
         (define EntryAttr
           (attr (string-append
                   "{name = " (%quote (string-copy Name 0))
@@ -216,6 +276,13 @@
                       "local_size = array<i32: "
                       (string-join (map number->string LocalSize) ", ")
                       ">, ")
+                    "")
+                  (if LengthBinding
+                    (string-append
+                      "length_buffer = {descriptor_set = "
+                      (number->string (%descriptor-set Model 'uniform-buffer))
+                      " : i32, binding = " (number->string LengthBinding)
+                      " : i32}, ")
                     "")
                   "inputs = [" (string-join Inputs ", ")
                   "], outputs = [" (string-join Outputs ", ") "]}")))

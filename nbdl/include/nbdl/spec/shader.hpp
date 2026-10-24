@@ -31,6 +31,13 @@ struct shader_entry {
   std::uint32_t num_uniform_buffers;
   // Hold the local size of a compute shader or zeros.
   std::array<std::uint32_t, 3> threadcount;
+  // Hold the uniform slot of the buffer of lengths or -1 if there is none.
+  std::int32_t length_uniform_slot;
+  // Mask the bindings of the storage buffers whose std::int32_t element
+  // count is in the buffer of lengths (read-only then read-write, each in
+  // order of binding).
+  std::uint32_t length_storage_buffers;
+  std::uint32_t length_readwrite_storage_buffers;
 };
 } // namespace nbdl
 

@@ -21,7 +21,7 @@ namespace foo {
         (only (schir mlir) attr create-op load-dialect result))
 
 (load-dialect "memref")
-(export-shader copy_at store_first sum_4 cs_main vs_main)
+(export-shader copy_at store_first sum_4 cs_main vs_main cs_sum)
 
 (define f32 (type "f32"))
 (define i32 (type "i32"))
@@ -101,6 +101,10 @@ namespace foo {
 ; // CHECK-NEXT: spirv.GlobalVariable @cs_main_arg2 bind(1, 0) : !spirv.ptr<!spirv.struct<(!spirv.rtarray<f32, stride=4> [0])>, StorageBuffer>
 ; // CHECK-NEXT: spirv.GlobalVariable @cs_main_arg3 bind(2, 0) : !spirv.ptr<!spirv.struct<(f32 [0])>, Uniform>
 ; // CHECK-NEXT: spirv.GlobalVariable @cs_main_arg4 bind(1, 1) : !spirv.ptr<!spirv.struct<(!spirv.rtarray<f32, stride=4> [0])>, StorageBuffer>
+
+; // Each runtime-sized storage buffer has a length in a uniform buffer that
+; // follows the uniform buffers of the entry point.
+; // CHECK-NEXT: spirv.GlobalVariable @cs_main_lengths bind(2, 1) : !spirv.ptr<!spirv.struct<(i32 [0], i32 [4], i32 [8])>, Uniform>
 ; // CHECK-NEXT: spirv.func @cs_main() "None" {
 
 ; // A call with a storage buffer is inlined since passing its pointer
@@ -124,6 +128,8 @@ namespace foo {
 ; // Storage buffers are in set 0 of a vertex shader.
 ; // CHECK: spirv.GlobalVariable @vs_main_arg1 bind(0, 0) {non_writable} : !spirv.ptr<!spirv.struct<(!spirv.rtarray<vector<4xf32>, stride=16> [0])>, StorageBuffer>
 ; // CHECK-NEXT: spirv.GlobalVariable @vs_main_arg2 bind(0, 1) {non_writable} : !spirv.ptr<!spirv.struct<(!spirv.array<4 x f32, stride=4> [0])>, StorageBuffer>
+; // CHECK-NEXT: spirv.GlobalVariable @vs_main_result0
+; // CHECK-NEXT: spirv.GlobalVariable @vs_main_lengths bind(1, 0) : !spirv.ptr<!spirv.struct<(i32 [0])>, Uniform>
 (define-shader-entrypoint vs_main "Vertex"
     ((V : VertexIndex) (P : Points) (W : Weights)) -> (Position)
   (return (result (create-op "memref.load"
@@ -131,6 +137,24 @@ namespace foo {
                              (operands: P (index-cast V))
                              (attributes:)
                              (result-types: !vec4)))))
+
+; // A runtime-sized storage buffer can be iterated via its length.
+; // CHECK: spirv.GlobalVariable @cs_sum_lengths bind(2, 1) : !spirv.ptr<!spirv.struct<(i32 [0], i32 [4])>, Uniform>
+; // CHECK-LABEL: spirv.func @cs_sum()
+; // CHECK-NOT: spirv.FunctionCall
+; // CHECK: [[LENGTHS:%[^ ]+]] = spirv.mlir.addressof @cs_sum_lengths
+; // CHECK: [[LENGTH_PTR:%[^ ]+]] = spirv.AccessChain [[LENGTHS]][%cst0_i32{{[_0-9]*}}]
+; // CHECK: [[LENGTH:%[^ ]+]] = spirv.Load "Uniform" [[LENGTH_PTR]] : i32
+; // CHECK: spirv.mlir.loop
+; // CHECK: spirv.SLessThan %{{[0-9]+}}, [[LENGTH]] : i32
+; // CHECK-NOT: spirv.FunctionCall
+; // CHECK: spirv.Return
+(define-shader-entrypoint cs_sum ("Compute" 1 1 1)
+    ((C : Scale) (S : Src) (W : Weights) (D : Dest)) -> ()
+  (match-each (lift-store S)
+    (lambda (X)
+      (visit store_first X D)))
+  (return))
 
 (write-spirv-module)
 (write-spirv-binary "shaders.spv")
