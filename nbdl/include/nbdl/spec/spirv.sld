@@ -25,8 +25,11 @@
         "NumWorkgroups"))
 
     ;; Describe a resource or builtin variable of type T that is a parameter
-    ;; or result of a shader entrypoint via one of the following.
+    ;; or result of a shader entrypoint via one of the following where a
+    ;; storage buffer has a memref type.
     ;;   (shader-global 'uniform-buffer T)
+    ;;   (shader-global 'storage-buffer T)
+    ;;   (shader-global 'readwrite-storage-buffer T)
     ;;   (shader-global 'builtin "Name" T)
     (define-syntax shader-global
       (syntax-rules ()
@@ -35,9 +38,9 @@
 
     (define (%shader-global-aux Loc Kind Args)
       (cond
-        ((eq? Kind 'uniform-buffer)
+        ((memq Kind '(uniform-buffer storage-buffer readwrite-storage-buffer))
          (unless (eqv? (length Args) 1)
-           (error-with-loc Loc "expecting (shader-global 'uniform-buffer T)"))
+           (error-with-loc Loc "expecting (shader-global '{} T)" Kind))
          (list %shader-global Kind #f (car Args)))
         ((eq? Kind 'builtin)
          (unless (eqv? (length Args) 2)
@@ -46,7 +49,7 @@
          (unless (member (car Args) %shader-builtins)
            (error-with-loc Loc "unknown shader builtin: {}" (car Args)))
          (list %shader-global Kind (car Args) (cadr Args)))
-        ((memq Kind '(storage-buffer sampled-texture storage-texture))
+        ((memq Kind '(sampled-texture storage-texture))
          (error-with-loc Loc "TODO shader-global kind is not supported yet: {}"
                          Kind))
         (else (error-with-loc Loc "unknown shader-global kind: {}" Kind))))
@@ -89,51 +92,77 @@
     (define (%quote String)
       (format-string "{}" String))
 
+    ;; Get the kind of a parameter or result type of a shader entrypoint
+    ;; where a plain type is 'plain.
+    (define (%shader-kind T)
+      (if (shader-global? T) (shader-global-kind T) 'plain))
+
+    ;; Count the types of a kind.
+    (define (%count-kind Kind Ts)
+      (let Loop ((Ts Ts) (N 0))
+        (cond
+          ((null? Ts) N)
+          ((eq? (%shader-kind (car Ts)) Kind) (Loop (cdr Ts) (+ N 1)))
+          (else (Loop (cdr Ts) N)))))
+
+    ;; Get the descriptor set of a resource kind in the SDL3 layout.
+    (define (%descriptor-set Model Kind)
+      (cond
+        ((equal? Model "Vertex") (if (eq? Kind 'uniform-buffer) 1 0))
+        ((equal? Model "Fragment") (if (eq? Kind 'uniform-buffer) 3 2))
+        ((eq? Kind 'uniform-buffer) 2)
+        ((eq? Kind 'readwrite-storage-buffer) 1)
+        (else 0)))
+
     ;; Describe the variable of each parameter (or result) type of a shader
     ;; entrypoint as a dictionary attribute string where a plain type is
-    ;; at a Location and a uniform-buffer has its set and binding in the
-    ;; SDL3 layout.
+    ;; at a Location and a resource has its set and binding in the SDL3
+    ;; layout.
     (define (%shader-interface Loc Name Model Ts Input?)
       (define StorageClass (if Input? "Input" "Output"))
-      (define UniformSet
-        (cond
-          ((equal? Model "Vertex") 1)
-          ((equal? Model "Fragment") 3)
-          (else 2)))
-      (let Loop ((Ts Ts) (Location 0) (Binding 0) (Result '()))
+      (let Loop ((Ts Ts) (Prev '()) (Result '()))
         (if (null? Ts)
           (reverse Result)
-          (let ((T (car Ts)))
+          (let ()
+            (define T (car Ts))
+            (define Kind (%shader-kind T))
+            (define Index (number->string (%count-kind Kind Prev)))
             (when (eqv? (%shader-type T) !nbdl.unknown)
               (error-with-loc Loc
                 "shader entrypoint types cannot be !nbdl.unknown: {}" Name))
-            (cond
-              ((not (shader-global? T))
-               (Loop (cdr Ts) (+ Location 1) Binding
-                     (cons (string-append
-                             "{storage_class = " (%quote StorageClass)
-                             ", location = " (number->string Location)
-                             " : i32}")
-                           Result)))
-              ((eq? (shader-global-kind T) 'builtin)
-               (Loop (cdr Ts) Location Binding
-                     (cons (string-append
-                             "{storage_class = " (%quote StorageClass)
-                             ", built_in = "
-                             (%quote (shader-global-builtin T)) "}")
-                           Result)))
-              (Input?
-               (Loop (cdr Ts) Location (+ Binding 1)
-                     (cons (string-append
-                             "{storage_class = \"Uniform\", descriptor_set = "
-                             (number->string UniformSet)
-                             " : i32, binding = " (number->string Binding)
-                             " : i32}")
-                           Result)))
-              (else
-               (error-with-loc Loc
-                 "shader entrypoint cannot return a uniform-buffer: {}"
-                 Name)))))))
+            (Loop
+              (cdr Ts)
+              (cons T Prev)
+              (cons
+                (cond
+                  ((eq? Kind 'plain)
+                   (string-append
+                     "{storage_class = " (%quote StorageClass)
+                     ", location = " Index " : i32}"))
+                  ((eq? Kind 'builtin)
+                   (string-append
+                     "{storage_class = " (%quote StorageClass)
+                     ", built_in = " (%quote (shader-global-builtin T)) "}"))
+                  ((not Input?)
+                   (error-with-loc Loc
+                     "shader entrypoint cannot return a {}: {}" Kind Name))
+                  ((and (eq? Kind 'readwrite-storage-buffer)
+                        (not (equal? Model "GLCompute")))
+                   (error-with-loc Loc
+                     "readwrite-storage-buffer requires a compute stage: {}"
+                     Name))
+                  (else
+                   (string-append
+                     "{storage_class = "
+                     (if (eq? Kind 'uniform-buffer)
+                       "\"Uniform\""
+                       "\"StorageBuffer\"")
+                     ", descriptor_set = "
+                     (number->string (%descriptor-set Model Kind))
+                     " : i32, binding = " Index " : i32"
+                     (if (eq? Kind 'storage-buffer) ", non_writable" "")
+                     "}")))
+                Result))))))
 
     ;; Map each FuncOp of a shader entrypoint to the attribute that
     ;; describes its entry point and its row of the C++ table of entry
@@ -147,21 +176,16 @@
 
     ;; Write the initializer of a nbdl::shader_entry.
     (define (%shader-entry-row Name Model LocalSize ArgTs)
-      (define NumUniformBuffers
-        (let Loop ((Ts ArgTs) (N 0))
-          (cond
-            ((null? Ts) N)
-            ((and (shader-global? (car Ts))
-                  (eq? (shader-global-kind (car Ts)) 'uniform-buffer))
-             (Loop (cdr Ts) (+ N 1)))
-            (else (Loop (cdr Ts) N)))))
+      (define (Count Kind)
+        (number->string (%count-kind Kind ArgTs)))
       (string-append
         "{" (%quote (string-copy Name 0)) ", ::nbdl::shader_stage::"
         (cond
           ((equal? Model "Vertex") "vertex")
           ((equal? Model "Fragment") "fragment")
           (else "compute"))
-        ", 0, 0, 0, " (number->string NumUniformBuffers) ", {"
+        ", 0, 0, " (Count 'storage-buffer) ", 0, "
+        (Count 'readwrite-storage-buffer) ", " (Count 'uniform-buffer) ", {"
         (string-join (map number->string (or LocalSize '(0 0 0))) ", ")
         "}}"))
 

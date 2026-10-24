@@ -103,6 +103,14 @@ llvm::LogicalResult lowerToSPIRV(mlir::ModuleOp M) {
   mlir::populateVectorToSPIRVPatterns(TC, PS);
   mlir::ub::populateUBToSPIRVConversionPatterns(TC, PS);
 
-  return mlir::applyPartialConversion(M, *Target, std::move(PS));
+  // Allow casts that are made equivalent to be removed after conversion.
+  Target->addLegalOp<mlir::UnrealizedConversionCastOp>();
+  if (llvm::failed(mlir::applyPartialConversion(M, *Target, std::move(PS))))
+    return llvm::failure();
+
+  llvm::SmallVector<mlir::UnrealizedConversionCastOp> Casts;
+  M.walk([&](mlir::UnrealizedConversionCastOp Op) { Casts.push_back(Op); });
+  mlir::reconcileUnrealizedCasts(Casts);
+  return llvm::success();
 }
 } // namespace schir_common

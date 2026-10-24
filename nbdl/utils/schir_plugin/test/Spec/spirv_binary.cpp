@@ -43,6 +43,9 @@ namespace foo {
 (define Offset (shader-global 'uniform-buffer !vec4))
 (define Position (shader-global 'builtin "Position" !vec4))
 (define InvocationId (shader-global 'builtin "GlobalInvocationId" !uvec3))
+(define Points (shader-global 'storage-buffer (type "memref<?xvector<4xf32>>")))
+(define Src (shader-global 'storage-buffer (type "memref<?xf32>")))
+(define Dest (shader-global 'readwrite-storage-buffer (type "memref<?xf32>")))
 
 ; // A function exported to C and a shader is in both binaries.
 (define-fn scale ((V : !vec4) (S : !vec4)) -> (!vec4)
@@ -56,11 +59,11 @@ namespace foo {
   (return Color))
 
 (define-shader-entrypoint vs_main "Vertex"
-    ((P : !vec4) (S : Scale) (O : Offset)) -> (Position)
+    ((P : !vec4) (S : Scale) (O : Offset) (Ps : Points)) -> (Position)
   (return (visit scale P S)))
 
 (define-shader-entrypoint cs_main ("Compute" 64 2 1)
-    ((I : InvocationId)) -> ()
+    ((I : InvocationId) (S : Src) (D1 : Dest) (D2 : Dest)) -> ()
   (return))
 
 (write-spirv-binary "shaders.spv")
@@ -79,9 +82,13 @@ static_assert(foo::shaders_entries[1].stage == nbdl::shader_stage::vertex);
 static_assert(foo::shaders_entries[1].num_uniform_buffers == 2);
 static_assert(foo::shaders_entries[1].num_samplers == 0);
 static_assert(foo::shaders_entries[1].num_storage_textures == 0);
-static_assert(foo::shaders_entries[1].num_storage_buffers == 0);
+static_assert(foo::shaders_entries[1].num_storage_buffers == 1);
+static_assert(foo::shaders_entries[1].num_readwrite_storage_buffers == 0);
 static_assert(std::string_view(foo::shaders_entries[2].name) == "cs_main");
 static_assert(foo::shaders_entries[2].stage == nbdl::shader_stage::compute);
+static_assert(foo::shaders_entries[2].num_storage_buffers == 1);
+static_assert(foo::shaders_entries[2].num_readwrite_storage_buffers == 2);
+static_assert(foo::shaders_entries[2].num_uniform_buffers == 0);
 static_assert(foo::shaders_entries[2].threadcount[0] == 64);
 static_assert(foo::shaders_entries[2].threadcount[1] == 2);
 static_assert(foo::shaders_entries[2].threadcount[2] == 1);

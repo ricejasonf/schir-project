@@ -1,10 +1,10 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so -fsyntax-only -Xclang -verify %s
+// RUN:   -fplugin=SchirClang.so -fsyntax-only -ferror-limit=0 -Xclang -verify %s
 
 #include <nbdl/spec.hpp>
 
 // Errors are reported at the name of the definition.
-// expected-note@* 18 {{error raised here}}
+// expected-note@* 19 {{error raised here}}
 
 // Finalize before (nbdl spec spirv) registers a shader backend.
 // expected-error@+5 {{export-shader requires a shader backend such as (nbdl spec spirv): shader_without_backend}}
@@ -159,6 +159,16 @@
 (export-shader entry_uniform_result)
 (define Uniform (shader-global 'uniform-buffer (type "f32")))
 (define-shader-entrypoint entry_uniform_result "Fragment" () -> (Uniform)
+  (return))
+}
+
+// expected-error@+6 {{readwrite-storage-buffer requires a compute stage: entry_readwrite_vertex}}
+#pragma schir_scheme
+{
+(import (nbdl spec) (nbdl spec spirv))
+(export-shader entry_readwrite_vertex)
+(define Buffer (shader-global 'readwrite-storage-buffer (type "memref<?xf32>")))
+(define-shader-entrypoint entry_readwrite_vertex "Vertex" ((B : Buffer)) -> ()
   (return))
 }
 

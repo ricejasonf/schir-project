@@ -22,8 +22,12 @@ struct shader_entry {
   char const* name;
   shader_stage stage;
   std::uint32_t num_samplers;
+  // Count the storage resources that are read-only in a compute shader.
   std::uint32_t num_storage_textures;
   std::uint32_t num_storage_buffers;
+  // Count the read-write storage resources of a compute shader or zeros.
+  std::uint32_t num_readwrite_storage_textures;
+  std::uint32_t num_readwrite_storage_buffers;
   std::uint32_t num_uniform_buffers;
   // Hold the local size of a compute shader or zeros.
   std::array<std::uint32_t, 3> threadcount;

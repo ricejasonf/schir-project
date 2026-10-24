@@ -3,6 +3,7 @@
 #include <nbdl_spec/NbdlDialect.h>
 #include <schir_common/Lower.h>
 #include <schir_common/SPIRVConversion.h>
+#include <mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
@@ -25,6 +26,8 @@
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
+#include <mlir/Transforms/Inliner.h>
+#include <mlir/Transforms/InliningUtils.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/Twine.h>
@@ -611,18 +614,30 @@ spirv::GlobalVariableOp createInterfaceVar(mlir::OpBuilder& B,
     F.emitError("invalid shader interface variable: ") << Desc;
     return {};
   }
-  // Pass only scalars and vectors that are the same type in SPIRV.
-  if (!isa<mlir::IntegerType, mlir::FloatType, mlir::VectorType>(T) ||
-      TC.convertType(T) != T) {
-    F.emitError("unsupported shader interface type: ") << T;
-    return {};
+  spirv::PointerType PtrT;
+  if (*SC == spirv::StorageClass::StorageBuffer) {
+    // Pass a storage buffer as the pointer of its memref.
+    auto MemRefT = dyn_cast<mlir::MemRefType>(T);
+    if (MemRefT && MemRefT.getLayout().isIdentity())
+      PtrT = dyn_cast_or_null<spirv::PointerType>(TC.convertType(T));
+    if (!PtrT || PtrT.getStorageClass() != *SC) {
+      F.emitError("unsupported shader storage buffer type: ") << T;
+      return {};
+    }
+  } else {
+    // Pass only scalars and vectors that are the same type in SPIRV.
+    if (!isa<mlir::IntegerType, mlir::FloatType, mlir::VectorType>(T) ||
+        TC.convertType(T) != T) {
+      F.emitError("unsupported shader interface type: ") << T;
+      return {};
+    }
+    // Wrap a uniform buffer in a struct as Vulkan requires.
+    mlir::Type PointeeT = T;
+    if (*SC == spirv::StorageClass::Uniform)
+      PointeeT = spirv::StructType::get({T}, {0});
+    PtrT = spirv::PointerType::get(PointeeT, *SC);
   }
-  // Wrap a buffer in a struct as Vulkan requires.
-  mlir::Type PointeeT = T;
-  if (*SC == spirv::StorageClass::Uniform)
-    PointeeT = spirv::StructType::get({T}, {0});
 
-  auto PtrT = spirv::PointerType::get(PointeeT, *SC);
   auto Var = spirv::GlobalVariableOp::create(
       B, F.getLoc(), mlir::TypeAttr::get(PtrT), B.getStringAttr(Name));
   if (auto A = Desc.getAs<mlir::IntegerAttr>("location"))
@@ -633,14 +648,20 @@ spirv::GlobalVariableOp createInterfaceVar(mlir::OpBuilder& B,
     Var.setDescriptorSetAttr(A);
   if (auto A = Desc.getAs<mlir::IntegerAttr>("binding"))
     Var.setBindingAttr(A);
+  if (auto A = Desc.getAs<mlir::UnitAttr>("non_writable"))
+    Var->setAttr("non_writable", A);
   return Var;
 }
 
-// Load the value of a parameter of a shader entry from its variable.
+// Load the value of a parameter of type T of a shader entry from its
+// variable or cast the pointer of a storage buffer to its memref.
 mlir::Value loadInterfaceVar(mlir::OpBuilder& B, mlir::Location Loc,
-                             spirv::GlobalVariableOp Var) {
+                             mlir::Type T, spirv::GlobalVariableOp Var) {
   mlir::Value Ptr = spirv::AddressOfOp::create(B, Loc, Var);
   auto PtrT = cast<spirv::PointerType>(Var.getType());
+  if (PtrT.getStorageClass() == spirv::StorageClass::StorageBuffer)
+    return mlir::UnrealizedConversionCastOp::create(B, Loc, T, Ptr)
+      .getResult(0);
   if (isa<spirv::StructType>(PtrT.getPointeeType())) {
     mlir::Value Zero = spirv::ConstantOp::getZero(B.getI32Type(), Loc, B);
     Ptr = spirv::AccessChainOp::create(B, Loc, Ptr, Zero);
@@ -702,7 +723,8 @@ llvm::FailureOr<ShaderEntry> createShaderEntry(func::FuncOp F,
   mlir::Block& Body = F.front();
   B.setInsertionPointToStart(&Body);
   for (auto [Arg, Var] : llvm::zip_equal(Body.getArguments(), InputVars))
-    Arg.replaceAllUsesWith(loadInterfaceVar(B, F.getLoc(), Var));
+    Arg.replaceAllUsesWith(loadInterfaceVar(B, F.getLoc(), Arg.getType(),
+                                            Var));
   Body.eraseArguments(0, Body.getNumArguments());
 
   // Store the results at each return.
@@ -739,6 +761,35 @@ void createEntryPoint(mlir::OpBuilder& B, spirv::ModuleOp SPIRVModule,
                                    Entry.LocalSize);
 }
 
+// Inline each call with a storage buffer pointer which a call cannot pass
+// without variable pointers.
+llvm::LogicalResult inlineStorageBufferCalls(spirv::ModuleOp SPIRVModule) {
+  mlir::InlinerInterface Interface(SPIRVModule.getContext());
+  mlir::InlinerConfig Config;
+  auto IsStorageBuffer = [](mlir::Type T) {
+    auto PtrT = dyn_cast<spirv::PointerType>(T);
+    return PtrT &&
+           PtrT.getStorageClass() == spirv::StorageClass::StorageBuffer;
+  };
+  llvm::SmallVector<spirv::FunctionCallOp, 4> Calls;
+  do {
+    Calls.clear();
+    SPIRVModule.walk([&](spirv::FunctionCallOp Call) {
+      if (llvm::any_of(Call.getOperandTypes(), IsStorageBuffer))
+        Calls.push_back(Call);
+    });
+    for (spirv::FunctionCallOp Call : Calls) {
+      auto Callee = SPIRVModule.lookupSymbol<spirv::FuncOp>(Call.getCallee());
+      if (!Callee || llvm::failed(mlir::inlineCall(
+                         Interface, Config.getCloneCallback(), Call, Callee,
+                         &Callee.getBody())))
+        return Call.emitError("cannot inline call with a storage buffer");
+      Call.erase();
+    }
+  } while (!Calls.empty());
+  return llvm::success();
+}
+
 // Lower the mid level dialects that nbdl-lower produces to SPIRV.
 class LowerToSPIRVPass
     : public nbdl_spec::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
@@ -751,6 +802,23 @@ public:
     mlir::ModuleOp M = getOperation();
     spirv::TargetEnvAttr TEA = getVulkanTargetEnv();
     M->setAttr(spirv::getTargetEnvAttrName(), TEA);
+
+    // Map memref memory spaces to the Vulkan storage classes.
+    spirv::MemorySpaceToStorageClassConverter MSC(
+        spirv::mapMemorySpaceToVulkanStorageClass);
+    spirv::convertMemRefTypesAndAttrs(M, MSC);
+
+    // Reject dynamic memref sizes which have no SPIRV lowering.
+    mlir::WalkResult DimResult = M.walk([](memref::DimOp Op) {
+      std::optional<int64_t> Index = Op.getConstantIndex();
+      auto SourceT = cast<mlir::ShapedType>(Op.getSource().getType());
+      if (Index && !SourceT.isDynamicDim(*Index))
+        return mlir::WalkResult::advance();
+      Op.emitError("dynamic memref size is not supported in SPIRV");
+      return mlir::WalkResult::interrupt();
+    });
+    if (DimResult.wasInterrupted())
+      return signalPassFailure();
 
     // Turn the marked functions into entry point functions.
     schir_common::SPIRVTypeConverter TC(TEA);
@@ -779,6 +847,8 @@ public:
     for (mlir::Operation& Op : llvm::make_early_inc_range(*M.getBody()))
       if (&Op != SPIRVModule)
         Op.moveBefore(Body, Body->end());
+    if (llvm::failed(inlineStorageBufferCalls(SPIRVModule)))
+      return signalPassFailure();
 
     B.setInsertionPointToEnd(Body);
     for (ShaderEntry const& Entry : Entries)
