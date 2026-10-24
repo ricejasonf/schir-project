@@ -62,10 +62,12 @@ namespace foo {
 ; // CHECK: func.func @"::foo::scale_f32"
 ; // CHECK-NOT: func.func @"::foo::add_i32"
 
-; // Copy the functions exported to a shader into the SPIRV module.
+; // Copy the functions exported to a shader into a spirv.module for Vulkan.
 ; // CHECK-LABEL: module @nbdl_spec_spirv_module
+; // CHECK-SAME: api=Vulkan
 ; // CHECK-NOT: func.func
-; // CHECK: spirv.func @"::foo::add_i32"(%arg0: i32, %arg1: i32) -> i32
+; // CHECK-NEXT: spirv.module Logical GLSL450 requires #spirv.vce<v1.0, [Shader, Matrix], []> {
+; // CHECK-NEXT: spirv.func @"::foo::add_i32"(%arg0: i32, %arg1: i32) -> i32
 ; // CHECK-NEXT: [[SUM:%[0-9]+]] = spirv.IAdd %arg0, %arg1 : i32
 ; // CHECK-NEXT: spirv.ReturnValue [[SUM]] : i32
 ; // CHECK: spirv.func @"::foo::max_i32"(%arg0: i32, %arg1: i32) -> i32
@@ -77,7 +79,10 @@ namespace foo {
 ; // CHECK-NEXT: spirv.ReturnValue [[RESULT]] : i32
 ; // CHECK: spirv.func @"::foo::scale_f32"(%arg0: f32, %arg1: f32) -> f32
 ; // CHECK-NEXT: spirv.FMul %arg0, %arg1 : f32
-; // CHECK-NOT: func.func
+; // CHECK-NEXT: spirv.ReturnValue
+; // CHECK-NEXT: }
+; // CHECK-NEXT: }
+; // CHECK-NEXT: }
 }
 
 }  // namespace foo

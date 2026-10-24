@@ -10,11 +10,15 @@
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
+#include <mlir/Dialect/SPIRV/IR/SPIRVOps.h>
+#include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
+#include <mlir/Dialect/SPIRV/Transforms/Passes.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <llvm/ADT/SmallVector.h>
@@ -32,6 +36,7 @@ namespace arith = mlir::arith;
 namespace func = mlir::func;
 namespace memref = mlir::memref;
 namespace scf = mlir::scf;
+namespace spirv = mlir::spirv;
 namespace vector = mlir::vector;
 using llvm::dyn_cast;
 using llvm::isa;
@@ -526,8 +531,39 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    if (llvm::failed(schir_common::lowerToSPIRV(getOperation())))
+    mlir::ModuleOp M = getOperation();
+    M->setAttr(spirv::getTargetEnvAttrName(), getVulkanTargetEnv());
+    if (llvm::failed(schir_common::lowerToSPIRV(M)))
+      return signalPassFailure();
+
+    // Move the lowered functions into a spirv.module.
+    mlir::OpBuilder B = mlir::OpBuilder::atBlockEnd(M.getBody());
+    auto SPIRVModule = spirv::ModuleOp::create(B, M.getLoc(),
+                                               spirv::AddressingModel::Logical,
+                                               spirv::MemoryModel::GLSL450);
+    mlir::Block* Body = SPIRVModule.getBody();
+    for (mlir::Operation& Op : llvm::make_early_inc_range(*M.getBody()))
+      if (&Op != SPIRVModule)
+        Op.moveBefore(Body, Body->end());
+
+    // Require the minimal version, capabilities and extensions.
+    mlir::OpPassManager PM(spirv::ModuleOp::getOperationName());
+    PM.addPass(spirv::createSPIRVUpdateVCEPass());
+    if (llvm::failed(runPipeline(PM, SPIRVModule)))
       signalPassFailure();
+  }
+
+private:
+  // Target SPIRV 1.0 with Vulkan to support any Vulkan version.
+  spirv::TargetEnvAttr getVulkanTargetEnv() {
+    mlir::MLIRContext* Ctx = &getContext();
+    auto VCE = spirv::VerCapExtAttr::get(
+        spirv::Version::V_1_0, {spirv::Capability::Shader},
+        {spirv::Extension::SPV_KHR_storage_buffer_storage_class}, Ctx);
+    return spirv::TargetEnvAttr::get(
+        VCE, spirv::getDefaultResourceLimits(Ctx), spirv::ClientAPI::Vulkan,
+        spirv::Vendor::Unknown, spirv::DeviceType::Unknown,
+        spirv::TargetEnvAttr::kUnknownDeviceID);
   }
 };
 }  // namespace

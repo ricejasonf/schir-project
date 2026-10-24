@@ -190,6 +190,7 @@ namespace foo {
   ; // Functions with geomalg operations exported to a shader are lowered
   ; // to SPIRV alongside their export to C.
   ; // SPIRV-LABEL: module @nbdl_spec_spirv_module
+  ; // SPIRV-NEXT: spirv.module Logical GLSL450
   ; // SPIRV: spirv.func @"::foo::test_dot"
   ; // SPIRV-SAME: (%arg0: vector<3xf32>, %arg1: vector<3xf32>) -> f32
   ; // SPIRV-COUNT-3: spirv.FMul
