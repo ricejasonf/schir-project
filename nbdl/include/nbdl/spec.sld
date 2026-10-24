@@ -43,12 +43,6 @@
       (load-builtin "nbdl_spec_cpp_alias_type"))
     (define verify-recursive-visits
       (load-builtin "nbdl_spec_verify_recursive_visits"))
-    (define mark-shader-entry
-      (load-builtin "nbdl_spec_mark_shader_entry"))
-    (define %define-spirv-binary
-      (load-builtin "nbdl_spec_define_spirv_binary"))
-    (define %write-spirv-binary
-      (load-builtin "nbdl_spec_write_spirv_binary"))
 
     ;; Create a !nbdl.cpp_alias type with a C++ typename as written.
     ;; The flatten pass replaces it with a !nbdl.cpp type
@@ -101,15 +95,14 @@
     ;; The module of functions to be lowered by nbdl-lower.
     (define lower-module #f)
 
-    ;; The modules of functions lowered to each exit dialect.
+    ;; The module of functions lowered to LLVM.
     (define llvm-module #f)
-    (define spirv-module #f)
 
     ;; Map each FuncOp to its copy in the lower-module as (FuncOp . Copy).
     (define %lower-module-copies '())
 
     ;; Copy a FuncOp into Module.
-    (define (%copy-to-module Module FuncOp)
+    (define (copy-to-module Module FuncOp)
       (with-module-builder
         Module
         (lambda () (copy-op FuncOp))))
@@ -120,36 +113,26 @@
         (set! lower-module (create-top-module "nbdl_spec_lower_module")))
       (unless (assq FuncOp %lower-module-copies)
         (set! %lower-module-copies
-          (cons (cons FuncOp (%copy-to-module lower-module FuncOp))
+          (cons (cons FuncOp (copy-to-module lower-module FuncOp))
                 %lower-module-copies))))
 
     ;; Get the copy of a FuncOp in the lower-module.
-    (define (%lower-module-copy FuncOp)
+    (define (lower-module-copy FuncOp)
       (cdr (assq FuncOp %lower-module-copies)))
 
-    ;; Lazily create the llvm-module.
-    (define (%llvm-module)
+    ;; Get the llvm-module of the module being finalized.
+    (define (finalize-llvm-module)
       (unless llvm-module
         (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
       llvm-module)
 
     ;; Copy the lower-module copy of a FuncOp into the llvm-module.
     (define (lower-to-llvm FuncOp CAdapter?)
-      (let ((Copy (%copy-to-module (%llvm-module)
-                                   (%lower-module-copy FuncOp))))
+      (let ((Copy (copy-to-module (finalize-llvm-module)
+                                   (lower-module-copy FuncOp))))
         ;; Mark to have an abi adapter created to allow calling from C++.
         (when CAdapter?
           (mark-c-adapter Copy))
-        Copy))
-
-    ;; Copy the lower-module copy of a FuncOp into the spirv-module.
-    (define (lower-to-spirv FuncOp EntryAttr)
-      (unless spirv-module
-        (set! spirv-module (create-top-module "nbdl_spec_spirv_module")))
-      (let ((Copy (%copy-to-module spirv-module (%lower-module-copy FuncOp))))
-        ;; Mark to have an entry point created by nbdl-to-spirv.
-        (when EntryAttr
-          (mark-shader-entry Copy EntryAttr))
         Copy))
 
     ;; An element (Name Op) of an exported ops list.
@@ -166,6 +149,14 @@
         (error-with-loc Loc "exported name defined more than once: {}" Name))
       (append ExportOps (list (%make-export Name Op))))
 
+    ;; Get each Op in ExportOps (in order of definition) that satisfies Pred.
+    (define (%filter-exports ExportOps Pred)
+      (let Loop ((Rest ExportOps) (Result '()))
+        (if (null? Rest)
+          (reverse Result)
+          (let ((Op (%export-op (car Rest))))
+            (Loop (cdr Rest) (if (Pred Op) (cons Op Result) Result))))))
+
     ;; Call Fn with each Op in ExportOps (in order of definition)
     ;; that satisfies Pred.
     (define (%finalize-exports ExportOps Pred Fn)
@@ -180,8 +171,12 @@
     ;; that are lowered by finalize-module (ie by define-fn.)
     (define %lower-ops '())
 
+    ;; Add a function to be lowered by finalize-module.
+    (define (add-lower-op FuncOp)
+      (set! %lower-ops (cons FuncOp %lower-ops)))
+
     ;; Return a procedure that emits C++ for an Op of Module via Translate.
-    (define (%emit-cpp Module Translate)
+    (define (emit-cpp Module Translate)
       (lambda (Op)
         (with-module-builder
           Module
@@ -205,18 +200,13 @@
       (set! export-c-ops '())
       (set! export-c-internal-ops '())
       (set! export-shader-ops '())
-      (set! %shader-entries '())
-      (set! %spirv-binary #f)
       (set! %lower-ops '())
-      (set! %write-lower-module? #f)
-      (set! %write-spirv-module? #f)
-      (set! %spirv-binary-path #f))
+      (set! %write-lower-module? #f))
 
     ;; Clear the modules of the lowering stage and exit dialects.
     (define (%reset-lower-modules)
       (set! lower-module #f)
       (set! llvm-module #f)
-      (set! spirv-module #f)
       (set! %lower-module-copies '()))
 
     ;; Finish the module by writing c++ translations, forward declarations,
@@ -230,31 +220,27 @@
       (define CInternalOps export-c-internal-ops)
       (define ShaderOps export-shader-ops)
       (define LowerOps %lower-ops)
-      (define ShaderEntries %shader-entries)
       (define WriteLower? %write-lower-module?)
-      (define WriteSPIRV? %write-spirv-module?)
-      (define SPIRVBinary %spirv-binary)
-      (define SPIRVBinaryPath %spirv-binary-path)
       (define (lower-op? Op) (memq Op LowerOps))
+      (define FinalizeShaders #f)
       (%reset-module)
-      (when (and SPIRVBinary (null? ShaderOps))
-        (error-with-loc (cadr SPIRVBinary)
-          "spirv binary has no functions exported via export-shader: {}"
-          (car SPIRVBinary)))
+      (set! FinalizeShaders
+        (%begin-shader-backend ShaderOps
+                               (%filter-exports ShaderOps lower-op?)))
       (%finalize-exports CppOps define-store-op?
-                         (%emit-cpp Module translate-cpp))
+                         (emit-cpp Module translate-cpp))
       ;; Declarations are written with canonical C++ types
       ;; to match the definitions.
       (nbdl_canonicalize_cpp_types Module current-schir-clang)
       ;; Infer types and simplify operations.
       (run-inference-passes Module)
       (%finalize-exports CppOps %function-op?
-                         (%emit-cpp Module declare-cpp))
+                         (emit-cpp Module declare-cpp))
       ;; Functions lowered to LLVM are called from C++ via wrappers.
       (%finalize-exports COps %function-op?
-                         (%emit-cpp Module define-llvm-wrapper))
+                         (emit-cpp Module define-llvm-wrapper))
       (%finalize-exports CppOps %function-op?
-                         (%emit-cpp Module translate-cpp))
+                         (emit-cpp Module translate-cpp))
       ;; Lower each function once for every exit dialect module.
       (%finalize-exports COps lower-op? add-to-lower-module)
       (%finalize-exports CInternalOps lower-op? add-to-lower-module)
@@ -268,20 +254,9 @@
                          (lambda (Op) (lower-to-llvm Op #t)))
       (%finalize-exports CInternalOps lower-op?
                          (lambda (Op) (lower-to-llvm Op #f)))
-      (%finalize-exports ShaderOps lower-op?
-                         (lambda (Op)
-                           (lower-to-spirv
-                             Op (%shader-entry-attr ShaderEntries Op))))
-      ;; Lower the SPIRV binary to LLVM with the other functions.
-      (when spirv-module
-        (run-passes spirv-module "nbdl-to-spirv")
-        (when WriteSPIRV?
-          (write spirv-module)
-          (newline))
-        (when SPIRVBinaryPath
-          (%write-spirv-binary spirv-module SPIRVBinaryPath)))
-      (when SPIRVBinary
-        (%finalize-spirv-binary Module SPIRVBinary ShaderOps ShaderEntries))
+      ;; The shader backend may add functions to the llvm-module.
+      (when FinalizeShaders
+        (FinalizeShaders Module))
       (when llvm-module
         (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
         (inject-module llvm-module))
@@ -289,26 +264,37 @@
       Module)
 
     (define %write-lower-module? #f)
-    (define %write-spirv-module? #f)
 
     ;; Write the lower-module of finalize-module before lowering it
     ;; to the exit dialects (for debugging and testing.)
     (define (write-lower-module)
       (set! %write-lower-module? #t))
 
-    ;; Write the module of functions lowered to SPIRV by finalize-module
-    ;; (for debugging and testing.)
-    (define (write-spirv-module)
-      (set! %write-spirv-module? #t))
+    ;; The procedure registered via register-shader-backend or #f.
+    (define %shader-backend #f)
 
-    (define %spirv-binary-path #f)
+    ;; Register the backend that lowers the functions exported via
+    ;; export-shader where Begin is called by finalize-module with the
+    ;; lowered functions (in order of definition), saves and resets the
+    ;; state of the backend, and returns a procedure that receives the
+    ;; finalized module after nbdl-lower and before the llvm-module is
+    ;; lowered.
+    (define (register-shader-backend Begin)
+      (when (and %shader-backend (not (eq? %shader-backend Begin)))
+        (error "a shader backend is already registered"))
+      (set! %shader-backend Begin))
 
-    ;; Write the SPIRV binary of finalize-module to a file
-    ;; (for debugging and testing.)
-    (define (write-spirv-binary Path)
-      (unless (string? Path)
-        (error "expecting path string: {}" Path))
-      (set! %spirv-binary-path Path))
+    ;; Call the Begin procedure of the shader backend or raise an error if
+    ;; there are functions exported via export-shader without one.
+    (define (%begin-shader-backend ShaderExports ShaderOps)
+      (cond
+        (%shader-backend (%shader-backend ShaderOps))
+        ((null? ShaderExports) #f)
+        (else
+         (error-with-loc (%export-op (car ShaderExports))
+                         (string-append "export-shader requires a shader"
+                                        " backend such as (nbdl spec spirv): {}")
+                         (car (car ShaderExports))))))
 
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
@@ -359,6 +345,23 @@
           ;; The verify pass may also raise a more specific error.
           (verify TopLevelOp)
           TopLevelOp)))
+
+    (define %uncallable '%uncallable)
+
+    ;; Create the value of a definition that visit raises an error for
+    ;; with a format string Message and Name.
+    (define (make-uncallable Message Name)
+      (list %uncallable Message Name))
+
+    (define (uncallable? Value)
+      (and (pair? Value)
+           (eq? %uncallable (car Value))))
+
+    (define (uncallable-message Value)
+      (cadr Value))
+
+    (define (uncallable-name Value)
+      (car (cddr Value)))
 
     ;; Create the symbol name for a match-fn.
     ;; Suffix the name of a match-fn exported to C++ so it is
@@ -480,9 +483,9 @@
          (%match-path-spec Expr Fn))
         ((named-fn? Expr)
          (Fn (build-func-name Expr)))
-        ((shader-entry? Expr)
-         (error-with-loc Loc "shader entrypoint cannot be called: {}"
-                         (shader-entry-name Expr)))
+        ((uncallable? Expr)
+         (error-with-loc Loc (uncallable-message Expr)
+                         (uncallable-name Expr)))
         ((discarded-loc Expr)
          => (lambda (DiscardLoc)
               (error-with-loc Loc "value is discarded and cannot be used"
@@ -1390,285 +1393,8 @@
              (when (or (memq 'Name export-c-names)
                        (memq 'Name export-c-internal-names)
                        (memq 'Name export-shader-names))
-               (set! %lower-ops
-                 (cons FuncOp %lower-ops)))
+               (add-lower-op FuncOp))
              (make-named-fn SymName FuncOp)))))))
-
-    (define %shader-global '%shader-global)
-
-    ;; The builtin variables a shader-global may refer to.
-    (define %shader-builtins
-      '("Position" "PointSize" "FragCoord" "FragDepth" "FrontFacing"
-        "VertexIndex" "InstanceIndex" "GlobalInvocationId"
-        "LocalInvocationId" "LocalInvocationIndex" "WorkgroupId"
-        "NumWorkgroups"))
-
-    ;; Describe a resource or builtin variable of type T that is a parameter
-    ;; or result of a shader entrypoint via one of the following.
-    ;;   (shader-global 'uniform-buffer T)
-    ;;   (shader-global 'builtin "Name" T)
-    (define-syntax shader-global
-      (syntax-rules ()
-        ((shader-global Kind Arg ...)
-         (%shader-global-aux (syntax-source-loc Kind) Kind (list Arg ...)))))
-
-    (define (%shader-global-aux Loc Kind Args)
-      (cond
-        ((eq? Kind 'uniform-buffer)
-         (unless (eqv? (length Args) 1)
-           (error-with-loc Loc "expecting (shader-global 'uniform-buffer T)"))
-         (list %shader-global Kind #f (car Args)))
-        ((eq? Kind 'builtin)
-         (unless (eqv? (length Args) 2)
-           (error-with-loc Loc
-             "expecting (shader-global 'builtin \"Name\" T)"))
-         (unless (member (car Args) %shader-builtins)
-           (error-with-loc Loc "unknown shader builtin: {}" (car Args)))
-         (list %shader-global Kind (car Args) (cadr Args)))
-        ((memq Kind '(storage-buffer sampled-texture storage-texture))
-         (error-with-loc Loc "TODO shader-global kind is not supported yet: {}"
-                         Kind))
-        (else (error-with-loc Loc "unknown shader-global kind: {}" Kind))))
-
-    (define (shader-global? Value)
-      (and (pair? Value)
-           (eq? %shader-global (car Value))))
-
-    (define (shader-global-kind Global)
-      (cadr Global))
-
-    (define (shader-global-builtin Global)
-      (car (cddr Global)))
-
-    (define (shader-global-type Global)
-      (cadr (cddr Global)))
-
-    ;; Get the mlir type of a parameter or result of a shader entrypoint.
-    (define (%shader-type T)
-      (%cpp-or-type (if (shader-global? T) (shader-global-type T) T)))
-
-    ;; Parse the stage of a shader entrypoint ("Vertex", "Fragment", or
-    ;; ("Compute" X Y Z)) as (ExecutionModel LocalSize).
-    (define (%parse-shader-stage Loc Stage)
-      (cond
-        ((equal? Stage "Vertex") (list "Vertex" #f))
-        ((equal? Stage "Fragment") (list "Fragment" #f))
-        ((equal? Stage "Compute")
-         (error-with-loc Loc
-           "compute stage requires a local size: (\"Compute\" X Y Z)"))
-        ((and (pair? Stage)
-              (equal? (car Stage) "Compute")
-              (eqv? (length Stage) 4)
-              (every (lambda (N) (and (exact-integer? N) (positive? N)))
-                     (cdr Stage)))
-         (list "GLCompute" (cdr Stage)))
-        (else (error-with-loc Loc "unknown shader stage: {}" Stage))))
-
-    ;; Write a string as a quoted string literal.
-    (define (%quote String)
-      (format-string "{}" String))
-
-    ;; Describe the variable of each parameter (or result) type of a shader
-    ;; entrypoint as a dictionary attribute string where a plain type is
-    ;; at a Location and a uniform-buffer has its set and binding in the
-    ;; SDL3 layout.
-    (define (%shader-interface Loc Name Model Ts Input?)
-      (define StorageClass (if Input? "Input" "Output"))
-      (define UniformSet
-        (cond
-          ((equal? Model "Vertex") 1)
-          ((equal? Model "Fragment") 3)
-          (else 2)))
-      (let Loop ((Ts Ts) (Location 0) (Binding 0) (Result '()))
-        (if (null? Ts)
-          (reverse Result)
-          (let ((T (car Ts)))
-            (when (eqv? (%shader-type T) !nbdl.unknown)
-              (error-with-loc Loc
-                "shader entrypoint types cannot be !nbdl.unknown: {}" Name))
-            (cond
-              ((not (shader-global? T))
-               (Loop (cdr Ts) (+ Location 1) Binding
-                     (cons (string-append
-                             "{storage_class = " (%quote StorageClass)
-                             ", location = " (number->string Location)
-                             " : i32}")
-                           Result)))
-              ((eq? (shader-global-kind T) 'builtin)
-               (Loop (cdr Ts) Location Binding
-                     (cons (string-append
-                             "{storage_class = " (%quote StorageClass)
-                             ", built_in = "
-                             (%quote (shader-global-builtin T)) "}")
-                           Result)))
-              (Input?
-               (Loop (cdr Ts) Location (+ Binding 1)
-                     (cons (string-append
-                             "{storage_class = \"Uniform\", descriptor_set = "
-                             (number->string UniformSet)
-                             " : i32, binding = " (number->string Binding)
-                             " : i32}")
-                           Result)))
-              (else
-               (error-with-loc Loc
-                 "shader entrypoint cannot return a uniform-buffer: {}"
-                 Name)))))))
-
-    ;; Map each FuncOp of a shader entrypoint to the attribute that
-    ;; describes its entry point and its row of the C++ table of entry
-    ;; points as (FuncOp Attr Row).
-    (define %shader-entries '())
-
-    ;; Get the entry point attribute of a FuncOp or #f.
-    (define (%shader-entry-attr ShaderEntries FuncOp)
-      (let ((Entry (assq FuncOp ShaderEntries)))
-        (and Entry (cadr Entry))))
-
-    ;; Write the initializer of a nbdl::shader_entry.
-    (define (%shader-entry-row Name Model LocalSize ArgTs)
-      (define NumUniformBuffers
-        (let Loop ((Ts ArgTs) (N 0))
-          (cond
-            ((null? Ts) N)
-            ((and (shader-global? (car Ts))
-                  (eq? (shader-global-kind (car Ts)) 'uniform-buffer))
-             (Loop (cdr Ts) (+ N 1)))
-            (else (Loop (cdr Ts) N)))))
-      (string-append
-        "{" (%quote (string-copy Name 0)) ", ::nbdl::shader_stage::"
-        (cond
-          ((equal? Model "Vertex") "vertex")
-          ((equal? Model "Fragment") "fragment")
-          (else "compute"))
-        ", 0, 0, 0, " (number->string NumUniformBuffers) ", {"
-        (string-join (map number->string (or LocalSize '(0 0 0))) ", ")
-        "}}"))
-
-    ;; Track the SPIRV binary exported via export-spirv-binary as (Name Loc)
-    ;; or #f.
-    (define %spirv-binary #f)
-
-    ;; Export the SPIRV binary of the functions exported via export-shader
-    ;; as a C function Name that returns its words as a
-    ;; nbdl::memref<std::int32_t, 1> and a C++ table Name_entries of
-    ;; nbdl::shader_entry for each entry point.
-    (define-syntax export-spirv-binary
-      (syntax-rules ()
-        ((export-spirv-binary Name)
-         (%export-spirv-binary (syntax-source-loc Name) 'Name))))
-
-    (define (%export-spirv-binary Loc Name)
-      (when %spirv-binary
-        (error-with-loc Loc "spirv binary is already exported: {}"
-                        (car %spirv-binary)))
-      (set! %spirv-binary (list Name Loc)))
-
-    ;; Define the function that returns the SPIRV binary and write its
-    ;; C++ wrapper and table of entry points.
-    (define (%finalize-spirv-binary Module SPIRVBinary ShaderOps ShaderEntries)
-      (define Name (car SPIRVBinary))
-      (define Loc (cadr SPIRVBinary))
-      (define Rows
-        (let Loop ((Rest ShaderOps) (Result '()))
-          (if (null? Rest)
-            (reverse Result)
-            (let ((Entry (assq (%export-op (car Rest)) ShaderEntries)))
-              (Loop (cdr Rest)
-                    (if Entry (cons (car (cddr Entry)) Result) Result))))))
-      (let ((FuncOp (%define-spirv-binary spirv-module (%llvm-module)
-                                          (namespace-prefix Name) Loc)))
-        (mark-c-adapter FuncOp)
-        ((%emit-cpp Module define-llvm-wrapper) FuncOp)
-        (write-lexer
-          (string-append
-            "inline constexpr ::std::array<::nbdl::shader_entry, "
-            (number->string (length Rows)) "> "
-            (string-copy Name 0) "_entries = {{"
-            (string-join Rows ", ") "}};"))
-        (flush-tokens)))
-
-    (define %shader-entry '%shader-entry)
-
-    (define (shader-entry? Value)
-      (and (pair? Value)
-           (eq? %shader-entry (car Value))))
-
-    (define (shader-entry-name Entry)
-      (cadr Entry))
-
-    ;; Create the func.func of a shader entrypoint via Thunk which receives
-    ;; the symbol name and the parameter and result types, and record its
-    ;; entry point to be created by finalize-module.
-    (define (%define-shader-entrypoint Loc Name Stage ArgTs RetTs Thunk)
-      (when (or (memq Name export-cpp-names)
-                (memq Name export-c-names)
-                (memq Name export-c-internal-names))
-        (error-with-loc Loc
-          "shader entrypoint cannot be exported to C or C++: {}" Name))
-      (unless (memq Name export-shader-names)
-        (error-with-loc Loc
-          "shader entrypoint is not exported via export-shader: {}" Name))
-      (let ()
-        (define ModelAndLocalSize (%parse-shader-stage Loc Stage))
-        (define Model (car ModelAndLocalSize))
-        (define LocalSize (cadr ModelAndLocalSize))
-        (define Inputs (%shader-interface Loc Name Model ArgTs #t))
-        (define Outputs (%shader-interface Loc Name Model RetTs #f))
-        (define EntryAttr
-          (attr (string-append
-                  "{name = " (%quote (string-copy Name 0))
-                  ", execution_model = " (%quote Model) ", "
-                  (if LocalSize
-                    (string-append
-                      "local_size = array<i32: "
-                      (string-join (map number->string LocalSize) ", ")
-                      ">, ")
-                    "")
-                  "inputs = [" (string-join Inputs ", ")
-                  "], outputs = [" (string-join Outputs ", ") "]}")))
-        (define FuncOp
-          (top-level-op
-            Loc
-            Name
-            (lambda (SymName)
-              (Thunk SymName
-                     (map %shader-type ArgTs)
-                     (map %shader-type RetTs)))))
-        (define Row (%shader-entry-row Name Model LocalSize ArgTs))
-        (set! %lower-ops (cons FuncOp %lower-ops))
-        (set! %shader-entries
-          (cons (list FuncOp EntryAttr Row) %shader-entries))
-        (list %shader-entry Name)))
-
-    ;; Define the entry point of a shader with the same typed syntax as
-    ;; define-fn where Stage is "Vertex", "Fragment", or ("Compute" X Y Z).
-    ;; A parameter (or result) type is a plain type for a stage input (or
-    ;; output) or a shader-global for a resource or builtin variable.
-    (define-syntax define-shader-entrypoint
-      (syntax-rules (: ->)
-        ((define-shader-entrypoint Name Stage ((Arg : ArgT) ...) -> (RetT ...)
-           Body1 BodyN ...)
-         (define Name
-           (%define-shader-entrypoint
-             (syntax-source-loc Name)
-             'Name
-             'Stage
-             (list ArgT ...)
-             (list RetT ...)
-             (lambda (SymName ArgTs RetTs)
-               (create-op
-                 "func.func"
-                 (loc: (syntax-source-loc Name))
-                 (operands:)
-                 (attributes:
-                   ("sym_name" (string-attr SymName))
-                   ("function_type"
-                    (type-attr
-                      (%function-type (apply vector ArgTs)
-                                      (apply vector RetTs)))))
-                 (result-types:)
-                 (region: "body" ((Arg : (%shader-type ArgT)) ...)
-                          Body1 BodyN ...))))))))
 
     (define (build-lift-store Loc Arg)
       (define Value (maybe-build-expr Loc Arg))
@@ -1783,6 +1509,17 @@
     (define export-c-internal-names '())
     (define export-shader-names '())
 
+    ;; Return true if Name is exported as Kind
+    ;; ('cpp, 'c, 'c-internal, or 'shader.)
+    (define (exported-as? Name Kind)
+      (and (memq Name (cond
+                        ((eq? Kind 'cpp) export-cpp-names)
+                        ((eq? Kind 'c) export-c-names)
+                        ((eq? Kind 'c-internal) export-c-internal-names)
+                        ((eq? Kind 'shader) export-shader-names)
+                        (else (error "unknown export kind: {}" Kind))))
+           #t))
+
     ;; Track exported ops as (Name Op) in order of definition.
     (define export-cpp-ops '())
     (define export-c-ops '())
@@ -1814,8 +1551,8 @@
              export-c-internal-names
              (list 'Name ...))))))
 
-    ;; Export functions to the SPIRV module where the name of a
-    ;; define-shader-entrypoint becomes an entry point.
+    ;; Export functions to the backend registered via
+    ;; register-shader-backend (e.g. by (nbdl spec spirv).)
     (define-syntax export-shader
       (syntax-rules ()
         ((export-shader Name ...)
@@ -1879,8 +1616,6 @@
     define-match-fn
     match-fn
     define-fn
-    define-shader-entrypoint
-    shader-global
     lift-store
     return
     register-inference-pass
@@ -1893,11 +1628,8 @@
     export-c
     export-c-internal
     export-shader
-    export-spirv-binary
     finalize-module
     write-lower-module
-    write-spirv-module
-    write-spirv-binary
 
     ;; Reexport some base stuff
     define
@@ -1925,5 +1657,18 @@
     write-nbdl-module
     run-pass-nbdl-flatten
     run-inference-passes
+
+    ;; Stuff for backends (e.g. (nbdl spec spirv))
+    register-shader-backend
+    add-lower-op
+    exported-as?
+    make-uncallable
+    lower-module-copy
+    copy-to-module
+    finalize-llvm-module
+    emit-cpp
+    mark-c-adapter
+    define-llvm-wrapper
+    %cpp-or-type
     )
 )  ; end of (nbdl spec)

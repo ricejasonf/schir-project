@@ -29,6 +29,7 @@ namespace foo {
 #pragma schir_scheme
 {
 (import (nbdl spec)
+        (nbdl spec spirv)
         (only (schir mlir) create-op result))
 
 (export-c scale)

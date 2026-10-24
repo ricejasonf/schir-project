@@ -31,6 +31,7 @@ namespace foo {
 {
   (import (nbdl spec)
           (nbdl spec geomalg)
+          (nbdl spec spirv)
           (geomalg base)
           (geomalg conformal)
           (geomalg motor))

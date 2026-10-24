@@ -9,6 +9,7 @@ namespace foo {
 #pragma schir_scheme
 {
 (import (nbdl spec)
+        (nbdl spec spirv)
         (only (schir mlir) create-op result))
 
 (export-shader scale fs_main vs_main cs_main)

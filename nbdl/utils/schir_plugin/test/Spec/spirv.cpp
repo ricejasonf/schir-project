@@ -14,6 +14,7 @@ namespace foo {
 #pragma schir_scheme
 {
 (import (nbdl spec)
+        (nbdl spec spirv)
         (only (schir mlir) attr create-op result))
 
 ; // Export functions to C and a shader alongside each other.
