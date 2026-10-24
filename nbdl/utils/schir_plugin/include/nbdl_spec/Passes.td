@@ -36,7 +36,8 @@ def LowerPass : NbdlPass<"nbdl-lower", "mlir::ModuleOp"> {
                            "mlir::arith::ArithDialect",
                            "mlir::func::FuncDialect",
                            "mlir::memref::MemRefDialect",
-                           "mlir::scf::SCFDialect"];
+                           "mlir::scf::SCFDialect",
+                           "mlir::ub::UBDialect"];
 }
 
 def LowerToLLVMPass : NbdlPass<"nbdl-to-llvm", "mlir::ModuleOp"> {

@@ -391,11 +391,6 @@ llvm::LogicalResult finalizeLoops(mlir::Operation* Root) {
                      "(ie every branch continues a loop)");
       HasError = true;
     }
-    Loop.walk([&](nbdl_spec::ReturnOp Return) {
-      Return.emitError("nbdl.return in a function that is visited "
-                       "recursively is not supported");
-      HasError = true;
-    });
   });
   return llvm::failure(HasError);
 }

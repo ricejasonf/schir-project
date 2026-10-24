@@ -15,6 +15,7 @@
 #include <mlir/Dialect/SPIRV/IR/SPIRVTypes.h>
 #include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
 #include <mlir/Dialect/SPIRV/Transforms/Passes.h>
+#include <mlir/Dialect/UB/IR/UBOps.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -43,6 +44,7 @@ namespace func = mlir::func;
 namespace memref = mlir::memref;
 namespace scf = mlir::scf;
 namespace spirv = mlir::spirv;
+namespace ub = mlir::ub;
 namespace vector = mlir::vector;
 using llvm::dyn_cast;
 using llvm::isa;
@@ -75,6 +77,7 @@ struct ConversionTarget : mlir::ConversionTarget {
     addLegalDialect<func::FuncDialect>();
     addLegalDialect<memref::MemRefDialect>();
     addLegalDialect<scf::SCFDialect>();
+    addLegalDialect<ub::UBDialect>();
     addIllegalDialect<nbdl_spec::NbdlDialect>();
     // These are erased after the conversion when they have no uses.
     addLegalOp<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp>();
@@ -105,6 +108,14 @@ struct ConversionTarget : mlir::ConversionTarget {
 //  scf.while (%arg = %init) : (T) -> (T, i1, U) {
 //    ...
 //    scf.condition(%false) %arg, %true, %value : T, i1, U
+//  } do { ... }
+//
+// Let the outermost loop of a function with results also yield the
+// results so a return within it may exit every loop (with poison results
+// when continuing a loop.)
+//  scf.while (%arg = %init) : (T) -> (T, R) {
+//    ...
+//    scf.condition(%false) %arg, %result : T, R
 //  } do { ... }
 //
 // Get the scf.while of the loop that the terminator of the block of Op
@@ -138,52 +149,100 @@ llvm::SmallVector<mlir::Type, 4> getIterationTypes(scf::WhileOp While) {
   return Ts;
 }
 
+// Get the types of the values that end a path through the region of Op
+// (ie the results of the parent scf.if, the values that end an iteration
+// of the parent loop, or the results of the parent function.)
+llvm::SmallVector<mlir::Type, 4> getExitTypes(mlir::Operation* Op) {
+  mlir::Operation* Parent = Op->getParentOp();
+  if (auto If = dyn_cast<scf::IfOp>(Parent))
+    return llvm::to_vector_of<mlir::Type, 4>(If.getResultTypes());
+  if (auto While = dyn_cast<scf::WhileOp>(Parent))
+    return getIterationTypes(While);
+  if (auto F = dyn_cast<func::FuncOp>(Parent))
+    return llvm::to_vector_of<mlir::Type, 4>(F.getResultTypes());
+  return {};
+}
+
 // Append the values that end an iteration of a loop and continue the
 // loop Target (if any) with Args or exit every other loop.
 // Pass the current values to a loop that does not continue
-// since they are ignored.
+// since they are ignored. Pass Results (or poison if there are none)
+// to the parent of the outermost loop.
 void appendIterationValues(mlir::ConversionPatternRewriter& R,
                            mlir::Location Loc, scf::WhileOp While,
                            scf::WhileOp Target, mlir::ValueRange Args,
+                           mlir::ValueRange Results,
                            llvm::SmallVectorImpl<mlir::Value>& Values) {
   bool IsTarget = While == Target;
   Values.push_back(arith::ConstantIntOp::create(R, Loc, IsTarget, 1));
-  if (IsTarget)
-    llvm::append_range(Values, Args);
-  else
-    llvm::append_range(Values, While.getBeforeArguments());
-  if (scf::WhileOp Parent = getParentLoop(While))
+  mlir::ValueRange LoopArgs = IsTarget ? Args : While.getBeforeArguments();
+  llvm::append_range(Values, LoopArgs);
+  if (scf::WhileOp Parent = getParentLoop(While)) {
     appendIterationValues(R, Loc, Parent, IsTarget ? scf::WhileOp() : Target,
-                          Args, Values);
-}
-
-// End an iteration of a loop given the flag to continue and
-// the results of the scf.while.
-void createLoopTerminator(mlir::ConversionPatternRewriter& R,
-                          mlir::Operation* Op, mlir::ValueRange Values) {
-  mlir::Location Loc = Op->getLoc();
-  if (isa<scf::WhileOp>(Op->getParentOp())) {
-    scf::ConditionOp::create(R, Loc, Values.front(), Values.drop_front());
+                          Args, Results, Values);
     return;
   }
-  scf::YieldOp::create(R, Loc, Values);
+  if (!Results.empty()) {
+    llvm::append_range(Values, Results);
+    return;
+  }
+  for (mlir::Type T :
+       mlir::TypeRange(While.getResultTypes()).drop_front(LoopArgs.size()))
+    Values.push_back(ub::PoisonOp::create(R, Loc, T));
+}
+
+// End a path through the region of Op with Values (see getExitTypes.)
+void createExitTerminator(mlir::ConversionPatternRewriter& R,
+                          mlir::Operation* Op, mlir::ValueRange Values) {
+  mlir::Location Loc = Op->getLoc();
+  mlir::Operation* Parent = Op->getParentOp();
+  if (isa<scf::WhileOp>(Parent))
+    scf::ConditionOp::create(R, Loc, Values.front(), Values.drop_front());
+  else if (isa<func::FuncOp>(Parent))
+    func::ReturnOp::create(R, Loc, Values);
+  else
+    scf::YieldOp::create(R, Loc, Values);
 }
 
 // Create the terminator that replaces a terminating nbdl operation
-// that does not continue a loop.
+// that neither returns nor continues a loop.
 void createTerminator(mlir::ConversionPatternRewriter& R,
                       mlir::Operation* Op) {
-  mlir::Location Loc = Op->getLoc();
-  if (scf::WhileOp While = getParentLoop(Op)) {
+  llvm::SmallVector<mlir::Value, 4> Values;
+  if (scf::WhileOp While = getParentLoop(Op))
     // Exit every loop.
-    llvm::SmallVector<mlir::Value, 4> Values;
-    appendIterationValues(R, Loc, While, scf::WhileOp(), {}, Values);
-    createLoopTerminator(R, Op, Values);
-  } else if (isa<func::FuncOp>(Op->getParentOp())) {
-    func::ReturnOp::create(R, Loc);
-  } else {
-    scf::YieldOp::create(R, Loc);
-  }
+    appendIterationValues(R, Op->getLoc(), While, scf::WhileOp(), {}, {},
+                          Values);
+  createExitTerminator(R, Op, Values);
+}
+
+// Return true if a path through the region of Op ends the function
+// (ie Op is not within a match_each or scope.)
+bool endsFunction(mlir::Operation* Op) {
+  mlir::Operation* Parent = Op->getParentOp();
+  while (isa<nbdl_spec::MatchIfOp, nbdl_spec::LoopOp>(Parent))
+    Parent = Parent->getParentOp();
+  return isa<func::FuncOp>(Parent);
+}
+
+// Check that each return ends the function and that every path
+// through a function with results ends with a return.
+llvm::LogicalResult checkReturns(mlir::ModuleOp M) {
+  bool HasError = false;
+  M.walk([&](mlir::Operation* Op) {
+    if (isa<nbdl_spec::ReturnOp>(Op) && !endsFunction(Op)) {
+      Op->emitError("nbdl.return within a match_each or scope "
+                    "is not supported");
+      HasError = true;
+    } else if (isa<nbdl_spec::DiscardOp, nbdl_spec::NoOp,
+                   nbdl_spec::MatchEachOp>(Op) && endsFunction(Op) &&
+               Op->getParentOfType<func::FuncOp>().getNumResults() != 0) {
+      Op->emitError("expecting a return on every path of a function "
+                    "with results");
+      HasError = true;
+    }
+  });
+  return llvm::failure(HasError);
 }
 
 // Conversion Patterns
@@ -194,7 +253,17 @@ struct LowerReturn : mlir::OpConversionPattern<nbdl_spec::ReturnOp> {
   llvm::LogicalResult matchAndRewrite(
         nbdl_spec::ReturnOp Op, OpAdaptor Adaptor,
         mlir::ConversionPatternRewriter& R) const override {
-    R.replaceOpWithNewOp<func::ReturnOp>(Op, Adaptor.getOperands());
+    // Exit every loop with the results.
+    llvm::SmallVector<mlir::Value, 4> Values;
+    if (scf::WhileOp While = getParentLoop(Op))
+      appendIterationValues(R, Op.getLoc(), While, scf::WhileOp(), {},
+                            Adaptor.getOperands(), Values);
+    else
+      llvm::append_range(Values, Adaptor.getOperands());
+    if (mlir::TypeRange(Values) != mlir::TypeRange(getExitTypes(Op)))
+      return R.notifyMatchFailure(Op, "result type mismatch");
+    createExitTerminator(R, Op, Values);
+    R.eraseOp(Op);
     return llvm::success();
   }
 };
@@ -293,12 +362,8 @@ struct LowerMatchIf : mlir::OpConversionPattern<nbdl_spec::MatchIfOp> {
     if (ThenBlock.getNumArguments() != 1 || ElseBlock.getNumArguments() != 0)
       return R.notifyMatchFailure(Op, "unexpected region arguments");
 
-    // Within a loop body, yield the values that
-    // end the iteration from each branch.
-    scf::WhileOp While = getParentLoop(Op);
-    llvm::SmallVector<mlir::Type, 4> ResultTs;
-    if (While)
-      ResultTs = getIterationTypes(While);
+    // Yield the values that end the path from each branch.
+    llvm::SmallVector<mlir::Type, 4> ResultTs = getExitTypes(Op);
     auto If = scf::IfOp::create(R, Op.getLoc(), ResultTs, Cond,
                                 /*addThenBlock=*/false,
                                 /*addElseBlock=*/false);
@@ -310,10 +375,7 @@ struct LowerMatchIf : mlir::OpConversionPattern<nbdl_spec::MatchIfOp> {
 
     // nbdl.match_if is a terminator, but scf.if is not.
     R.setInsertionPointAfter(If);
-    if (While)
-      createLoopTerminator(R, Op, If.getResults());
-    else
-      createTerminator(R, Op);
+    createExitTerminator(R, Op, If.getResults());
     R.eraseOp(Op);
     return llvm::success();
   }
@@ -389,9 +451,8 @@ struct LowerMatchEach : mlir::OpConversionPattern<nbdl_spec::MatchEachOp> {
 };
 
 // Lower a loop to a scf.while with the loop-carried values as its
-// iteration arguments. Within a parent loop, end the iteration of the
-// parent loop with the results that follow the loop-carried values.
-// (See getParentLoop.)
+// iteration arguments. End the path through the parent region with the
+// results that follow the loop-carried values. (See getParentLoop.)
 struct LowerLoop : mlir::OpConversionPattern<nbdl_spec::LoopOp> {
   using Base::Base;
 
@@ -406,10 +467,8 @@ struct LowerLoop : mlir::OpConversionPattern<nbdl_spec::LoopOp> {
     mlir::Location Loc = Op.getLoc();
     mlir::ValueRange Inits = Adaptor.getInits();
     mlir::TypeRange Ts = Inits.getTypes();
-    scf::WhileOp Parent = getParentLoop(Op);
     llvm::SmallVector<mlir::Type, 4> ResultTs(Ts);
-    if (Parent)
-      llvm::append_range(ResultTs, getIterationTypes(Parent));
+    llvm::append_range(ResultTs, getExitTypes(Op));
     auto While = scf::WhileOp::create(R, Loc, ResultTs, Inits);
     While->setAttr(LoopFnAttrName, Op.getFnAttr());
 
@@ -428,10 +487,7 @@ struct LowerLoop : mlir::OpConversionPattern<nbdl_spec::LoopOp> {
     // Terminate the block since nbdl.loop is a terminator,
     // but scf.while is not.
     R.setInsertionPoint(Op);
-    if (Parent)
-      createLoopTerminator(R, Op, While.getResults().drop_front(Ts.size()));
-    else
-      createTerminator(R, Op);
+    createExitTerminator(R, Op, While.getResults().drop_front(Ts.size()));
     R.eraseOp(Op);
     return llvm::success();
   }
@@ -456,8 +512,8 @@ struct LowerContinue : mlir::OpConversionPattern<nbdl_spec::ContinueOp> {
       return R.notifyMatchFailure(Op, "loop-carried type mismatch");
 
     llvm::SmallVector<mlir::Value, 4> Values;
-    appendIterationValues(R, Op.getLoc(), While, Target, Args, Values);
-    createLoopTerminator(R, Op, Values);
+    appendIterationValues(R, Op.getLoc(), While, Target, Args, {}, Values);
+    createExitTerminator(R, Op, Values);
     R.eraseOp(Op);
     return llvm::success();
   }
@@ -492,6 +548,8 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
+    if (llvm::failed(checkReturns(M)))
+      return signalPassFailure();
 
     ::TypeConverter TC;
     ::ConversionTarget Target(*Ctx);

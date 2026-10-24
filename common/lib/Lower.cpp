@@ -19,6 +19,8 @@
 #include <mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h>
 #include <mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h>
 #include <mlir/Conversion/SCFToSPIRV/SCFToSPIRV.h>
+#include <mlir/Conversion/UBToLLVM/UBToLLVM.h>
+#include <mlir/Conversion/UBToSPIRV/UBToSPIRV.h>
 #include <mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h>
 #include <mlir/Conversion/VectorToSPIRV/VectorToSPIRV.h>
 #include <mlir/Dialect/MemRef/Transforms/Transforms.h>
@@ -60,6 +62,7 @@ llvm::LogicalResult lowerToLLVM(mlir::ModuleOp M) {
   mlir::populateFinalizeMemRefToLLVMConversionPatterns(TC, PS);
   mlir::populateFuncToLLVMConversionPatterns(TC, PS);
   mlir::populateVectorToLLVMConversionPatterns(TC, PS);
+  mlir::ub::populateUBToLLVMConversionPatterns(TC, PS);
 
   if (llvm::failed(mlir::applyPartialConversion(M, Target, std::move(PS))))
     return llvm::failure();
@@ -98,6 +101,7 @@ llvm::LogicalResult lowerToSPIRV(mlir::ModuleOp M) {
   mlir::populateMathToSPIRVPatterns(TC, PS);
   mlir::populateMemRefToSPIRVPatterns(TC, PS);
   mlir::populateVectorToSPIRVPatterns(TC, PS);
+  mlir::ub::populateUBToSPIRVConversionPatterns(TC, PS);
 
   return mlir::applyPartialConversion(M, *Target, std::move(PS));
 }
