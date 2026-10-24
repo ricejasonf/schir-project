@@ -19,6 +19,9 @@
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/LLVMIR/LLVMTypes.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
+#include <mlir/Dialect/SPIRV/IR/SPIRVOps.h>
+#include <mlir/Target/SPIRV/Serialization.h>
+#include <llvm/Support/FileSystem.h>
 #include <memory>
 #include <optional>
 #include <tuple>
@@ -188,6 +191,48 @@ void translateCpp(Context& C, ValueRefs Args, nbdl_spec::TranslateMode Mode) {
   }
   C.Cont();
 }
+
+// Serialize the spirv.module in a module lowered by nbdl-to-spirv.
+llvm::LogicalResult serializeSPIRV(mlir::ModuleOp M,
+                                   llvm::SmallVectorImpl<uint32_t>& Words) {
+  auto SPIRVModules = M.getOps<mlir::spirv::ModuleOp>();
+  if (!llvm::hasSingleElement(SPIRVModules))
+    return M.emitError("expecting a single spirv.module");
+  return mlir::spirv::serialize(*SPIRVModules.begin(), Words);
+}
+
+// Define a constant global of the serialized words in a module and
+// a function that returns it as a memref<?xi32, strided<[?], offset: ?>>.
+mlir::func::FuncOp defineSPIRVBinary(mlir::ModuleOp M, mlir::Location Loc,
+                                     llvm::StringRef SymName,
+                                     llvm::ArrayRef<uint32_t> Words) {
+  mlir::MLIRContext* Ctx = M.getContext();
+  Ctx->getOrLoadDialect<mlir::func::FuncDialect>();
+  Ctx->getOrLoadDialect<mlir::memref::MemRefDialect>();
+  auto B = mlir::OpBuilder::atBlockEnd(M.getBody());
+  mlir::Type I32 = B.getI32Type();
+  int64_t Size = Words.size();
+  auto GlobalT = mlir::MemRefType::get({Size}, I32);
+  auto ResultT = mlir::MemRefType::get(
+      {mlir::ShapedType::kDynamic}, I32,
+      mlir::StridedLayoutAttr::get(Ctx, mlir::ShapedType::kDynamic,
+                                   {mlir::ShapedType::kDynamic}));
+  auto Init = mlir::DenseElementsAttr::get(
+      mlir::RankedTensorType::get({Size}, I32), Words);
+  std::string GlobalName = (SymName + ".spv").str();
+  mlir::memref::GlobalOp::create(B, Loc, GlobalName,
+                                 B.getStringAttr("private"), GlobalT, Init,
+                                 /*constant=*/true, B.getI64IntegerAttr(4));
+
+  auto FuncOp = mlir::func::FuncOp::create(
+      B, Loc, SymName, B.getFunctionType({}, {ResultT}));
+  B.setInsertionPointToStart(FuncOp.addEntryBlock());
+  mlir::Value Global = mlir::memref::GetGlobalOp::create(B, Loc, GlobalT,
+                                                         GlobalName);
+  mlir::Value Result = mlir::memref::CastOp::create(B, Loc, ResultT, Global);
+  mlir::func::ReturnOp::create(B, Loc, Result);
+  return FuncOp;
+}
 } // namespace
 
 extern "C" {
@@ -240,6 +285,65 @@ void nbdl_spec_mark_shader_entry(Context& C, ValueRefs Args) {
   if (!Attr)
     return C.RaiseError("expecting dictionary attribute: {}", Args[1]);
   FuncOp->setAttr(nbdl_spec::ShaderEntryAttrName, Attr);
+  C.Cont();
+}
+
+// Serialize the SPIRV of a module lowered by nbdl-to-spirv and define a
+// function in another module that returns the binary as a memref of words.
+// (define-spirv-binary spirv-module llvm-module sym-name loc)
+void nbdl_spec_define_spirv_binary(Context& C, ValueRefs Args) {
+  if (Args.size() != 4)
+    return C.RaiseError("invalid arity");
+  auto SPIRVModule = dyn_cast_or_null<mlir::ModuleOp>(
+      dyn_cast<mlir::Operation>(Args[0]));
+  if (!SPIRVModule)
+    return C.RaiseError("expecting builtin.module: {}", Args[0]);
+  auto Module = dyn_cast_or_null<mlir::ModuleOp>(
+      dyn_cast<mlir::Operation>(Args[1]));
+  if (!Module)
+    return C.RaiseError("expecting builtin.module: {}", Args[1]);
+  if (!isa<schir::String, schir::Symbol>(Args[2]))
+    return C.RaiseError("expecting string-like: {}", Args[2]);
+  llvm::StringRef SymName = Args[2].getStringRef();
+  if (mlir::SymbolTable::lookupSymbolIn(Module, SymName))
+    return C.RaiseError("spirv binary name is already defined: {}", Args[2]);
+
+  llvm::SmallVector<uint32_t, 0> Words;
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, C.getLoc(), [&] { return serializeSPIRV(SPIRVModule, Words); },
+    "spirv serialization failed");
+  if (llvm::failed(Result))
+    return;
+  mlir::Location Loc = mlir::OpaqueLoc::get(
+      Args[3].getSourceLocation().getOpaqueEncoding(), Module.getContext());
+  mlir::Operation* FuncOp = defineSPIRVBinary(Module, Loc, SymName, Words);
+  C.Cont(schir::Value(FuncOp));
+}
+
+// Write the serialized SPIRV of a module lowered by nbdl-to-spirv to a file.
+// (write-spirv-binary spirv-module path)
+void nbdl_spec_write_spirv_binary(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  auto SPIRVModule = dyn_cast_or_null<mlir::ModuleOp>(
+      dyn_cast<mlir::Operation>(Args[0]));
+  if (!SPIRVModule)
+    return C.RaiseError("expecting builtin.module: {}", Args[0]);
+  if (!isa<schir::String>(Args[1]))
+    return C.RaiseError("expecting path string: {}", Args[1]);
+
+  llvm::SmallVector<uint32_t, 0> Words;
+  llvm::LogicalResult Result = mlir_helper::WithDiagnosticsHandler(
+    C, C.getLoc(), [&] { return serializeSPIRV(SPIRVModule, Words); },
+    "spirv serialization failed");
+  if (llvm::failed(Result))
+    return;
+  std::error_code EC;
+  llvm::raw_fd_ostream OS(Args[1].getStringRef(), EC, llvm::sys::fs::OF_None);
+  if (EC)
+    return C.RaiseError("unable to open spirv binary file: {}", Args[1]);
+  OS.write(reinterpret_cast<char const*>(Words.data()),
+           Words.size() * sizeof(uint32_t));
   C.Cont();
 }
 

@@ -14,6 +14,7 @@
 #include <nbdl/get.hpp>
 #include <nbdl/match.hpp>
 #include <nbdl/spec/mlir.hpp>
+#include <nbdl/spec/shader.hpp>
 #include <nbdl/store_compose.hpp>
 #include <nbdl/strong_alias.hpp>
 #include <nbdl/tags.hpp>

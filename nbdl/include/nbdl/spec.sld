@@ -45,6 +45,10 @@
       (load-builtin "nbdl_spec_verify_recursive_visits"))
     (define mark-shader-entry
       (load-builtin "nbdl_spec_mark_shader_entry"))
+    (define %define-spirv-binary
+      (load-builtin "nbdl_spec_define_spirv_binary"))
+    (define %write-spirv-binary
+      (load-builtin "nbdl_spec_write_spirv_binary"))
 
     ;; Create a !nbdl.cpp_alias type with a C++ typename as written.
     ;; The flatten pass replaces it with a !nbdl.cpp type
@@ -123,11 +127,16 @@
     (define (%lower-module-copy FuncOp)
       (cdr (assq FuncOp %lower-module-copies)))
 
-    ;; Copy the lower-module copy of a FuncOp into the llvm-module.
-    (define (lower-to-llvm FuncOp CAdapter?)
+    ;; Lazily create the llvm-module.
+    (define (%llvm-module)
       (unless llvm-module
         (set! llvm-module (create-top-module "nbdl_spec_llvm_module")))
-      (let ((Copy (%copy-to-module llvm-module (%lower-module-copy FuncOp))))
+      llvm-module)
+
+    ;; Copy the lower-module copy of a FuncOp into the llvm-module.
+    (define (lower-to-llvm FuncOp CAdapter?)
+      (let ((Copy (%copy-to-module (%llvm-module)
+                                   (%lower-module-copy FuncOp))))
         ;; Mark to have an abi adapter created to allow calling from C++.
         (when CAdapter?
           (mark-c-adapter Copy))
@@ -197,9 +206,11 @@
       (set! export-c-internal-ops '())
       (set! export-shader-ops '())
       (set! %shader-entries '())
+      (set! %spirv-binary #f)
       (set! %lower-ops '())
       (set! %write-lower-module? #f)
-      (set! %write-spirv-module? #f))
+      (set! %write-spirv-module? #f)
+      (set! %spirv-binary-path #f))
 
     ;; Clear the modules of the lowering stage and exit dialects.
     (define (%reset-lower-modules)
@@ -222,8 +233,14 @@
       (define ShaderEntries %shader-entries)
       (define WriteLower? %write-lower-module?)
       (define WriteSPIRV? %write-spirv-module?)
+      (define SPIRVBinary %spirv-binary)
+      (define SPIRVBinaryPath %spirv-binary-path)
       (define (lower-op? Op) (memq Op LowerOps))
       (%reset-module)
+      (when (and SPIRVBinary (null? ShaderOps))
+        (error-with-loc (cadr SPIRVBinary)
+          "spirv binary has no functions exported via export-shader: {}"
+          (car SPIRVBinary)))
       (%finalize-exports CppOps define-store-op?
                          (%emit-cpp Module translate-cpp))
       ;; Declarations are written with canonical C++ types
@@ -255,14 +272,19 @@
                          (lambda (Op)
                            (lower-to-spirv
                              Op (%shader-entry-attr ShaderEntries Op))))
-      (when llvm-module
-        (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
-        (inject-module llvm-module))
+      ;; Lower the SPIRV binary to LLVM with the other functions.
       (when spirv-module
         (run-passes spirv-module "nbdl-to-spirv")
         (when WriteSPIRV?
           (write spirv-module)
-          (newline)))
+          (newline))
+        (when SPIRVBinaryPath
+          (%write-spirv-binary spirv-module SPIRVBinaryPath)))
+      (when SPIRVBinary
+        (%finalize-spirv-binary Module SPIRVBinary ShaderOps ShaderEntries))
+      (when llvm-module
+        (run-passes llvm-module "nbdl-to-llvm" "nbdl-c-adapter")
+        (inject-module llvm-module))
       (%reset-lower-modules)
       Module)
 
@@ -278,6 +300,15 @@
     ;; (for debugging and testing.)
     (define (write-spirv-module)
       (set! %write-spirv-module? #t))
+
+    (define %spirv-binary-path #f)
+
+    ;; Write the SPIRV binary of finalize-module to a file
+    ;; (for debugging and testing.)
+    (define (write-spirv-binary Path)
+      (unless (string? Path)
+        (error "expecting path string: {}" Path))
+      (set! %spirv-binary-path Path))
 
     ;; Thunk receives the symbol name and should return
     ;; a new top level operation using the current module builder.
@@ -1484,13 +1515,77 @@
                  Name)))))))
 
     ;; Map each FuncOp of a shader entrypoint to the attribute that
-    ;; describes its entry point as (FuncOp . Attr).
+    ;; describes its entry point and its row of the C++ table of entry
+    ;; points as (FuncOp Attr Row).
     (define %shader-entries '())
 
     ;; Get the entry point attribute of a FuncOp or #f.
     (define (%shader-entry-attr ShaderEntries FuncOp)
       (let ((Entry (assq FuncOp ShaderEntries)))
-        (and Entry (cdr Entry))))
+        (and Entry (cadr Entry))))
+
+    ;; Write the initializer of a nbdl::shader_entry.
+    (define (%shader-entry-row Name Model LocalSize ArgTs)
+      (define NumUniformBuffers
+        (let Loop ((Ts ArgTs) (N 0))
+          (cond
+            ((null? Ts) N)
+            ((and (shader-global? (car Ts))
+                  (eq? (shader-global-kind (car Ts)) 'uniform-buffer))
+             (Loop (cdr Ts) (+ N 1)))
+            (else (Loop (cdr Ts) N)))))
+      (string-append
+        "{" (%quote (string-copy Name 0)) ", ::nbdl::shader_stage::"
+        (cond
+          ((equal? Model "Vertex") "vertex")
+          ((equal? Model "Fragment") "fragment")
+          (else "compute"))
+        ", 0, 0, 0, " (number->string NumUniformBuffers) ", {"
+        (string-join (map number->string (or LocalSize '(0 0 0))) ", ")
+        "}}"))
+
+    ;; Track the SPIRV binary exported via export-spirv-binary as (Name Loc)
+    ;; or #f.
+    (define %spirv-binary #f)
+
+    ;; Export the SPIRV binary of the functions exported via export-shader
+    ;; as a C function Name that returns its words as a
+    ;; nbdl::memref<std::int32_t, 1> and a C++ table Name_entries of
+    ;; nbdl::shader_entry for each entry point.
+    (define-syntax export-spirv-binary
+      (syntax-rules ()
+        ((export-spirv-binary Name)
+         (%export-spirv-binary (syntax-source-loc Name) 'Name))))
+
+    (define (%export-spirv-binary Loc Name)
+      (when %spirv-binary
+        (error-with-loc Loc "spirv binary is already exported: {}"
+                        (car %spirv-binary)))
+      (set! %spirv-binary (list Name Loc)))
+
+    ;; Define the function that returns the SPIRV binary and write its
+    ;; C++ wrapper and table of entry points.
+    (define (%finalize-spirv-binary Module SPIRVBinary ShaderOps ShaderEntries)
+      (define Name (car SPIRVBinary))
+      (define Loc (cadr SPIRVBinary))
+      (define Rows
+        (let Loop ((Rest ShaderOps) (Result '()))
+          (if (null? Rest)
+            (reverse Result)
+            (let ((Entry (assq (%export-op (car Rest)) ShaderEntries)))
+              (Loop (cdr Rest)
+                    (if Entry (cons (car (cddr Entry)) Result) Result))))))
+      (let ((FuncOp (%define-spirv-binary spirv-module (%llvm-module)
+                                          (namespace-prefix Name) Loc)))
+        (mark-c-adapter FuncOp)
+        ((%emit-cpp Module define-llvm-wrapper) FuncOp)
+        (write-lexer
+          (string-append
+            "inline constexpr ::std::array<::nbdl::shader_entry, "
+            (number->string (length Rows)) "> "
+            (string-copy Name 0) "_entries = {{"
+            (string-join Rows ", ") "}};"))
+        (flush-tokens)))
 
     (define %shader-entry '%shader-entry)
 
@@ -1539,8 +1634,10 @@
               (Thunk SymName
                      (map %shader-type ArgTs)
                      (map %shader-type RetTs)))))
+        (define Row (%shader-entry-row Name Model LocalSize ArgTs))
         (set! %lower-ops (cons FuncOp %lower-ops))
-        (set! %shader-entries (cons (cons FuncOp EntryAttr) %shader-entries))
+        (set! %shader-entries
+          (cons (list FuncOp EntryAttr Row) %shader-entries))
         (list %shader-entry Name)))
 
     ;; Define the entry point of a shader with the same typed syntax as
@@ -1796,9 +1893,11 @@
     export-c
     export-c-internal
     export-shader
+    export-spirv-binary
     finalize-module
     write-lower-module
     write-spirv-module
+    write-spirv-binary
 
     ;; Reexport some base stuff
     define

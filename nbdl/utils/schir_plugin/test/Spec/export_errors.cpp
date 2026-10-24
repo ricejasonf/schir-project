@@ -4,7 +4,7 @@
 #include <nbdl/spec.hpp>
 
 // Errors are reported at the name of the definition.
-// expected-note@* 15 {{error raised here}}
+// expected-note@* 17 {{error raised here}}
 
 // Finalize before the other cases leave partial definitions in the module.
 // expected-error@* {{mlir pass pipeline failed}}
@@ -16,6 +16,14 @@
 (define-shader-entrypoint entry_array_input "Fragment"
     ((X : (type "vector<8xf32>"))) -> ()
   (return))
+(finalize-module)
+}
+
+// expected-error@+4 {{spirv binary has no functions exported via export-shader: binary_without_shaders}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-spirv-binary binary_without_shaders)
 (finalize-module)
 }
 
@@ -156,4 +164,13 @@
 {
 (import (nbdl spec))
 (define Color (shader-global 'builtin "Color" (type "vector<4xf32>")))
+}
+
+// The exported binary remains until the next finalize-module.
+// expected-error@+5 {{spirv binary is already exported: binary_exported}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-spirv-binary binary_exported)
+(export-spirv-binary binary_exported_again)
 }
