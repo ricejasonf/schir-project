@@ -225,6 +225,24 @@ void nbdl_spec_mark_c_adapter(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
+// Mark a FuncOp to become a shader entry point described by a
+// dictionary attribute in the nbdl-to-spirv pass.
+// (mark-shader-entry op attr)
+void nbdl_spec_mark_shader_entry(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  auto FuncOp = dyn_cast_or_null<mlir::func::FuncOp>(
+      dyn_cast<mlir::Operation>(Args[0]));
+  if (!FuncOp)
+    return C.RaiseError("expecting func.func: {}", Args[0]);
+  auto Attr = dyn_cast_or_null<mlir::DictionaryAttr>(
+      schir::any_cast<mlir::Attribute>(Args[1]));
+  if (!Attr)
+    return C.RaiseError("expecting dictionary attribute: {}", Args[1]);
+  FuncOp->setAttr(nbdl_spec::ShaderEntryAttrName, Attr);
+  C.Cont();
+}
+
 // If the current block has a terminator, wrap the
 // entire block in a nbdl.scope. This supports the
 // convention that only terminators may perform an

@@ -53,7 +53,9 @@ def LowerToSPIRVPass : NbdlPass<"nbdl-to-spirv", "mlir::ModuleOp"> {
   let summary = "lower the dialects produced by nbdl-lower to SPIRV";
   let description = [{
     Lower output dialects of nbdl-lower to the SPIRV dialect in a
-    spirv.module that targets Vulkan.
+    spirv.module that targets Vulkan. Each function marked with
+    nbdl.shader_entry becomes an entry point that loads its parameters
+    from and stores its results to global variables.
   }];
   let dependentDialects = ["mlir::spirv::SPIRVDialect"];
 }

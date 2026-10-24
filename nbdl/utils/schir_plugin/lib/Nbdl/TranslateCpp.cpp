@@ -615,10 +615,13 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     if (!isa<mlir::func::FuncOp>(Op->getParentOp()))
       return SetError("nbdl.return is nested in an operation"
                       " that was not inlined", Op);
+    if (Op.getArgs().size() > 1)
+      return SetError("nbdl.return of multiple values cannot be translated"
+                      " to C++", Op);
     OS << "return";
-    if (mlir::Value Arg = Op.getArg()) {
+    if (!Op.getArgs().empty()) {
       OS << ' ';
-      WriteNameExpr(Arg);
+      WriteNameExpr(Op.getArgs().front());
     }
     OS << ";\n";
   }

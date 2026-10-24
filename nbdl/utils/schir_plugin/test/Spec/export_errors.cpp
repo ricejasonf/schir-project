@@ -4,7 +4,20 @@
 #include <nbdl/spec.hpp>
 
 // Errors are reported at the name of the definition.
-// expected-note@* 8 {{error raised here}}
+// expected-note@* 15 {{error raised here}}
+
+// Finalize before the other cases leave partial definitions in the module.
+// expected-error@* {{mlir pass pipeline failed}}
+// expected-note@+5 {{unsupported shader interface type: 'vector<8xf32>'}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_array_input)
+(define-shader-entrypoint entry_array_input "Fragment"
+    ((X : (type "vector<8xf32>"))) -> ()
+  (return))
+(finalize-module)
+}
 
 // expected-error@+7 {{exported name defined more than once: defined_twice}}
 #pragma schir_scheme
@@ -65,16 +78,82 @@
   (visit Fn Store))
 }
 
-// expected-error@+4 {{TODO shader entry points are not supported: shader_main}}
+// expected-error@+6 {{shader entrypoint cannot be exported to C or C++: entry_exported_to_c}}
 #pragma schir_scheme
 {
 (import (nbdl spec))
-(export-shader shader_helper (shader_main "Fragment" Color))
+(export-c entry_exported_to_c)
+(export-shader entry_exported_to_c)
+(define-shader-entrypoint entry_exported_to_c "Fragment" () -> ()
+  (return))
 }
 
-// expected-error@+4 {{expecting name or (name "Kind" GlobalVar ...): "not_a_name"}}
+// expected-error@+4 {{shader entrypoint is not exported via export-shader: entry_not_exported}}
 #pragma schir_scheme
 {
 (import (nbdl spec))
-(export-shader "not_a_name")
+(define-shader-entrypoint entry_not_exported "Fragment" () -> ()
+  (return))
+}
+
+// expected-error@+8 {{shader entrypoint cannot be called: entry_called}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_called calls_entry)
+(define-shader-entrypoint entry_called "Fragment" () -> ()
+  (return))
+(define-fn calls_entry () -> ()
+  (visit entry_called))
+}
+
+// expected-error@+5 {{unknown shader stage: "Geometry"}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_unknown_stage)
+(define-shader-entrypoint entry_unknown_stage "Geometry" () -> ()
+  (return))
+}
+
+// expected-error@+5 {{compute stage requires a local size: ("Compute" X Y Z)}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_compute_size)
+(define-shader-entrypoint entry_compute_size "Compute" () -> ()
+  (return))
+}
+
+// expected-error@+5 {{shader entrypoint types cannot be !nbdl.unknown: entry_unknown_type}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_unknown_type)
+(define-shader-entrypoint entry_unknown_type "Fragment" () -> (!nbdl.unknown)
+  (return))
+}
+
+// expected-error@+6 {{shader entrypoint cannot return a uniform-buffer: entry_uniform_result}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-shader entry_uniform_result)
+(define Uniform (shader-global 'uniform-buffer (type "f32")))
+(define-shader-entrypoint entry_uniform_result "Fragment" () -> (Uniform)
+  (return))
+}
+
+// expected-error@+4 {{unknown shader-global kind: push-constant}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(define PushConstant (shader-global 'push-constant (type "f32")))
+}
+
+// expected-error@+4 {{unknown shader builtin: "Color"}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(define Color (shader-global 'builtin "Color" (type "vector<4xf32>")))
 }

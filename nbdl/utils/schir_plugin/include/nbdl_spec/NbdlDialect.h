@@ -44,6 +44,13 @@ void registerPasses();
 // function type before lowering to LLVM.
 inline constexpr llvm::StringLiteral CAdapterAttrName = "nbdl.c_adapter";
 
+// The attribute that marks a function to become the entry point of a
+// shader in the nbdl-to-spirv pass. Its value is a dictionary of the
+// entry point name, execution model, and the interface variable of each
+// parameter and result.
+inline constexpr llvm::StringLiteral ShaderEntryAttrName =
+  "nbdl.shader_entry";
+
 // Get the C linkage name of the adapter for a function lowered to LLVM
 // given its symbol name.
 // Each name component is prefixed with its length.

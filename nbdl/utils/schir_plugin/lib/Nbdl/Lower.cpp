@@ -2,6 +2,7 @@
 
 #include <nbdl_spec/NbdlDialect.h>
 #include <schir_common/Lower.h>
+#include <schir_common/SPIRVConversion.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
@@ -11,9 +12,11 @@
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVOps.h>
+#include <mlir/Dialect/SPIRV/IR/SPIRVTypes.h>
 #include <mlir/Dialect/SPIRV/IR/TargetAndABI.h>
 #include <mlir/Dialect/SPIRV/Transforms/Passes.h>
 #include <mlir/Dialect/Vector/IR/VectorOps.h>
+#include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/IR/PatternMatch.h>
@@ -23,6 +26,9 @@
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/Twine.h>
+#include <optional>
+#include <string>
 
 // Generated stuff
 namespace nbdl_spec {
@@ -522,6 +528,159 @@ public:
   }
 };
 
+// The entry point of a shader to declare once its function is lowered.
+struct ShaderEntry {
+  std::string Name;
+  spirv::ExecutionModel Model;
+  llvm::SmallVector<int32_t, 3> LocalSize;
+  // The Input and Output variables.
+  llvm::SmallVector<mlir::Attribute, 4> InterfaceVars;
+};
+
+// Create the variable of a parameter or result of type T of a shader entry
+// described by a dictionary of its storage class and decorations.
+spirv::GlobalVariableOp createInterfaceVar(mlir::OpBuilder& B,
+                                           func::FuncOp F,
+                                           llvm::Twine const& Name,
+                                           mlir::Type T,
+                                           mlir::DictionaryAttr Desc,
+                                           mlir::TypeConverter const& TC) {
+  std::optional<spirv::StorageClass> SC;
+  if (Desc)
+    if (auto SCName = Desc.getAs<mlir::StringAttr>("storage_class"))
+      SC = spirv::symbolizeStorageClass(SCName.getValue());
+  if (!SC) {
+    F.emitError("invalid shader interface variable: ") << Desc;
+    return {};
+  }
+  // Pass only scalars and vectors that are the same type in SPIRV.
+  if (!isa<mlir::IntegerType, mlir::FloatType, mlir::VectorType>(T) ||
+      TC.convertType(T) != T) {
+    F.emitError("unsupported shader interface type: ") << T;
+    return {};
+  }
+  // Wrap a buffer in a struct as Vulkan requires.
+  mlir::Type PointeeT = T;
+  if (*SC == spirv::StorageClass::Uniform)
+    PointeeT = spirv::StructType::get({T}, {0});
+
+  auto PtrT = spirv::PointerType::get(PointeeT, *SC);
+  auto Var = spirv::GlobalVariableOp::create(
+      B, F.getLoc(), mlir::TypeAttr::get(PtrT), B.getStringAttr(Name));
+  if (auto A = Desc.getAs<mlir::IntegerAttr>("location"))
+    Var.setLocationAttr(A);
+  if (auto A = Desc.getAs<mlir::StringAttr>("built_in"))
+    Var.setBuiltInAttr(A);
+  if (auto A = Desc.getAs<mlir::IntegerAttr>("descriptor_set"))
+    Var.setDescriptorSetAttr(A);
+  if (auto A = Desc.getAs<mlir::IntegerAttr>("binding"))
+    Var.setBindingAttr(A);
+  return Var;
+}
+
+// Load the value of a parameter of a shader entry from its variable.
+mlir::Value loadInterfaceVar(mlir::OpBuilder& B, mlir::Location Loc,
+                             spirv::GlobalVariableOp Var) {
+  mlir::Value Ptr = spirv::AddressOfOp::create(B, Loc, Var);
+  auto PtrT = cast<spirv::PointerType>(Var.getType());
+  if (isa<spirv::StructType>(PtrT.getPointeeType())) {
+    mlir::Value Zero = spirv::ConstantOp::getZero(B.getI32Type(), Loc, B);
+    Ptr = spirv::AccessChainOp::create(B, Loc, Ptr, Zero);
+  }
+  return spirv::LoadOp::create(B, Loc, Ptr);
+}
+
+// Turn a function into the void() function of a shader entry point that
+// loads its parameters from and stores its results to global variables.
+llvm::FailureOr<ShaderEntry> createShaderEntry(func::FuncOp F,
+                                               mlir::DictionaryAttr Desc,
+                                               mlir::TypeConverter const& TC) {
+  auto Name = Desc.getAs<mlir::StringAttr>("name");
+  auto ModelName = Desc.getAs<mlir::StringAttr>("execution_model");
+  auto InputDescs = Desc.getAs<mlir::ArrayAttr>("inputs");
+  auto OutputDescs = Desc.getAs<mlir::ArrayAttr>("outputs");
+  std::optional<spirv::ExecutionModel> Model;
+  if (ModelName)
+    Model = spirv::symbolizeExecutionModel(ModelName.getValue());
+  mlir::FunctionType FT = F.getFunctionType();
+  if (!Name || !Model || !InputDescs || !OutputDescs || F.isExternal() ||
+      InputDescs.size() != FT.getNumInputs() ||
+      OutputDescs.size() != FT.getNumResults())
+    return F.emitError("invalid shader entry: ") << Desc;
+
+  ShaderEntry Entry{Name.str(), *Model, {}, {}};
+  if (auto LocalSize = Desc.getAs<mlir::DenseI32ArrayAttr>("local_size"))
+    llvm::append_range(Entry.LocalSize, LocalSize.asArrayRef());
+
+  // Create the variables before the function.
+  mlir::OpBuilder B(F);
+  auto CreateVars = [&](mlir::ArrayAttr Descs, mlir::TypeRange Ts,
+                        llvm::StringRef Suffix,
+                        llvm::SmallVectorImpl<spirv::GlobalVariableOp>& Vars) {
+    for (auto [I, VarDesc] : llvm::enumerate(Descs)) {
+      spirv::GlobalVariableOp Var = createInterfaceVar(
+          B, F, Name.getValue() + Suffix + llvm::Twine(I), Ts[I],
+          dyn_cast<mlir::DictionaryAttr>(VarDesc), TC);
+      if (!Var)
+        return llvm::failure();
+      spirv::StorageClass SC =
+        cast<spirv::PointerType>(Var.getType()).getStorageClass();
+      if (SC == spirv::StorageClass::Input ||
+          SC == spirv::StorageClass::Output)
+        Entry.InterfaceVars.push_back(
+          mlir::FlatSymbolRefAttr::get(Var.getSymNameAttr()));
+      Vars.push_back(Var);
+    }
+    return llvm::success();
+  };
+  llvm::SmallVector<spirv::GlobalVariableOp, 4> InputVars, OutputVars;
+  if (llvm::failed(CreateVars(InputDescs, FT.getInputs(), "_arg",
+                              InputVars)) ||
+      llvm::failed(CreateVars(OutputDescs, FT.getResults(), "_result",
+                              OutputVars)))
+    return llvm::failure();
+
+  // Load the parameters at the beginning of the body.
+  mlir::Block& Body = F.front();
+  B.setInsertionPointToStart(&Body);
+  for (auto [Arg, Var] : llvm::zip_equal(Body.getArguments(), InputVars))
+    Arg.replaceAllUsesWith(loadInterfaceVar(B, F.getLoc(), Var));
+  Body.eraseArguments(0, Body.getNumArguments());
+
+  // Store the results at each return.
+  llvm::SmallVector<func::ReturnOp, 4> Returns;
+  F.walk([&](func::ReturnOp Ret) { Returns.push_back(Ret); });
+  for (func::ReturnOp Ret : Returns) {
+    B.setInsertionPoint(Ret);
+    for (auto [Result, Var] : llvm::zip_equal(Ret.getOperands(), OutputVars)) {
+      mlir::Value Ptr = spirv::AddressOfOp::create(B, Ret.getLoc(), Var);
+      spirv::StoreOp::create(B, Ret.getLoc(), Ptr, Result);
+    }
+    Ret->eraseOperands(0, Ret->getNumOperands());
+  }
+
+  F.setFunctionType(B.getFunctionType({}, {}));
+  F.setSymName(Name.getValue());
+  F->removeAttr(nbdl_spec::ShaderEntryAttrName);
+  return Entry;
+}
+
+// Declare the entry point of a lowered function with the execution modes
+// that its execution model requires.
+void createEntryPoint(mlir::OpBuilder& B, spirv::ModuleOp SPIRVModule,
+                      ShaderEntry const& Entry) {
+  auto Fn = SPIRVModule.lookupSymbol<spirv::FuncOp>(Entry.Name);
+  assert(Fn && "expecting the lowered function of the entry point");
+  mlir::Location Loc = Fn.getLoc();
+  spirv::EntryPointOp::create(B, Loc, Entry.Model, Fn, Entry.InterfaceVars);
+  if (Entry.Model == spirv::ExecutionModel::Fragment)
+    spirv::ExecutionModeOp::create(B, Loc, Fn,
+                                   spirv::ExecutionMode::OriginUpperLeft, {});
+  if (!Entry.LocalSize.empty())
+    spirv::ExecutionModeOp::create(B, Loc, Fn, spirv::ExecutionMode::LocalSize,
+                                   Entry.LocalSize);
+}
+
 // Lower the mid level dialects that nbdl-lower produces to SPIRV.
 class LowerToSPIRVPass
     : public nbdl_spec::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
@@ -532,7 +691,24 @@ public:
 
   void runOnOperation() override {
     mlir::ModuleOp M = getOperation();
-    M->setAttr(spirv::getTargetEnvAttrName(), getVulkanTargetEnv());
+    spirv::TargetEnvAttr TEA = getVulkanTargetEnv();
+    M->setAttr(spirv::getTargetEnvAttrName(), TEA);
+
+    // Turn the marked functions into entry point functions.
+    schir_common::SPIRVTypeConverter TC(TEA);
+    llvm::SmallVector<ShaderEntry, 4> Entries;
+    for (func::FuncOp F :
+         llvm::make_early_inc_range(M.getOps<func::FuncOp>())) {
+      auto Desc = F->getAttrOfType<mlir::DictionaryAttr>(
+          nbdl_spec::ShaderEntryAttrName);
+      if (!Desc)
+        continue;
+      llvm::FailureOr<ShaderEntry> Entry = createShaderEntry(F, Desc, TC);
+      if (llvm::failed(Entry))
+        return signalPassFailure();
+      Entries.push_back(std::move(*Entry));
+    }
+
     if (llvm::failed(schir_common::lowerToSPIRV(M)))
       return signalPassFailure();
 
@@ -545,6 +721,10 @@ public:
     for (mlir::Operation& Op : llvm::make_early_inc_range(*M.getBody()))
       if (&Op != SPIRVModule)
         Op.moveBefore(Body, Body->end());
+
+    B.setInsertionPointToEnd(Body);
+    for (ShaderEntry const& Entry : Entries)
+      createEntryPoint(B, SPIRVModule, Entry);
 
     // Require the minimal version, capabilities and extensions.
     mlir::OpPassManager PM(spirv::ModuleOp::getOperationName());

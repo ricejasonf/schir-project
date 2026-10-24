@@ -415,13 +415,13 @@ def Nbdl_ReturnOp : Nbdl_Op<"return", [Terminator,
     DeclareOpInterfaceMethods<SchirCommon_InferableReturn,
                               ["getReturnedFunction"]>]> {
   let description = [{
-    Return the result from a FuncOp, or nothing if the FuncOp has no
-    result. The operand must be of the result type unless either is a
-    placeholder type until it is inferred. It may be nested in the regions
-    of match operations until they are inlined by the flatten pass.
+    Return the results from a FuncOp. Each operand must be of the
+    corresponding result type unless either is a placeholder type until
+    it is inferred. It may be nested in the regions of match operations
+    until they are inlined by the flatten pass.
   }];
 
-  let arguments = (ins Optional<AnyType>:$arg);
+  let arguments = (ins Variadic<AnyType>:$args);
   let results = (outs);
 }
 
