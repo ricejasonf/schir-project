@@ -19,10 +19,10 @@ namespace foo {
         (nbdl spec spirv)
         (only (schir mlir) attr create-op result))
 
-(export-c max_i32 sum_to_i32 sum_sums_i32)
-(export-c-internal is_zero_i32 add_i32 sub_one_i32)
-(export-shader vs_main max_i32 sum_to_i32 sum_sums_i32
-               is_zero_i32 add_i32 sub_one_i32)
+(export-c max_i32 sum_to_i32 sum_sums_i32 count_down_i32)
+(export-c-internal is_zero_i32 is_positive_i32 add_i32 sub_one_i32)
+(export-shader vs_main max_i32 sum_to_i32 sum_sums_i32 count_down_i32
+               is_zero_i32 is_positive_i32 add_i32 sub_one_i32)
 (export-spirv-binary shaders)
 
 (define i1 (type "i1"))
@@ -44,6 +44,9 @@ namespace foo {
 
 (define-fn is_zero_i32 ((X : i32)) -> (i1)
   (return (cmpi "0" X (constant-i32 "0"))))
+
+(define-fn is_positive_i32 ((X : i32)) -> (i1)
+  (return (cmpi "4" X (constant-i32 "0"))))
 
 (define-fn add_i32 ((A : i32) (B : i32)) -> (i32)
   (return (result (create-op "arith.addi"
@@ -124,6 +127,27 @@ namespace foo {
 (define-fn sum_sums_i32 ((N : i32)) -> (i32)
   (visit sum_sums_down N 0 (match-fn (Sum) (return Sum))))
 
+; // Count N down to 0 exiting via the implicit else.
+(define-match-fn count_down (N)
+  (match-if (visit is_positive_i32 N)
+    (visit count_down (visit sub_one_i32 N))))
+
+; // Exit the loop from the else branch of a one-armed match-if.
+; // CHECK-LABEL: func.func @"::foo::count_down_i32"
+; // CHECK-SAME: (%arg0: i32) {
+; // CHECK-NEXT: scf.while ([[N:%.+]] = %arg0) : (i32) -> i32 {
+; // CHECK: [[IF:%.+]]:2 = scf.if {{%.+}} -> (i1, i32) {
+; // CHECK: scf.yield %true, {{%.+}} : i1, i32
+; // CHECK-NEXT: } else {
+; // CHECK-NEXT: %false = arith.constant false
+; // CHECK-NEXT: scf.yield %false, [[N]] : i1, i32
+; // CHECK-NEXT: }
+; // CHECK-NEXT: scf.condition([[IF]]#0) [[IF]]#1 : i32
+; // CHECK: return
+; // CHECK-NEXT: }
+(define-fn count_down_i32 ((N : i32)) -> ()
+  (visit count_down N))
+
 ; // Store the result of each branch at the single return.
 (define-shader-entrypoint vs_main "Vertex" ((N : i32)) -> (i32)
   (match-if (visit is_zero_i32 N)
@@ -146,4 +170,6 @@ int main() {
   // 6 + 3 + 1
   SCHIR_ASSERT(foo::sum_sums_i32(3) == 10);
   SCHIR_ASSERT(foo::sum_sums_i32(0) == 0);
+  foo::count_down_i32(3);
+  foo::count_down_i32(-1);
 }

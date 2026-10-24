@@ -26,7 +26,9 @@ namespace foo {
   (export-cpp
     weighted_string
     context
-    combo_concat)
+    combo_concat
+    last_arrow
+    bare_test)
 
   (define (>= a b)
     (visit '|std::greater_equal<int>{}| a b))
@@ -72,6 +74,17 @@ namespace foo {
     (my-concat (get context '.val3))
     (visit fn 5))
 
+  ; // Visit nothing when the last => clause does not match.
+  (define-match-fn last_arrow (n fn)
+    (match-cond
+      ((>= n 42) => (match-fn (x) (visit fn n)))))
+
+  ; // Skip the clauses after a bare test that matches.
+  (define-match-fn bare_test (n fn)
+    (match-cond
+      ((>= n 42))
+      (else (visit fn n))))
+
   ;; // See sfinae_visit.cpp for more tests on =>.
 
   (finalize-module)
@@ -105,4 +118,16 @@ int main() {
   SCHIR_ASSERT(ctx2.result_val == std::string("foobaz"));
   SCHIR_ASSERT(ctx3.result_val == std::string("baz"));
   SCHIR_ASSERT(ctx4.result_val == std::string("foobarbaz"));
+
+  int result = 0;
+  auto set_result = [&](int x) { result = x; };
+  foo::last_arrow(5, set_result);
+  SCHIR_ASSERT(result == 0);
+  foo::last_arrow(43, set_result);
+  SCHIR_ASSERT(result == 43);
+  result = 0;
+  foo::bare_test(43, set_result);
+  SCHIR_ASSERT(result == 0);
+  foo::bare_test(5, set_result);
+  SCHIR_ASSERT(result == 5);
 }

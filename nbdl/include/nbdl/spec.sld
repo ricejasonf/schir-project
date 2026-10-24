@@ -1217,6 +1217,10 @@
                             (lambda () (ThenThunk ThenArg))))
                  (region: "else" () (%top-level ElseThunk))))
 
+    ;; Terminate a region that has nothing to do.
+    (define (build-discard-unit Loc)
+      (build-discard Loc (build-unit)))
+
     (define (match-if-aux Loc CondExprFn ThenThunk ElseThunk)
       (define CondExpr
         (%expr Loc CondExprFn))
@@ -1232,11 +1236,16 @@
     ; The syntax match-if is not so different from
     ; if except that it operates on expressions that
     ; resolve stores (ie via get, visit, et al.)
-    ; If Else is not specified then yield 'false.
+    ; Discard a unit value if Else is not specified.
     (define-syntax match-if
       (syntax-rules ()
         ((match-if Cond Then)
-         (match-if Cond Then (discard 'false)))
+         (match-if-aux (syntax-source-loc Cond)
+                       (lambda (Loc Fn)
+                         (%match-expr Loc Cond Fn))
+                       (lambda (ThenArg) Then)
+                       (lambda ()
+                         (build-discard-unit (syntax-source-loc Cond)))))
         ((match-if Cond Then Else)
          (match-if-aux (syntax-source-loc Cond)
                         (lambda (Loc Fn)
@@ -1254,7 +1263,7 @@
          (match-if-aux (syntax-source-loc test)
                        (lambda (Loc Fn) (%match-expr Loc test Fn))
                        (lambda (ThenArg) ((make-visit-proc result) ThenArg))
-                       (lambda () 0)))
+                       (lambda () (build-discard-unit (syntax-source-loc test)))))
         ((match-cond (test => result) clause1 clause2 ...)
          (match-if-aux (syntax-source-loc test)
                        (lambda (Loc Fn) (%match-expr Loc test Fn))
@@ -1262,7 +1271,8 @@
                        (lambda () (match-cond clause1 clause2 ...))))
         ((match-cond (test)) test)
         ((match-cond (test) clause1 clause2 ...)
-         (match-cond (test => (lambda (DiscardMe) 0))
+         (match-cond (test => (lambda (DiscardMe)
+                                (build-discard-unit (syntax-source-loc test))))
                      clause1 clause2 ...))
         ((match-cond (test result1 result2 ...))
          (match-if test (begin result1 result2 ...)))
