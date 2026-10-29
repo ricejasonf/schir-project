@@ -10,6 +10,7 @@
 #include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
+#include <mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVDialect.h>
@@ -886,6 +887,7 @@ public:
   void getDependentDialects(mlir::DialectRegistry& Registry) const override {
     Base::getDependentDialects(Registry);
     func::registerInlinerExtension(Registry);
+    mlir::LLVM::registerInlinerInterface(Registry);
   }
 
   void runOnOperation() override {
