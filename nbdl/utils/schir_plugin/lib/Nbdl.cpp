@@ -47,6 +47,9 @@ struct NbdlMappableToCpp : schir::MappableToCpp {
     llvm::raw_svector_ostream OS(Result);
     if (auto CT = dyn_cast<nbdl_spec::CppType>(T))
       OS << CT.getCppTypename();
+    // Map an alias to its C++ typename as written.
+    else if (auto CAT = dyn_cast<nbdl_spec::CppAliasType>(T))
+      OS << CAT.getCppTypename();
     else if (isa<nbdl_spec::StringType>(T))
       OS << "::std::string_view";
     // Map a placeholder to a forwarding reference
@@ -485,14 +488,14 @@ void nbdl_spec_is_store(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(schir::Bool(V && isa<nbdl_spec::StoreType>(V.getType())));
 }
 
-// Return true if the mlir.operation is a nbdl.define_store.
-void nbdl_spec_is_define_store(schir::Context& C, schir::ValueRefs Args) {
+// Return true if the mlir.operation is a nbdl.define_struct.
+void nbdl_spec_is_define_struct(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
     return C.RaiseError("invalid arity");
   auto* Op = dyn_cast<mlir::Operation>(Args.front());
   if (!Op)
     return C.RaiseError("expecting mlir.operation: {}", Args.front());
-  C.Cont(schir::Bool(isa<nbdl_spec::DefineStoreOp>(Op)));
+  C.Cont(schir::Bool(isa<nbdl_spec::DefineStructOp>(Op)));
 }
 
 // Return true if the mlir.type is a memref with a dynamic size.

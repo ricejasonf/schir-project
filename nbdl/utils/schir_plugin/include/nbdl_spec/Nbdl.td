@@ -286,10 +286,13 @@ def Nbdl_VariantOp : Nbdl_Op<"variant", []> {
   let results = (outs Nbdl_Type:$result);
 }
 
-def Nbdl_DefineStoreOp : Nbdl_Op<"define_store", [Symbol, IsolatedFromAbove]> {
+def Nbdl_DefineStructOp : Nbdl_Op<"define_struct",
+                                  [Symbol, IsolatedFromAbove]> {
   let description = [{
-    Define a parameterized store object, and expose its interface to the user
-    (as a type.)
+    Define a parameterized struct whose members are composed as a store,
+    and expose its interface to the user (as a type.)
+
+    The block arguments are the constructor arguments.
 
     If no region exists, then the operation is considered external.
     In C++, a struct type or nbdl::strong_alias is created.
@@ -348,7 +351,7 @@ def Nbdl_ContextOp : Nbdl_Op<"context", [Symbol]> {
     but the context wrapper supports the convention that the root
     node cannot be a non-root member of a path.
 
-    An instance can be created with nbdl.store.
+    An instance can be created with nbdl.construct.
   }];
 
   let arguments = (ins StrAttr:$sym_name, FlatSymbolRefAttr:$implName);
@@ -364,17 +367,15 @@ def Nbdl_ContOp : Nbdl_Op<"cont", [Terminator]> {
   let results = (outs);
 }
 
-def Nbdl_StoreOp : Nbdl_Op<"store", []> {
+def Nbdl_ConstructOp : Nbdl_Op<"construct", []> {
   let description = [{
-    Construct a store object. The name should be a
-    symbol that refers to a DefineStoreOp which can
-    be external (ie just the name of C++ type.)
+    Construct an object of the result type with the arguments.
+    The result is a raw value (not a store) since the object is not
+    a node in a state tree until it is lifted (see LiftStoreOp.)
   }];
 
-  let arguments = (ins
-    FlatSymbolRefAttr:$name,
-    Variadic<AnyType>:$args);
-  let results = (outs Nbdl_Type:$result);
+  let arguments = (ins Variadic<AnyType>:$args);
+  let results = (outs AnyType:$result);
 }
 
 def Nbdl_EmptyOp : Nbdl_Op<"empty", []> {

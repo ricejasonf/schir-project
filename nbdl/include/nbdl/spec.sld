@@ -35,8 +35,8 @@
       (load-builtin "nbdl_run_inference_passes"))
     (define nbdl_canonicalize_cpp_types
       (load-builtin "nbdl_canonicalize_cpp_types"))
-    (define define-store-op?
-      (load-builtin "nbdl_spec_is_define_store"))
+    (define define-struct-op?
+      (load-builtin "nbdl_spec_is_define_struct"))
     (define nbdl_spec_type_to_cpp_type
       (load-builtin "nbdl_spec_type_to_cpp_type"))
     (define nbdl_spec_cpp_alias_type
@@ -185,7 +185,7 @@
             (flush-tokens)))))
 
     (define (%function-op? Op)
-      (not (define-store-op? Op)))
+      (not (define-struct-op? Op)))
 
     ;; Clear the module and exports so subsequent definitions
     ;; are added to a new module.
@@ -227,7 +227,7 @@
       (set! FinalizeShaders
         (%begin-shader-backend ShaderOps
                                (%filter-exports ShaderOps lower-op?)))
-      (%finalize-exports CppOps define-store-op?
+      (%finalize-exports CppOps define-struct-op?
                          (emit-cpp Module translate-cpp))
       ;; Declarations are written with canonical C++ types
       ;; to match the definitions.
@@ -572,39 +572,44 @@
         (result-types:)
         ))
 
-    (define (build-store Loc Typename InitArgs)
-      (define Name
-        (if (named-store? Typename)
-          (named-store-sym-name Typename)
-          Typename))
+    ;; Build a nbdl.construct of an object of type Typename.
+    (define (build-construct Loc Typename InitArgs)
       (result
         (create-op
-          "nbdl.store"
+          "nbdl.construct"
           (loc: Loc)
           (operands: InitArgs)
-          ; TODO Mangle Typename
-          (attributes: ("name" (flat-symbolref-attr Name)))
-          (result-types: (!nbdl.store Typename))
+          (attributes:)
+          (result-types: (%cpp-or-type Typename))
           )))
 
-    (define (store-aux Loc Typename InitArgExprs)
+    (define (construct-aux Loc Typename InitArgExprs)
       (%expr
         Loc
         (lambda (Loc Fn)
           (%match-results
             InitArgExprs
             (lambda (InitArgs)
-              (Fn (build-store Loc Typename InitArgs)))))))
+              (Fn (build-construct Loc Typename InitArgs)))))))
 
+    ;; Construct an object of type Typename.
+    (define-syntax construct
+      (syntax-rules ()
+        ((construct Typename InitArgN ...)
+         (construct-aux
+           (syntax-source-loc Typename)
+           Typename
+           (list (%single-expr InitArgN) ...)))))
+
+    ;; Construct an object lifted to a store.
     (define-syntax store
       (syntax-rules (init-args:)
         ((store Typename)
          (store Typename (init-args:)))
         ((store Typename (init-args: InitArgN ...))
-         (store-aux
+         (lift-store-aux
            (syntax-source-loc Typename)
-           Typename
-           (list (%single-expr InitArgN) ...)))))
+           (construct Typename InitArgN ...)))))
 
     (define (build-store-compose Loc Key Store ParentStore)
       (define KeyVal
@@ -701,7 +706,7 @@
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
          (define Name
            (let ((SymName #f))
-            (let ((DefineStoreOp
+            (let ((DefineStructOp
                    (top-level-op
                      (syntax-source-loc Name)
                      'Name
@@ -709,19 +714,19 @@
                        (define Loc (syntax-source-loc Name))
                        (set! SymName SymName_)
                        (create-op
-                         "nbdl.define_store"
+                         "nbdl.define_struct"
                          (loc: Loc)
                          (operands:)
                          (attributes: ("sym_name" (string-attr SymName)))
                          (result-types:)
-                         (region: "body" ((InitParams : (!nbdl.store)) ...)
+                         (region: "body" ((InitParams : !nbdl.unknown) ...)
                                   (define-store-aux
                                     Loc
                                     (lambda (ProcessBody)
                                       ;; Ensure nonempty lambda.
                                       (ProcessBody StoreFunctionalN) ... #t)
                                     )))))))
-             (make-named-store SymName DefineStoreOp)))))))
+             (make-named-store SymName DefineStructOp)))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -737,12 +742,32 @@
            ...
            ))))
 
+    ;; Pass through a StoreFunctional of a struct member
+    ;; if Key is a member name.
+    (define (%struct-member Loc Key StoreFunctional)
+      (unless (member-name-literal? Key)
+        (error-with-loc Loc "expecting a member name as a struct key: {}" Key))
+      StoreFunctional)
+
+    ;; Define a struct where each key is a member name.
+    (define-syntax define-struct
+      (syntax-rules (member: init-args:)
+        ((define-struct Name (Formals ...)
+            (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
+         (define-store Name (Formals ...)
+           (%struct-member
+             (syntax-source-loc KeyN)
+             KeyN
+             (store-compose KeyN (store TypenameN (init-args: InitArgsNN ...))))
+           ...
+           ))))
+
     (define %named-store '%named-store)
 
     ;; Denote the name of a store defined as top level operation
     ;; in the module.
-    (define (make-named-store SymbolName DefineStoreOp)
-      (list %named-store SymbolName DefineStoreOp))
+    (define (make-named-store SymbolName DefineStructOp)
+      (list %named-store SymbolName DefineStructOp))
 
     (define (named-store? Value)
       (and (pair? Value)
@@ -821,20 +846,27 @@
               (eqv? '%nbdl-path (car PathSpec)))
          (let ((RootStore (cadr PathSpec))
                (PathNodes (cddr PathSpec)))
-          (when (and (value? RootStore)
-                     (not (store-value? RootStore)))
-            (error-with-loc (source-loc PathNodes)
-                            "expecting a store as the root of a path (see lift-store)"))
-          (cond
-            ((and (value? RootStore)
-                  (pair? PathNodes))
-              (%match-path-spec-rec RootStore PathNodes Fn))
-            ((value? RootStore)
-              (Fn RootStore))
-            (else
-              (error "expecting a root store object in pathspec: {}"
-                     PathSpec)))))
+          (if (expr? RootStore)
+            (%invoke-expr RootStore
+              (lambda (Root)
+                (%match-path-root Root PathNodes Fn)))
+            (%match-path-root RootStore PathNodes Fn))))
         (else (error "expecting nbdl pathspec: {}" PathSpec))))
+
+    ;; Match the PathNodes of a path starting at its root.
+    (define (%match-path-root RootStore PathNodes Fn)
+      (when (and (value? RootStore)
+                 (not (store-value? RootStore)))
+        (error-with-loc (source-loc PathNodes)
+                        "expecting a store as the root of a path (see lift-store)"))
+      (cond
+        ((and (value? RootStore)
+              (pair? PathNodes))
+          (%match-path-spec-rec RootStore PathNodes Fn))
+        ((value? RootStore)
+          (Fn RootStore))
+        (else
+          (error "expecting a root store object in path: {}" RootStore))))
 
     (define (%match-path-spec-rec Store PathNodes Fn)
       (let Loop ((Loc (source-loc PathNodes))
@@ -935,7 +967,7 @@
       (syntax-rules ()
         ((get path key ...)
          (cond
-          ((value? path)
+          ((or (value? path) (expr? path))
             (append (list '%nbdl-path path)
                     (source-cons key '() (syntax-source-loc key)) ...))
           ((path? path)
@@ -1486,9 +1518,9 @@
               FuncOp))
           ((named-store? Name)
             (let ()
-              (define-values (_ _ DefineStoreOp)
+              (define-values (_ _ DefineStructOp)
                 (apply values Name))
-              DefineStoreOp))
+              DefineStructOp))
          (else (module-lookup (%main-module) Name))))
       (translate-cpp Op)
       (newline))
@@ -1614,9 +1646,11 @@
   (export
     define-context
     define-store
+    define-struct
     store-compose
     variant
     store
+    construct
     get
     match
     match-cond

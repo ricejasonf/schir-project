@@ -331,12 +331,13 @@ public:
    ************************************/
 
   void VisitType(mlir::Value Val) {
+    Val = StripStoreCasts(Val);
     auto LocScope = MakeLocRAII(Val);
     if (mlir::Operation* Op = Val.getDefiningOp()) {
       if (isa<ContextOp>(Op))
         return VisitType(cast<ContextOp>(Op));
-      else if (isa<StoreOp>(Op))
-        return VisitType(cast<StoreOp>(Op));
+      else if (isa<ConstructOp>(Op))
+        return VisitType(cast<ConstructOp>(Op));
       else if (isa<VariantOp>(Op))
         return VisitType(cast<VariantOp>(Op));
       else if (isa<StoreComposeOp>(Op))
@@ -356,8 +357,16 @@ public:
     OS << Op.getSymName();
   }
 
-  void VisitType(StoreOp Op) {
-    OS << Op.getName();
+  void VisitType(ConstructOp Op) {
+    WriteCppTypename(Op, Op.getResult().getType());
+  }
+
+  // Write the C++ typename that a type maps to.
+  void WriteCppTypename(mlir::Operation* Op, mlir::Type T) {
+    llvm::SmallString<64> Typename;
+    if (!schir::MappableToCpp::lookup(T, Typename))
+      return SetError("type is not mappable to C++", Op);
+    OS << Typename;
   }
 
   void VisitType(VariantOp Op) {
@@ -451,6 +460,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<UnwrapOp>(Op))       return Visit(cast<UnwrapOp>(Op));
     else if (isa<LiftStoreOp>(Op))    return Visit(cast<LiftStoreOp>(Op));
     else if (isa<StoreComposeOp>(Op)) return Visit(cast<StoreComposeOp>(Op));
+    else if (isa<ConstructOp>(Op))    return Visit(cast<ConstructOp>(Op));
     else if (isa<ScopeOp>(Op))
       return VisitRegion(cast<ScopeOp>(Op).getBody());
     else if (isa<ConstexprOp, LiteralOp>(Op)) return;
@@ -770,6 +780,17 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     OS << ");\n";
   }
 
+  void Visit(ConstructOp Op) {
+    OS << "auto " << SetLocalVarName(Op.getResult(), "construct_") << " = ";
+    VisitType(Op);
+    OS << '(';
+    llvm::interleaveComma(Op.getArgs(), OS,
+        [&](mlir::Value V) {
+          WriteExpr(V);
+        });
+    OS << ");\n";
+  }
+
   void Visit(NoOp Op) {
     OS << "(void)";
     WriteExpr(Op.getArg());
@@ -996,15 +1017,15 @@ public:
   }
 };
 
-class DefineStoreWriter : public NbdlSpecWriter<DefineStoreWriter> {
+class DefineStructWriter : public NbdlSpecWriter<DefineStructWriter> {
 public:
   // Record the values for each member in order.
   llvm::SmallVector<mlir::Value, 8> Members;
 
-  using NbdlSpecWriter<DefineStoreWriter>::NbdlSpecWriter;
+  using NbdlSpecWriter<DefineStructWriter>::NbdlSpecWriter;
 
-  void VisitDefineStore(DefineStoreOp Op) {
-    // Skip externally defined stores.
+  void VisitDefineStruct(DefineStructOp Op) {
+    // Skip externally defined structs.
     if (Op.isExternal())
       return;
 
@@ -1016,11 +1037,12 @@ public:
       SetLocalVarName(BlockArg, "arg_");
 
     auto ContOp = getContOp(Op);
-    llvm::TypeSwitch<mlir::Operation*>(ContOp.getArg().getDefiningOp())
+    mlir::Value Result = StripStoreCasts(ContOp.getArg());
+    llvm::TypeSwitch<mlir::Operation*>(Result.getDefiningOp())
       .Case<UnitOp>([&, this](auto) {
           this->CreateTag(Op.getSymName());
         })
-      .Case<StoreOp, VariantOp>([&, this](auto ResultOp) {
+      .Case<ConstructOp, VariantOp>([&, this](auto ResultOp) {
           this->CreateStrongAlias(Op.getSymName(), ResultOp.getResult());
         })
       .Case<StoreComposeOp>([&, this](auto) {
@@ -1048,7 +1070,7 @@ public:
     OS << "};\n";
   }
 
-  void CreateClass(DefineStoreOp Op) {
+  void CreateClass(DefineStructOp Op) {
     llvm::StringRef Name = DropNamespacePrefix(Op.getSymName());
     OS << "class " << Name << " {\n";
     OS << "public:\n";
@@ -1058,7 +1080,7 @@ public:
     Flush();
   }
 
-  nbdl_spec::ContOp getContOp(DefineStoreOp Op) {
+  nbdl_spec::ContOp getContOp(DefineStructOp Op) {
     mlir::Operation* Terminator = Op.getBody().front().getTerminator();
     auto ContOp = dyn_cast<nbdl_spec::ContOp>(Terminator);
     if (!ContOp)
@@ -1066,7 +1088,7 @@ public:
     return ContOp;
   }
 
-  void WriteMemberDecls(DefineStoreOp Op) {
+  void WriteMemberDecls(DefineStructOp Op) {
     // Get the ContOp and work backwards
     // saving the member names as we go.
     auto ContOp = getContOp(Op);
@@ -1122,7 +1144,7 @@ public:
     CurLoc = PrevLoc;
   }
 
-  void WriteConstructor(DefineStoreOp Op) {
+  void WriteConstructor(DefineStructOp Op) {
     auto ContOp = getContOp(Op);
     if (!ContOp)
       return;
@@ -1147,14 +1169,15 @@ public:
   }
 
   void WriteInitArgs(mlir::Value Member) {
-    if (auto StoreOp = Member.getDefiningOp<nbdl_spec::StoreOp>()) {
-      llvm::interleaveComma(StoreOp.getArgs(), OS,
+    if (auto Construct =
+          StripStoreCasts(Member).getDefiningOp<ConstructOp>()) {
+      llvm::interleaveComma(Construct.getArgs(), OS,
         [&](mlir::Value Arg) {
           // Check for later use or possibly later use
           // (due to unspecified order of evaluation)
           if (Arg.hasOneUse() ||
-              (llvm::count(StoreOp.getArgs(), Arg) == 1 &&
-                !findLaterUse(Arg, StoreOp)))
+              (llvm::count(Construct.getArgs(), Arg) == 1 &&
+                !findLaterUse(Arg, Member)))
             WriteLastUseForwardedExpr(Arg);
           else
             WriteExpr(Arg);  // Not forwarded
@@ -1166,44 +1189,42 @@ public:
 
   // Find any use of Arg in subsequent stores composed of Store
   // (not including Store itself.)
-  StoreOp findLaterUse(mlir::Value Arg, mlir::Value Store) {
+  ConstructOp findLaterUse(mlir::Value Arg, mlir::Value Store) {
     assert(Store.hasOneUse() && "store result should be used exactly once");
     mlir::OpOperand StoreUse = *Store.getUsers().begin();
 
-    return llvm::TypeSwitch<mlir::Operation*, StoreOp>(StoreUse.getOwner())
-    .Case<StoreOp>([&](StoreOp S) {
-        return llvm::is_contained(S.getArgs(), Arg) ? S : StoreOp();
-      })
+    return llvm::TypeSwitch<mlir::Operation*, ConstructOp>(StoreUse.getOwner())
     .Case<StoreComposeOp>([&](StoreComposeOp SC) {
         // Check that Arg is not used in LHS.
         if (SC.getLhs() != Store)
-          if (StoreOp Result = findUse(Arg, SC.getLhs()))
+          if (ConstructOp Result = findUse(Arg, SC.getLhs()))
             return Result;
         return findLaterUse(Arg, SC.getResult());
       })
-    .Case<ContOp>([](auto) { return StoreOp(); })
+    .Case<ContOp>([](auto) { return ConstructOp(); })
     .Default([](auto) {
         llvm_unreachable("unexpected use of store");
-        return StoreOp();
+        return ConstructOp();
       });
   }
 
   // Find any use of Arg in a Store.
-  StoreOp findUse(mlir::Value Arg, mlir::Value Store) {
-    return llvm::TypeSwitch<mlir::Operation*, StoreOp>(Store.getDefiningOp())
-    .Case<StoreOp>([&](StoreOp S) {
-        return llvm::is_contained(S.getArgs(), Arg) ? S : StoreOp();
+  ConstructOp findUse(mlir::Value Arg, mlir::Value Store) {
+    return llvm::TypeSwitch<mlir::Operation*, ConstructOp>(
+        StripStoreCasts(Store).getDefiningOp())
+    .Case<ConstructOp>([&](ConstructOp S) {
+        return llvm::is_contained(S.getArgs(), Arg) ? S : ConstructOp();
       })
     .Case<StoreComposeOp>([&](StoreComposeOp SC) {
         // Check both sides.
-        if (StoreOp Result = findUse(Arg, SC.getLhs()))
+        if (ConstructOp Result = findUse(Arg, SC.getLhs()))
           return Result;
         else
           return findUse(Arg, SC.getRhs());
       })
     .Default([](auto) {
         llvm_unreachable("unexpected result for store");
-        return StoreOp();
+        return ConstructOp();
       });
   }
 };
@@ -1225,9 +1246,9 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
   } else if (Mode != TranslateMode::Definition) {
     return std::make_tuple(std::string("only functions may be declared"),
                 static_cast<schir::SourceLocationEncoding*>(nullptr), Op);
-  } else if (auto DefineStoreOp = dyn_cast<nbdl_spec::DefineStoreOp>(Op)) {
-    DefineStoreWriter Writer(LexerWriter);
-    Writer.VisitDefineStore(DefineStoreOp);
+  } else if (auto DefineStructOp = dyn_cast<nbdl_spec::DefineStructOp>(Op)) {
+    DefineStructWriter Writer(LexerWriter);
+    Writer.VisitDefineStruct(DefineStructOp);
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);
   } else if (auto ContextOp = dyn_cast<nbdl_spec::ContextOp>(Op)) {
