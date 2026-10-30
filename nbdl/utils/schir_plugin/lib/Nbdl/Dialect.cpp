@@ -13,6 +13,7 @@
 #pragma clang diagnostic ignored "-Wunused-parameter"
 
 #include "nbdl_spec/NbdlDialect.cpp.inc"
+#include "nbdl_spec/NbdlInterfaces.cpp.inc"
 
 #define GET_TYPEDEF_CLASSES
 #include "nbdl_spec/NbdlTypes.cpp.inc"
@@ -223,4 +224,106 @@ std::string nbdl_spec::getCAdapterName(llvm::StringRef SymName) {
   for (llvm::StringRef Part : Parts)
     Result += std::to_string(Part.size()) + Part.str();
   return Result;
+}
+
+// Get the type of a key as C++ decays it (ie without a top level const)
+// where no key is the unit key or null if it is not yet inferred.
+static mlir::Type getDecayedKeyType(mlir::MLIRContext* Ctx, mlir::Value Key) {
+  if (!Key)
+    return nbdl_spec::UnitType::get(Ctx);
+  mlir::Type T = Key.getType();
+  if (auto ST = llvm::dyn_cast<nbdl_spec::StoreType>(T);
+      ST && ST.getAlts().size() == 1)
+    T = ST.getAlts().front().getValue();
+  if (needsResolveT(T))
+    return {};
+  if (auto CT = llvm::dyn_cast<nbdl_spec::CppType>(T)) {
+    llvm::StringRef Typename = CT.getCppTypename();
+    if (Typename.consume_front("const "))
+      return nbdl_spec::CppType::get(Ctx, Typename);
+  }
+  return T;
+}
+
+mlir::Value nbdl_spec::lookThroughStoreCompose(mlir::Value Store,
+                                               mlir::Value Key) {
+  mlir::MLIRContext* Ctx = Store.getContext();
+  mlir::Type KeyT = getDecayedKeyType(Ctx, Key);
+  if (!KeyT)
+    return {};
+  while (auto Compose = Store.getDefiningOp<StoreComposeOp>()) {
+    mlir::Type ComposeKeyT = getDecayedKeyType(Ctx, Compose.getKey());
+    if (!ComposeKeyT)
+      return {};
+    if (ComposeKeyT == KeyT)
+      break;
+    Store = Compose.getRhs();
+  }
+  return Store;
+}
+
+// Get the store whose member a get with a key descends to.
+mlir::Value nbdl_spec::GetOp::getParentStore(mlir::Value) {
+  if (hasUnitKey())
+    return {};
+  return lookThroughStoreCompose(getState(), getKey());
+}
+
+// Get the store that a get with a unit key is a view of.
+mlir::Value nbdl_spec::GetOp::getAliasedStore(mlir::Value) {
+  if (!hasUnitKey())
+    return {};
+  return lookThroughStoreCompose(getState(), getKey());
+}
+
+mlir::Value nbdl_spec::ConstOp::getParentStore(mlir::Value) {
+  return {};
+}
+
+// Alias the store since const is a view, not a child.
+mlir::Value nbdl_spec::ConstOp::getAliasedStore(mlir::Value) {
+  return getArg();
+}
+
+// Get the store whose element a keyed match descends to.
+mlir::Value nbdl_spec::MatchOp::getParentStore(mlir::Value) {
+  if (hasUnitKey())
+    return {};
+  return lookThroughStoreCompose(getStore(), getKey());
+}
+
+// Get the store that a match with a unit key is a view of.
+mlir::Value nbdl_spec::MatchOp::getAliasedStore(mlir::Value) {
+  if (!hasUnitKey())
+    return {};
+  return lookThroughStoreCompose(getStore(), getKey());
+}
+
+mlir::Value nbdl_spec::MatchEachOp::getParentStore(mlir::Value) {
+  return getRange();
+}
+
+mlir::Value nbdl_spec::MatchEachOp::getAliasedStore(mlir::Value) {
+  return {};
+}
+
+mlir::Value nbdl_spec::MatchIfOp::getParentStore(mlir::Value) {
+  return {};
+}
+
+// Alias the cond unless it is raw (ie not a store.)
+mlir::Value nbdl_spec::MatchIfOp::getAliasedStore(mlir::Value) {
+  if (!llvm::isa<nbdl_spec::StoreType>(getCond().getType()))
+    return {};
+  return getCond();
+}
+
+// Defer until the argument is removed as invariant since a later
+// continue may pass a different store.
+mlir::Value nbdl_spec::LoopOp::getParentStore(mlir::Value) {
+  return {};
+}
+
+mlir::Value nbdl_spec::LoopOp::getAliasedStore(mlir::Value) {
+  return {};
 }

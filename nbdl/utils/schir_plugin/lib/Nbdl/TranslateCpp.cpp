@@ -465,6 +465,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       return VisitRegion(cast<ScopeOp>(Op).getBody());
     else if (isa<ConstexprOp, LiteralOp>(Op)) return;
     else if (isa<UnitOp>(Op)) return;
+    else if (isa<GetParentOp>(Op))
+      return SetError("nbdl.get_parent is not resolved", Op);
     else if (isa<EmptyOp>(Op))
       return SetError("empty type does not map to c++ "
                       "because that would be absurd", Op);

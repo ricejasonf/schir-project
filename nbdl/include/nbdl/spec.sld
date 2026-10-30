@@ -1469,6 +1469,26 @@
         ((lift-store Value)
          (lift-store-aux (syntax-source-loc Value) Value))))
 
+    (define (build-get-parent Loc Store)
+      (unless (store-value? Store)
+        (error-with-loc Loc "expecting a store to get-parent (see lift-store)"))
+      (result
+        (create-op "nbdl.get_parent"
+                   (loc: Loc)
+                   (operands: Store)
+                   (attributes:)
+                   (result-types: (!nbdl.store)))))
+
+    ;; Get the parent node of a store as an expr.
+    (define-syntax get-parent
+      (syntax-rules ()
+        ((get-parent Store)
+         (%expr (syntax-source-loc Store)
+                (lambda (Loc Fn)
+                  (%match-expr Loc Store
+                    (lambda (Value)
+                      (Fn (build-get-parent Loc Value)))))))))
+
     (define (return-aux Loc Exprs)
       (close-previous-scope)
       (%match-results
@@ -1661,6 +1681,7 @@
     match-fn
     define-fn
     lift-store
+    get-parent
     return
     register-inference-pass
     register-lowering-pass

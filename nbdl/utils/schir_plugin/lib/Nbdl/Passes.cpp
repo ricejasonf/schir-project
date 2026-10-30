@@ -1245,6 +1245,116 @@ struct InlineMatch : OpRewriteSchirClang<nbdl_spec::MatchOp> {
   }
 };
 
+// Match the store that a match on a store_compose forwards to
+// (ie its rhs if the key types differ) as the C++ store_composite does.
+struct ForwardStoreComposeMatch : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
+  using mlir::OpRewritePattern<nbdl_spec::MatchOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
+    mlir::Value Store = nbdl_spec::lookThroughStoreCompose(Op.getStore(),
+                                                           Op.getKey());
+    if (!Store || Store == Op.getStore())
+      return Rewriter.notifyMatchFailure(Op, "match is not forwarded");
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getStoreMutable().assign(Store); });
+    return llvm::success();
+  }
+};
+
+// Replace the parent of a store with the value in scope that it is.
+struct ResolveGetParent : mlir::OpRewritePattern<nbdl_spec::GetParentOp> {
+  using mlir::OpRewritePattern<nbdl_spec::GetParentOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::GetParentOp Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    mlir::Value Store = Op.getStore();
+    mlir::Operation* Owner = isa<mlir::BlockArgument>(Store)
+      ? cast<mlir::BlockArgument>(Store).getOwner()->getParentOp()
+      : Store.getDefiningOp();
+    auto MatchLike = dyn_cast_or_null<nbdl_spec::MatchLike>(Owner);
+    if (!MatchLike)
+      return Rewriter.notifyMatchFailure(Op, "store is not match-like");
+
+    // Resolve the parent of a view of a store as the parent of that store.
+    if (mlir::Value Aliased = MatchLike.getAliasedStore(Store)) {
+      Rewriter.replaceOpWithNewOp<nbdl_spec::GetParentOp>(
+          Op, Op.getType(), Aliased);
+      return llvm::success();
+    }
+    mlir::Value Parent = MatchLike.getParentStore(Store);
+    if (!Parent)
+      return Rewriter.notifyMatchFailure(Op, "parent is not known");
+    Rewriter.replaceOp(Op, Parent);
+    return llvm::success();
+  }
+};
+
+// Resolve the parents of stores and forward matches on store_compose
+// once the loops are finalized (ie their invariant arguments are removed.)
+llvm::LogicalResult resolveStoreParents(mlir::Operation* Root) {
+  // Do not touch any other operation (e.g. erase a dead closure.)
+  llvm::SmallVector<mlir::Operation*, 8> Ops;
+  Root->walk([&](mlir::Operation* Op) {
+    if (isa<nbdl_spec::MatchOp, nbdl_spec::GetParentOp>(Op))
+      Ops.push_back(Op);
+  });
+  mlir::RewritePatternSet PS(Root->getContext());
+  PS.add<ForwardStoreComposeMatch, ResolveGetParent>(Root->getContext());
+  mlir::GreedyRewriteConfig Config;
+  Config.setStrictness(mlir::GreedyRewriteStrictness::ExistingAndNewOps);
+  return mlir::applyOpPatternsGreedily(Ops, std::move(PS), Config);
+}
+
+// Check that every block argument of store type outside of a match-fn
+// is introduced by a match-like operation and that every get_parent
+// outside of a match-fn is resolved.
+llvm::LogicalResult checkStoreParents(mlir::Operation* Root) {
+  bool HasError = false;
+  Root->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* Op) {
+    if (isa<nbdl_spec::DefineMatchFnOp>(Op))
+      return mlir::WalkResult::skip();
+    // Ignore a closure since one that is not inlined is diagnosed elsewhere.
+    if (!isa<nbdl_spec::MatchLike, nbdl_spec::ClosureOp>(Op)) {
+      for (mlir::Region& R : Op->getRegions()) {
+        if (R.empty() || llvm::none_of(R.getArgumentTypes(),
+              [](mlir::Type T) { return isa<nbdl_spec::StoreType>(T); }))
+          continue;
+        Op->emitError("block argument of store type must be introduced "
+                      "by a match operation");
+        HasError = true;
+      }
+    }
+
+    auto GetParent = dyn_cast<nbdl_spec::GetParentOp>(Op);
+    if (!GetParent)
+      return mlir::WalkResult::advance();
+    mlir::Value Store = GetParent.getStore();
+    auto Arg = dyn_cast<mlir::BlockArgument>(Store);
+    if (auto Loop = Arg ? dyn_cast<nbdl_spec::LoopOp>(
+                              Arg.getOwner()->getParentOp())
+                        : nbdl_spec::LoopOp()) {
+      mlir::InFlightDiagnostic Diag = GetParent.emitError(
+          "parent of store cannot be resolved in recursive context");
+      // Point at each recursive visit that passes a different store.
+      mlir::Value Init = Loop.getInits()[Arg.getArgNumber()];
+      for (nbdl_spec::ContinueOp C : getContinues(Loop)) {
+        mlir::Value V = C.getArgs()[Arg.getArgNumber()];
+        if (V != Arg && V != Init)
+          Diag.attachNote(C.getLoc()) << "the recursive visit is here";
+      }
+    } else if (isa_and_nonnull<nbdl_spec::LiftStoreOp, nbdl_spec::VariantOp,
+                             nbdl_spec::StoreComposeOp>(
+                 Store.getDefiningOp()))
+      GetParent.emitError("root store has no parent");
+    else
+      GetParent.emitError("unable to resolve the parent of a store");
+    HasError = true;
+    return mlir::WalkResult::advance();
+  });
+  return llvm::failure(HasError);
+}
+
 // Replace every !nbdl.cpp_alias (including nested types and attributes)
 // with the !nbdl.cpp type of its canonical typename. The flatten pass
 // does this before the patterns are applied so they may compare C++ types.
@@ -1307,6 +1417,8 @@ public:
     PS.add<InferLoopArgType>(Ctx);
     PS.add<SimplifySettledLoop>(Ctx);
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
+    PS.add<ForwardStoreComposeMatch>(Ctx);
+    PS.add<ResolveGetParent>(Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
 
@@ -1434,6 +1546,9 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
   if (HasError)
     return llvm::failure();
   if (llvm::failed(finalizeLoops(Op)))
+    return llvm::failure();
+  if (llvm::failed(resolveStoreParents(Op)) ||
+      llvm::failed(checkStoreParents(Op)))
     return llvm::failure();
 
   // It is an error if any closure outside of a match-fn is not inlined.

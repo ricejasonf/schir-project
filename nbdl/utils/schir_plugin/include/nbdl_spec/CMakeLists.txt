@@ -7,6 +7,8 @@ mlir_tablegen(NbdlTypes.h.inc -gen-typedef-decls)
 mlir_tablegen(NbdlTypes.cpp.inc -gen-typedef-defs)
 mlir_tablegen(NbdlDialect.h.inc -gen-dialect-decls)
 mlir_tablegen(NbdlDialect.cpp.inc -gen-dialect-defs)
+mlir_tablegen(NbdlInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(NbdlInterfaces.cpp.inc -gen-op-interface-defs)
 add_public_tablegen_target(NbdlOpsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS Passes.td)

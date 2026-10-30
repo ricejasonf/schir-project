@@ -70,6 +70,8 @@ std::string getCAdapterName(llvm::StringRef SymName);
 #define GET_ATTRDEF_CLASSES
 #include "nbdl_spec/NbdlAttrs.h.inc"
 
+#include "nbdl_spec/NbdlInterfaces.h.inc"
+
 #define GET_OP_CLASSES
 #include "nbdl_spec/NbdlOps.h.inc"
 #pragma clang diagnostic pop
@@ -78,6 +80,11 @@ namespace nbdl_spec {
 // Get the initial value of a block argument of a nbdl.loop (repeatedly)
 // assuming that every iteration passes it unchanged. Otherwise, return V.
 mlir::Value lookThroughLoopArgs(mlir::Value V);
+
+// Get the store that a match of Store with Key matches through each
+// store_compose whose key type differs from that of Key (ie the store
+// whose element it matches) or null if a key type is not yet inferred.
+mlir::Value lookThroughStoreCompose(mlir::Value Store, mlir::Value Key);
 
 // Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);

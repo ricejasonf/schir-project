@@ -148,6 +148,30 @@ def Nbdl_Key : Optional<AnyType>;
 class Nbdl_Op<string mnemonic, list<Trait> traits = []> :
     Op<Nbdl_Dialect, mnemonic, traits>;
 
+def Nbdl_MatchLike : OpInterface<"MatchLike"> {
+  let cppNamespace = "::nbdl_spec";
+  let description = [{
+    Introduce stores (as block arguments or results) whose parent node
+    in the state tree is a value in scope of the operation.
+
+    A store may instead be a view of an operand (e.g. a match
+    with a unit key) so it has the parent of that operand.
+  }];
+
+  let methods = [
+    InterfaceMethod<[{
+        Get the value that is the parent node of a store introduced by
+        the operation or null if it is not known.
+      }],
+      "::mlir::Value", "getParentStore", (ins "::mlir::Value":$store)>,
+    InterfaceMethod<[{
+        Get the value that a store introduced by the operation is a
+        view of or null if there is none.
+      }],
+      "::mlir::Value", "getAliasedStore", (ins "::mlir::Value":$store)>
+  ];
+}
+
 def Nbdl_LiteralOp : Nbdl_Op<"literal", []> {
   let description = [{
     Represent a literal such as an int, float, or string
@@ -159,7 +183,8 @@ def Nbdl_LiteralOp : Nbdl_Op<"literal", []> {
   let results   = (outs AnyType:$result);
 }
 
-def Nbdl_GetOp : Nbdl_Op<"get", []> {
+def Nbdl_GetOp : Nbdl_Op<"get", [
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let summary = "get";
   let description = [{
   }];
@@ -174,7 +199,8 @@ def Nbdl_GetOp : Nbdl_Op<"get", []> {
   }];
 }
 
-def Nbdl_MatchOp : Nbdl_Op<"match", [Terminator, NoTerminator]> {
+def Nbdl_MatchOp : Nbdl_Op<"match", [Terminator, NoTerminator,
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let summary = "match";
   let description = [{
     Given a nbdl::Store and, optionally, a key,
@@ -206,6 +232,18 @@ def Nbdl_MatchOp : Nbdl_Op<"match", [Terminator, NoTerminator]> {
   }];
 }
 
+def Nbdl_GetParentOp : Nbdl_Op<"get_parent", []> {
+  let description = [{
+    Get the parent node of a store in the state tree.
+    The flatten pass replaces the result with the parent store which
+    is a value in scope (see MatchLike.) It is an error if the store
+    is a root (ie the result of a LiftStoreOp.)
+  }];
+
+  let arguments = (ins Nbdl_Store:$store);
+  let results = (outs Nbdl_Store:$result);
+}
+
 def Nbdl_NoOp : Nbdl_Op<"noop", [Terminator]> {
   let description = [{
     NoOp visits a store but does nothing except mark it as used.
@@ -214,7 +252,8 @@ def Nbdl_NoOp : Nbdl_Op<"noop", [Terminator]> {
   let results = (outs);
 }
 
-def Nbdl_MatchIfOp : Nbdl_Op<"match_if", [Terminator]> {
+def Nbdl_MatchIfOp : Nbdl_Op<"match_if", [Terminator,
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let description = [{
     Provide a branch on the result of a conditional.
     Note that, like MatchOp, the operation has no result.
@@ -478,7 +517,8 @@ def Nbdl_ConsumerOp : Nbdl_Op<"consumer", []> {
   let results = (outs Nbdl_Type:$result);
 }
 
-def Nbdl_ConstOp : Nbdl_Op<"const", []> {
+def Nbdl_ConstOp : Nbdl_Op<"const", [
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let description = [{
     Cast an object to const likely using std::as_const.
 
@@ -510,7 +550,8 @@ def Nbdl_ScopeOp : Nbdl_Op<"scope", []> {
   ];
 }
 
-def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
+def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator,
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let description = [{
     Match each element in a store that wraps a range-like object.
     The body is invoked for each element in the range with the
@@ -525,7 +566,8 @@ def Nbdl_MatchEachOp : Nbdl_Op<"match_each", [Terminator]> {
   let regions = (region SizedRegion<1>:$body);
 }
 
-def Nbdl_LoopOp : Nbdl_Op<"loop", [Terminator]> {
+def Nbdl_LoopOp : Nbdl_Op<"loop", [Terminator,
+    DeclareOpInterfaceMethods<Nbdl_MatchLike>]> {
   let description = [{
     Let L be a nbdl.loop of a function F with initial values
     (x_1, ..., x_n) and let B be its body with block arguments

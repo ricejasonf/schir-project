@@ -65,9 +65,8 @@ namespace foo {
     (store-compose '.id (store 'int (init-args: Id))))
 
   (define-match-fn some_event_handler (Ctx Fn)
-    ; // FIXME Should not need .hidden_parent_ to support member name access
     (visit 'nbdl::assign
-           (get Ctx '.hidden_parent_ '.id)
+           (get Ctx '.id)
            (get Ctx html::event_data '.id))
     (visit Fn (get Ctx html::event_data '.id)))
 

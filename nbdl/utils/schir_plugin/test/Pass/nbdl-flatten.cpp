@@ -41,6 +41,7 @@ using int_or_text_alias = nbdl::strong_alias<int_or_text>;
 // A composed store where compose_key matches the variant
 // and any other key matches the parent map.
 struct compose_key { };
+inline constexpr compose_key compose_key_v{};
 using composed = nbdl::detail::store_composite_t<compose_key, int_or_text,
                                                  int_to_text>;
 
@@ -446,6 +447,112 @@ struct nbdl::get_impl<foo::keyed> {
           (lambda (K)
             (match (get Composed K)
               (else => Fn)))))))))
+
+; // Expect the parent of a member to be the store that has the member.
+; // CHECK-LABEL: @test_get_parent_get(
+; // CHECK: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[HOLDER]])
+(define-match-fn test_get_parent_get (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (visit Fn (get-parent (get Holder '.plain)))))))
+
+; // Expect the parent of an element matched with a key to be the store.
+; // CHECK-LABEL: @test_get_parent_keyed_match(
+; // CHECK: ^bb0([[MAP:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"std::unordered_map<
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[MAP]])
+(define-match-fn test_get_parent_keyed_match (Store Key Fn)
+  (match (get Store)
+    ('foo::int_to_text =>
+     (lambda (Map)
+       (match (get Key)
+         ('int =>
+          (lambda (K)
+            (match (get Map K)
+              (else => (lambda (V) (visit Fn (get-parent V))))))))))))
+
+; // Expect the parent of an element of a range to be the range.
+; // CHECK-LABEL: @test_get_parent_match_each(
+; // CHECK: ^bb0([[RANGE:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"std::vector<
+; // CHECK: "nbdl.match_each"([[RANGE]])
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[RANGE]])
+(define-match-fn test_get_parent_match_each (Store Fn)
+  (match (get Store)
+    ('std::vector<float> =>
+     (lambda (Vector)
+       (match-each Vector
+         (lambda (Element)
+           (visit Fn (get-parent Element))))))))
+
+; // Treat the then argument of match-if on a store as a view of the store.
+; // CHECK-LABEL: @test_get_parent_match_if(
+; // CHECK: ^bb0([[OBJ:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::not_a_store">>):
+; // CHECK: "nbdl.match_if"
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[OBJ]])
+(define-match-fn test_get_parent_match_if (Store Fn)
+  (match (get Store)
+    ('foo::not_a_store =>
+     (lambda (NotAStore)
+       (match-cond
+         ((get NotAStore '.value) =>
+          (lambda (Value) (visit Fn (get-parent Value))))
+         (else (visit Fn "nope")))))))
+
+; // Expect the parent of the value matched with the key of a
+; // store_compose to be the composed store.
+; // CHECK-LABEL: @test_get_parent_store_compose_key(
+; // CHECK: [[COMPOSED:%[0-9]+]] = "nbdl.store_compose"
+; // CHECK: "nbdl.match"([[COMPOSED]],
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[COMPOSED]])
+(define-match-fn test_get_parent_store_compose_key (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (visit Fn (get-parent
+                   (get (store-compose 'foo::compose_key_v
+                                       (get Holder '.plain)
+                                       Holder)
+                        'foo::compose_key_v)))))))
+
+; // Forward a match with any other key to the parent of the store_compose.
+; // CHECK-LABEL: @test_get_parent_store_compose_forward(
+; // CHECK: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
+; // CHECK: "nbdl.store_compose"
+; // CHECK-NEXT: [[TEXT:%[0-9]+]] = "nbdl.member_name"() <{name = "text"}>
+; // CHECK-NEXT: "nbdl.get"([[HOLDER]], [[TEXT]])
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[HOLDER]])
+(define-match-fn test_get_parent_store_compose_forward (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (visit Fn (get-parent
+                   (get (store-compose 'foo::compose_key_v
+                                       (get Holder '.plain)
+                                       Holder)
+                        '.text)))))))
+
+; // Resolve the parent of a parameter once the match-fn is inlined.
+; // CHECK-LABEL: @test_get_parent_callee(
+; // CHECK: "nbdl.get_parent"(%arg0)
+(define-match-fn test_get_parent_callee (X Fn)
+  (visit Fn (get-parent X)))
+
+; // CHECK-LABEL: @test_get_parent_inlined(
+; // CHECK: ^bb0([[HOLDER:%arg[0-9]+]]: !nbdl.store<!nbdl.cpp<"foo::holder">>):
+; // CHECK-NOT: "nbdl.get_parent"
+; // CHECK: "nbdl.visit"(%arg{{[0-9]+}}, [[HOLDER]])
+(define-match-fn test_get_parent_inlined (Store Fn)
+  (match (get Store)
+    ('foo::holder =>
+     (lambda (Holder)
+       (visit test_get_parent_callee (get Holder '.plain) Fn)))))
 
 (write-nbdl-module (finalize-module))
 
