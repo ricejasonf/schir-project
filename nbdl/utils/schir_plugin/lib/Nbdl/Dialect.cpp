@@ -6,6 +6,7 @@
 #include <nbdl_spec/NbdlDialect.h>
 #include <mlir/IR/DialectImplementation.h>
 #include <mlir/IR/OpImplementation.h>
+#include <mlir/Transforms/InliningUtils.h>
 #include <llvm/ADT/TypeSwitch.h>
 
 // Include generated source files.
@@ -22,6 +23,17 @@
 #define GET_OP_CLASSES
 #include "nbdl_spec/NbdlOps.cpp.inc"
 
+namespace {
+struct NbdlInlinerInterface : mlir::DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  bool isLegalToInline(mlir::Operation* Op, mlir::Region*, bool,
+                       mlir::IRMapping&) const final {
+    return llvm::isa<nbdl_spec::TuplePackOp, nbdl_spec::TupleExtractOp>(Op);
+  }
+};
+} // namespace
+
 void nbdl_spec::NbdlDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
@@ -35,7 +47,7 @@ void nbdl_spec::NbdlDialect::initialize() {
 #define GET_OP_LIST
 #include "nbdl_spec/NbdlOps.cpp.inc"
       >();
-
+  addInterfaces<NbdlInlinerInterface>();
 }
 #pragma clang diagnostic pop
 
@@ -99,6 +111,26 @@ mlir::Value nbdl_spec::DefineStructOp::lookupMember(llvm::StringRef Name) {
     Store = SC.getRhs();
   }
   return nullptr;
+}
+
+llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>, 4>
+nbdl_spec::DefineStructOp::getMembers() {
+  llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>, 4> Members;
+  if (isExternal())
+    return Members;
+  auto Cont = llvm::dyn_cast<ContOp>(getBody().front().getTerminator());
+  if (!Cont)
+    return Members;
+  mlir::Value Store = Cont.getArg();
+  while (auto SC = Store.getDefiningOp<StoreComposeOp>()) {
+    mlir::Value Key = SC.getKey();
+    if (auto MN = Key ? Key.getDefiningOp<MemberNameOp>() : MemberNameOp())
+      Members.emplace_back(MN.getName(), SC.getLhs());
+    Store = SC.getRhs();
+  }
+  // Order the members by definition.
+  std::reverse(Members.begin(), Members.end());
+  return Members;
 }
 
 nbdl_spec::ClosureOp nbdl_spec::getClosure(mlir::Value V) {
@@ -239,6 +271,37 @@ llvm::LogicalResult nbdl_spec::ContinueOp::verify() {
   if (!Loop)
     return emitOpError("expecting a parent nbdl.loop of ") << getFnAttr();
   return verifyLoopCarriedTypes(*this, getArgs(), Loop.getBody().front());
+}
+
+llvm::LogicalResult nbdl_spec::TuplePackOp::verify() {
+  mlir::Type ResultT = getResult().getType();
+  if (llvm::isa<StructType>(ResultT))
+    return llvm::success();
+  auto TupleT = llvm::dyn_cast<TupleType>(ResultT);
+  if (!TupleT)
+    return emitOpError("result should be a tuple or struct: ") << ResultT;
+  if (!llvm::equal(TupleT.getTypes(), getElements().getTypes()))
+    return emitOpError("element types should be the types of the result (")
+      << ResultT << ")";
+  return llvm::success();
+}
+
+llvm::LogicalResult nbdl_spec::TupleExtractOp::verify() {
+  llvm::ArrayRef<mlir::Type> Ts =
+    llvm::cast<TupleType>(getTuple().getType()).getTypes();
+  uint64_t Index = getIndex();
+  if (Index >= Ts.size())
+    return emitOpError("index ") << Index << " is out of bounds";
+  if (Ts[Index] != getResult().getType())
+    return emitOpError("result type should be ") << Ts[Index];
+  return llvm::success();
+}
+
+mlir::OpFoldResult nbdl_spec::TupleExtractOp::fold(FoldAdaptor) {
+  // Get the element of a tuple_pack.
+  if (auto Pack = getTuple().getDefiningOp<TuplePackOp>())
+    return Pack.getElements()[getIndex()];
+  return {};
 }
 
 std::string nbdl_spec::getCAdapterName(llvm::StringRef SymName) {

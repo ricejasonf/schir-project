@@ -3,12 +3,15 @@
 #include <nbdl_spec/NbdlDialect.h>
 #include <schir_common/Lower.h>
 #include <schir_common/SPIRVConversion.h>
+#include <mlir/Conversion/LLVMCommon/Pattern.h>
+#include <mlir/Conversion/LLVMCommon/TypeConverter.h>
 #include <mlir/Conversion/MemRefToSPIRV/MemRefToSPIRV.h>
 #include <mlir/Dialect/Affine/IR/AffineOps.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/ControlFlow/IR/ControlFlow.h>
 #include <mlir/Dialect/Func/Extensions/InlinerExtension.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/Func/Transforms/FuncConversions.h>
 #include <mlir/Dialect/LLVMIR/LLVMDialect.h>
 #include <mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
@@ -57,27 +60,49 @@ using llvm::dyn_cast;
 using llvm::isa;
 
 namespace {
-// A store with a single alternative is converted to that contained type.
+// Get the type of the raw value of a member of a struct.
+mlir::Type getMemberType(mlir::Value Member) {
+  if (auto Lift = Member.getDefiningOp<nbdl_spec::LiftStoreOp>())
+    return Lift.getValue().getType();
+  return Member.getType();
+}
+
 struct TypeConverter : mlir::TypeConverter {
-  TypeConverter()
+  TypeConverter(mlir::ModuleOp M)
     : mlir::TypeConverter()
   {
     addConversion([](mlir::Type T) { return T; });
+    // Convert a store with a single alternative to the contained type.
     // Returning a null type indicates failure.
-    addConversion([](nbdl_spec::StoreType ST) -> mlir::Type {
+    addConversion([this](nbdl_spec::StoreType ST) -> mlir::Type {
       if (ST.getAlts().size() != 1)
         return mlir::Type();
       mlir::Type AltT = ST.getAlts().front().getValue();
       if (isa<nbdl_spec::CppType>(AltT))
         return mlir::Type();
-      return AltT;
+      return convertType(AltT);
+    });
+    // Convert a struct to the tuple of its member types.
+    addConversion([this, M](nbdl_spec::StructType T) -> mlir::Type {
+      auto Def = mlir::ModuleOp(M).lookupSymbol<nbdl_spec::DefineStructOp>(
+          T.getName());
+      if (!Def)
+        return mlir::Type();
+      llvm::SmallVector<mlir::Type, 4> Ts;
+      for (auto [Name, Member] : Def.getMembers()) {
+        mlir::Type MemberT = convertType(getMemberType(Member));
+        if (!MemberT)
+          return mlir::Type();
+        Ts.push_back(MemberT);
+      }
+      return nbdl_spec::TupleType::get(T.getContext(), Ts);
     });
   }
 };
 
-// Function signatures are not converted since define-fn uses raw types.
+// Leave function signatures to convertFunctionSignatures.
 struct ConversionTarget : mlir::ConversionTarget {
-  ConversionTarget(mlir::MLIRContext& Ctx)
+  ConversionTarget(mlir::MLIRContext& Ctx, ::TypeConverter const& TC)
     : mlir::ConversionTarget(Ctx)
   {
     addLegalDialect<arith::ArithDialect>();
@@ -86,10 +111,193 @@ struct ConversionTarget : mlir::ConversionTarget {
     addLegalDialect<scf::SCFDialect>();
     addLegalDialect<ub::UBDialect>();
     addIllegalDialect<nbdl_spec::NbdlDialect>();
-    // These are erased after the conversion when they have no uses.
-    addLegalOp<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp>();
+    addDynamicallyLegalOp<func::CallOp, nbdl_spec::TuplePackOp,
+                          nbdl_spec::TupleExtractOp>(
+        [&TC](mlir::Operation* Op) { return TC.isLegal(Op); });
+    // Erase these after the conversion.
+    addLegalOp<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp,
+               nbdl_spec::MemberNameOp>();
+    addLegalOp<nbdl_spec::DefineStructOp>();
+    markOpRecursivelyLegal<nbdl_spec::DefineStructOp>();
   }
 };
+
+// Determine if a type that is not a struct can be the type of a member
+// of a struct that is lowered.
+bool isLowerableMemberType(mlir::Type T) {
+  return isa<mlir::IntegerType, mlir::FloatType, mlir::IndexType,
+             mlir::VectorType, mlir::MemRefType>(T);
+}
+
+// Check that the types used by the functions of a module can be lowered
+// (ie they require no C++ and every member of a struct can be lowered.)
+class LowerableTypeChecker {
+  mlir::ModuleOp M;
+  // Map each struct that is checked to whether it can be lowered.
+  llvm::DenseMap<mlir::Type, bool> Structs;
+  bool HasError = false;
+
+  // Check a struct reporting an error at the location of the user.
+  bool checkStruct(mlir::Location Loc, nbdl_spec::StructType T) {
+    auto [Itr, Inserted] = Structs.try_emplace(T, false);
+    if (!Inserted)
+      return Itr->second;
+    llvm::StringRef Name = T.getName().getValue();
+    auto Def = M.lookupSymbol<nbdl_spec::DefineStructOp>(T.getName());
+    if (!Def) {
+      mlir::emitError(Loc, "struct is not defined: ") << Name;
+      return false;
+    }
+    for (auto [MemberName, Member] : Def.getMembers()) {
+      mlir::Type MemberT = getMemberType(Member);
+      if (auto StructT = dyn_cast<nbdl_spec::StructType>(MemberT)) {
+        if (!checkStruct(Loc, StructT))
+          return false;
+      } else if (!isLowerableMemberType(MemberT)) {
+        mlir::emitError(Loc, "struct ") << Name << " cannot be lowered since"
+          << " member " << MemberName << " has type " << MemberT;
+        return false;
+      }
+    }
+    Structs[T] = true;
+    return true;
+  }
+
+  void check(mlir::Location Loc, mlir::Type T) {
+    if (auto ST = dyn_cast<nbdl_spec::StoreType>(T)) {
+      for (mlir::TypeAttr Alt : ST.getAlts())
+        check(Loc, Alt.getValue());
+    } else if (auto StructT = dyn_cast<nbdl_spec::StructType>(T)) {
+      if (!checkStruct(Loc, StructT))
+        HasError = true;
+    } else if (isa<nbdl_spec::CppType, nbdl_spec::CppAliasType>(T)) {
+      mlir::emitError(Loc, "type requires C++ and cannot be lowered: ") << T;
+      HasError = true;
+    }
+  }
+
+public:
+  LowerableTypeChecker(mlir::ModuleOp M)
+    : M(M)
+  { }
+
+  llvm::LogicalResult run() {
+    for (func::FuncOp F : M.getOps<func::FuncOp>()) {
+      for (mlir::Type T : F.getFunctionType().getInputs())
+        check(F.getLoc(), T);
+      for (mlir::Type T : F.getFunctionType().getResults())
+        check(F.getLoc(), T);
+      F.getBody().walk([&](mlir::Operation* Op) {
+        for (mlir::Type T : Op->getResultTypes())
+          check(Op->getLoc(), T);
+        for (mlir::Region& Region : Op->getRegions())
+          for (mlir::BlockArgument Arg : Region.getArguments())
+            check(Op->getLoc(), Arg.getType());
+      });
+    }
+    return llvm::failure(HasError);
+  }
+};
+
+// Convert the signature of each function (which has raw types.)
+llvm::LogicalResult convertFunctionSignatures(mlir::ModuleOp M,
+                                              ::TypeConverter const& TC) {
+  for (func::FuncOp F : M.getOps<func::FuncOp>()) {
+    mlir::FunctionType FT = F.getFunctionType();
+    llvm::SmallVector<mlir::Type, 4> InputTs, ResultTs;
+    if (llvm::failed(TC.convertTypes(FT.getInputs(), InputTs)) ||
+        llvm::failed(TC.convertTypes(FT.getResults(), ResultTs)))
+      return F.emitError("function signature cannot be lowered");
+    F.setFunctionType(mlir::FunctionType::get(M.getContext(), InputTs,
+                                              ResultTs));
+    if (F.isExternal())
+      continue;
+    for (auto [Arg, T] : llvm::zip_equal(F.getArguments(), InputTs))
+      Arg.setType(T);
+  }
+  return llvm::success();
+}
+
+// Replace a construct of a struct with the tuple_pack of its members
+// as constructed from the arguments by the body of its definition.
+struct ExpandStructConstruct
+    : mlir::OpRewritePattern<nbdl_spec::ConstructOp> {
+  bool& HasError;
+
+  ExpandStructConstruct(mlir::MLIRContext* Ctx, bool& HasError)
+    : OpRewritePattern(Ctx),
+      HasError(HasError)
+  { }
+
+  llvm::LogicalResult matchAndRewrite(nbdl_spec::ConstructOp Op,
+                                      mlir::PatternRewriter& R) const final {
+    auto StructT = dyn_cast<nbdl_spec::StructType>(Op.getType());
+    if (!StructT)
+      return llvm::failure();
+    auto M = Op->getParentOfType<mlir::ModuleOp>();
+    auto Def = M.lookupSymbol<nbdl_spec::DefineStructOp>(StructT.getName());
+    if (!Def || Def.isExternal())
+      return emitError(Op, "struct is not defined: ") << StructT.getName();
+    mlir::Block& Body = Def.getBody().front();
+    if (Body.getNumArguments() != Op.getArgs().size())
+      return emitError(Op, "expecting ") << Body.getNumArguments()
+        << " arguments to construct struct " << StructT.getName();
+
+    // Get the raw value of each member.
+    llvm::SmallVector<mlir::Value, 4> Members;
+    for (auto [Name, Member] : Def.getMembers()) {
+      auto Lift = Member.getDefiningOp<nbdl_spec::LiftStoreOp>();
+      if (!Lift)
+        return emitError(Op, "unsupported member of struct ")
+          << StructT.getName() << ": " << Name;
+      Members.push_back(Lift.getValue());
+    }
+
+    // Clone only the operations that the members depend on.
+    llvm::SmallPtrSet<mlir::Operation*, 8> Needed;
+    llvm::SmallVector<mlir::Value, 8> Values(Members.begin(), Members.end());
+    while (!Values.empty()) {
+      mlir::Operation* ValueOp = Values.pop_back_val().getDefiningOp();
+      if (ValueOp && Needed.insert(ValueOp).second)
+        llvm::append_range(Values, ValueOp->getOperands());
+    }
+    mlir::IRMapping Map;
+    Map.map(Body.getArguments(), Op.getArgs());
+    for (mlir::Operation& BodyOp : Body.without_terminator())
+      if (Needed.contains(&BodyOp))
+        R.clone(BodyOp, Map);
+    llvm::SmallVector<mlir::Value, 4> Elements;
+    for (mlir::Value Member : Members)
+      Elements.push_back(Map.lookupOrDefault(Member));
+    R.replaceOpWithNewOp<nbdl_spec::TuplePackOp>(Op, StructT, Elements);
+    return llvm::success();
+  }
+
+private:
+  // Emit an error that fails the expansion.
+  mlir::InFlightDiagnostic emitError(nbdl_spec::ConstructOp Op,
+                                     llvm::Twine const& Message) const {
+    HasError = true;
+    return Op.emitError(Message);
+  }
+};
+
+// Expand each construct of a struct in the functions of a module.
+llvm::LogicalResult expandStructConstructs(mlir::ModuleOp M) {
+  bool HasError = false;
+  mlir::RewritePatternSet PS(M.getContext());
+  PS.add<ExpandStructConstruct>(M.getContext(), HasError);
+  mlir::FrozenRewritePatternSet Patterns(std::move(PS));
+  mlir::GreedyRewriteConfig Config;
+  Config.enableFolding(false);
+  Config.setRegionSimplificationLevel(
+      mlir::GreedySimplifyRegionLevel::Disabled);
+  for (func::FuncOp F : M.getOps<func::FuncOp>())
+    if (llvm::failed(mlir::applyPatternsGreedily(F.getBody(), Patterns,
+                                                 Config)))
+      return F.emitError("struct constructs did not converge");
+  return llvm::failure(HasError);
+}
 
 // Lower a loop to a scf.while whose before region is the body.
 // End each path through the body by yielding a flag to continue and
@@ -325,6 +533,90 @@ struct LowerLiteral : mlir::OpConversionPattern<nbdl_spec::LiteralOp> {
   }
 };
 
+// Lower a construct of a type that is not a struct to its argument
+// or to zero if it has no arguments.
+struct LowerConstruct : mlir::OpConversionPattern<nbdl_spec::ConstructOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::ConstructOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type T = getTypeConverter()->convertType(Op.getType());
+    mlir::ValueRange Args = Adaptor.getArgs();
+    if (T && Args.empty() &&
+        isa<mlir::IntegerType, mlir::FloatType, mlir::IndexType,
+            mlir::VectorType>(T)) {
+      R.replaceOpWithNewOp<arith::ConstantOp>(
+          Op, cast<mlir::TypedAttr>(R.getZeroAttr(T)));
+      return llvm::success();
+    }
+    if (T && Args.size() == 1 && Args.front().getType() == T) {
+      R.replaceOp(Op, Args.front());
+      return llvm::success();
+    }
+    return Op.emitError("unable to lower construct of ") << Op.getType()
+      << " from " << Args.getTypes();
+  }
+};
+
+// Lower a get of a member of a struct to a tuple_extract.
+struct LowerGet : mlir::OpConversionPattern<nbdl_spec::GetOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::GetOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    auto ST = dyn_cast<nbdl_spec::StoreType>(Op.getState().getType());
+    auto StructT = ST && ST.getAlts().size() == 1
+      ? dyn_cast<nbdl_spec::StructType>(ST.getAlts().front().getValue())
+      : nbdl_spec::StructType();
+    if (!StructT)
+      return R.notifyMatchFailure(Op, "state is not a struct");
+    mlir::Type ResultT =
+      getTypeConverter()->convertType(Op.getResult().getType());
+    mlir::Value State = Adaptor.getState();
+    if (Op.hasUnitKey()) {
+      if (State.getType() != ResultT)
+        return R.notifyMatchFailure(Op, "struct type mismatch");
+      R.replaceOp(Op, State);
+      return llvm::success();
+    }
+
+    auto MemberName = nbdl_spec::lookThroughLoopArgs(Op.getKey())
+                        .getDefiningOp<nbdl_spec::MemberNameOp>();
+    nbdl_spec::DefineStructOp Def = nbdl_spec::lookupStruct(Op, StructT);
+    mlir::Value Member = MemberName && Def
+      ? Def.lookupMember(MemberName.getName()) : mlir::Value();
+    if (!Member)
+      return R.notifyMatchFailure(Op, "struct member not found");
+    auto Members = Def.getMembers();
+    auto Itr = llvm::find_if(Members, [&](auto const& M) {
+      return M.second == Member;
+    });
+    auto Extract = nbdl_spec::TupleExtractOp::create(
+        R, Op.getLoc(), ResultT, State,
+        R.getI64IntegerAttr(std::distance(Members.begin(), Itr)));
+    R.replaceOp(Op, Extract.getResult());
+    return llvm::success();
+  }
+};
+
+// Convert the types of a tuple_pack.
+struct LowerTuplePack : mlir::OpConversionPattern<nbdl_spec::TuplePackOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::TuplePackOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type ResultT = getTypeConverter()->convertType(Op.getType());
+    if (!ResultT)
+      return R.notifyMatchFailure(Op, "result type conversion failed");
+    R.replaceOpWithNewOp<nbdl_spec::TuplePackOp>(Op, ResultT,
+                                                 Adaptor.getElements());
+    return llvm::success();
+  }
+};
+
 // Lower a visit on a function in the module to func.call.
 struct LowerVisit : mlir::OpConversionPattern<nbdl_spec::VisitOp> {
   using Base::Base;
@@ -535,6 +827,9 @@ void populateLowerPatterns(mlir::RewritePatternSet& PS,
          LowerStoreCast<nbdl_spec::UnwrapOp>,
          LowerStoreCast<nbdl_spec::LiftStoreOp>,
          LowerLiteral,
+         LowerConstruct,
+         LowerGet,
+         LowerTuplePack,
          LowerVisit,
          LowerMatchIf,
          LowerMatchEach,
@@ -542,6 +837,8 @@ void populateLowerPatterns(mlir::RewritePatternSet& PS,
          LowerLoop,
          LowerContinue
          >(TC, Ctx);
+  // Convert the calls with struct types that the flatten pass creates.
+  mlir::populateCallOpTypeConversionPattern(PS, TC);
 }
 
 // Lowering Passes
@@ -555,11 +852,15 @@ public:
   void runOnOperation() override {
     mlir::MLIRContext* Ctx = &getContext();
     mlir::ModuleOp M = getOperation();
-    if (llvm::failed(checkReturns(M)))
+    if (llvm::failed(checkReturns(M)) ||
+        llvm::failed(LowerableTypeChecker(M).run()))
       return signalPassFailure();
 
-    ::TypeConverter TC;
-    ::ConversionTarget Target(*Ctx);
+    ::TypeConverter TC(M);
+    if (llvm::failed(convertFunctionSignatures(M, TC)) ||
+        llvm::failed(expandStructConstructs(M)))
+      return signalPassFailure();
+    ::ConversionTarget Target(*Ctx, TC);
     mlir::RewritePatternSet PS(Ctx);
     populateLowerPatterns(PS, TC);
 
@@ -571,13 +872,66 @@ public:
 
     // Erase the remaining operations that were only used by nbdl operations.
     M.walk([](mlir::Operation* Op) {
-      if (isa<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp>(Op) && Op->use_empty())
+      if (isa<nbdl_spec::UnitOp, nbdl_spec::FuncNameOp,
+              nbdl_spec::MemberNameOp>(Op) && Op->use_empty())
         Op->erase();
       else if (isa<scf::WhileOp>(Op))
         Op->removeAttr(LoopFnAttrName);
     });
+    // Erase the struct definitions since their types are converted.
+    for (auto Def : llvm::make_early_inc_range(
+           M.getOps<nbdl_spec::DefineStructOp>()))
+      Def.erase();
   }
 };
+
+// Lower a tuple_pack to the insertion of each element into a poison struct.
+struct TuplePackToLLVM
+    : mlir::ConvertOpToLLVMPattern<nbdl_spec::TuplePackOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::TuplePackOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type T = getTypeConverter()->convertType(Op.getType());
+    if (!T)
+      return R.notifyMatchFailure(Op, "tuple type conversion failed");
+    mlir::Location Loc = Op.getLoc();
+    mlir::Value Result = mlir::LLVM::PoisonOp::create(R, Loc, T);
+    for (auto [I, Element] : llvm::enumerate(Adaptor.getElements()))
+      Result = mlir::LLVM::InsertValueOp::create(
+          R, Loc, Result, Element, llvm::ArrayRef<int64_t>{int64_t(I)});
+    R.replaceOp(Op, Result);
+    return llvm::success();
+  }
+};
+
+struct TupleExtractToLLVM
+    : mlir::ConvertOpToLLVMPattern<nbdl_spec::TupleExtractOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::TupleExtractOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    R.replaceOpWithNewOp<mlir::LLVM::ExtractValueOp>(
+        Op, Adaptor.getTuple(),
+        llvm::ArrayRef<int64_t>{int64_t(Op.getIndex())});
+    return llvm::success();
+  }
+};
+
+// Convert a tuple to a literal LLVM struct of its element types.
+void populateTupleToLLVM(mlir::LLVMTypeConverter& TC,
+                         mlir::RewritePatternSet& PS) {
+  TC.addConversion(
+      [&TC](nbdl_spec::TupleType T) -> std::optional<mlir::Type> {
+        llvm::SmallVector<mlir::Type, 4> Ts;
+        if (llvm::failed(TC.convertTypes(T.getTypes(), Ts)))
+          return mlir::Type();
+        return mlir::LLVM::LLVMStructType::getLiteral(T.getContext(), Ts);
+      });
+  PS.add<TuplePackToLLVM, TupleExtractToLLVM>(TC);
+}
 
 // Lower the mid level dialects that nbdl-lower produces to LLVM.
 class LowerToLLVMPass
@@ -588,7 +942,8 @@ public:
   using Base::Base;
 
   void runOnOperation() override {
-    if (llvm::failed(schir_common::lowerToLLVM(getOperation())))
+    if (llvm::failed(schir_common::lowerToLLVM(getOperation(),
+                                               populateTupleToLLVM)))
       signalPassFailure();
   }
 };
@@ -675,23 +1030,22 @@ mlir::Value loadInterfaceVar(mlir::OpBuilder& B, mlir::Location Loc,
 
 // Create the uniform buffer of the lengths of the runtime-sized storage
 // buffers of a shader entry and load each dynamic size from it.
-llvm::LogicalResult lowerBufferLengths(mlir::OpBuilder& B, func::FuncOp F,
-                                       llvm::StringRef Name,
-                                       mlir::DictionaryAttr Desc,
-                                       mlir::ArrayAttr InputDescs) {
+// Take each buffer as the memref loaded from a variable and its description.
+llvm::LogicalResult lowerBufferLengths(
+    mlir::OpBuilder& B, func::FuncOp F, llvm::StringRef Name,
+    mlir::DictionaryAttr Desc,
+    llvm::ArrayRef<std::pair<mlir::Value, mlir::DictionaryAttr>> Buffers) {
   // Map each runtime-sized storage buffer to its member of the struct.
-  llvm::SmallVector<std::pair<mlir::BlockArgument, int64_t>, 4> Lengths;
-  for (auto [Arg, InputDesc] :
-       llvm::zip_equal(F.front().getArguments(), InputDescs)) {
-    auto Member = cast<mlir::DictionaryAttr>(InputDesc)
-                    .getAs<mlir::IntegerAttr>("length");
+  llvm::SmallVector<std::pair<mlir::Value, int64_t>, 4> Lengths;
+  for (auto [Buffer, BufferDesc] : Buffers) {
+    auto Member = BufferDesc.getAs<mlir::IntegerAttr>("length");
     if (!Member)
       continue;
-    auto MemRefT = dyn_cast<mlir::MemRefType>(Arg.getType());
+    auto MemRefT = dyn_cast<mlir::MemRefType>(Buffer.getType());
     if (!MemRefT || MemRefT.getNumDynamicDims() != 1)
       return F.emitError("unsupported shader storage buffer type: ")
-             << Arg.getType();
-    Lengths.emplace_back(Arg, Member.getInt());
+             << Buffer.getType();
+    Lengths.emplace_back(Buffer, Member.getInt());
   }
   auto Set = Desc.getAs<mlir::IntegerAttr>("descriptor_set");
   auto Binding = Desc.getAs<mlir::IntegerAttr>("binding");
@@ -718,9 +1072,10 @@ llvm::LogicalResult lowerBufferLengths(mlir::OpBuilder& B, func::FuncOp F,
   Var.setBindingAttr(Binding);
 
   // Replace each memref.dim of a dynamic size with its loaded length.
-  for (auto [Arg, Member] : Lengths) {
-    auto MemRefT = cast<mlir::MemRefType>(Arg.getType());
-    for (mlir::Operation* User : llvm::make_early_inc_range(Arg.getUsers())) {
+  for (auto [Buffer, Member] : Lengths) {
+    auto MemRefT = cast<mlir::MemRefType>(Buffer.getType());
+    for (mlir::Operation* User :
+         llvm::make_early_inc_range(Buffer.getUsers())) {
       auto Dim = dyn_cast<memref::DimOp>(User);
       if (!Dim)
         continue;
@@ -740,6 +1095,34 @@ llvm::LogicalResult lowerBufferLengths(mlir::OpBuilder& B, func::FuncOp F,
     }
   }
   return llvm::success();
+}
+
+// Determine if a type is a tuple with a memref (possibly nested.)
+bool isTupleWithMemRef(mlir::Type T) {
+  auto TupleT = dyn_cast<nbdl_spec::TupleType>(T);
+  return TupleT && llvm::any_of(TupleT.getTypes(), [](mlir::Type ElT) {
+    return isa<mlir::MemRefType>(ElT) || isTupleWithMemRef(ElT);
+  });
+}
+
+// Replace each tuple_extract of a tuple_pack with the element and erase
+// each tuple_pack that has no uses.
+void foldTuples(mlir::Operation* Scope) {
+  llvm::SmallVector<nbdl_spec::TuplePackOp, 4> Packs;
+  Scope->walk([&](mlir::Operation* Op) {
+    if (auto Extract = dyn_cast<nbdl_spec::TupleExtractOp>(Op)) {
+      if (auto Pack =
+            Extract.getTuple().getDefiningOp<nbdl_spec::TuplePackOp>()) {
+        Extract.replaceAllUsesWith(Pack.getElements()[Extract.getIndex()]);
+        Extract.erase();
+      }
+    } else if (auto Pack = dyn_cast<nbdl_spec::TuplePackOp>(Op)) {
+      Packs.push_back(Pack);
+    }
+  });
+  for (nbdl_spec::TuplePackOp Pack : llvm::reverse(Packs))
+    if (Pack->use_empty())
+      Pack.erase();
 }
 
 // Turn a function into the void() function of a shader entry point that
@@ -766,51 +1149,99 @@ llvm::FailureOr<ShaderEntry> createShaderEntry(func::FuncOp F,
 
   // Create the variables before the function.
   mlir::OpBuilder B(F);
+  auto CreateVar = [&](mlir::Attribute VarDesc, llvm::Twine const& VarName,
+                       mlir::Type T) -> spirv::GlobalVariableOp {
+    spirv::GlobalVariableOp Var = createInterfaceVar(
+        B, F, VarName, T, dyn_cast<mlir::DictionaryAttr>(VarDesc), TC);
+    if (!Var)
+      return {};
+    spirv::StorageClass SC =
+      cast<spirv::PointerType>(Var.getType()).getStorageClass();
+    if (SC == spirv::StorageClass::Input ||
+        SC == spirv::StorageClass::Output)
+      Entry.InterfaceVars.push_back(
+        mlir::FlatSymbolRefAttr::get(Var.getSymNameAttr()));
+    return Var;
+  };
+  // Create a variable for each member of a struct of storage buffers
+  // (described by an array.)
+  using VarList = llvm::SmallVector<spirv::GlobalVariableOp, 1>;
   auto CreateVars = [&](mlir::ArrayAttr Descs, mlir::TypeRange Ts,
                         llvm::StringRef Suffix,
-                        llvm::SmallVectorImpl<spirv::GlobalVariableOp>& Vars) {
+                        llvm::SmallVectorImpl<VarList>& Vars)
+                        -> llvm::LogicalResult {
     for (auto [I, VarDesc] : llvm::enumerate(Descs)) {
-      spirv::GlobalVariableOp Var = createInterfaceVar(
-          B, F, Name.getValue() + Suffix + llvm::Twine(I), Ts[I],
-          dyn_cast<mlir::DictionaryAttr>(VarDesc), TC);
-      if (!Var)
+      std::string VarName = (Name.getValue() + Suffix + llvm::Twine(I)).str();
+      VarList& List = Vars.emplace_back();
+      auto MemberDescs = dyn_cast<mlir::ArrayAttr>(VarDesc);
+      if (!MemberDescs) {
+        List.push_back(CreateVar(VarDesc, VarName, Ts[I]));
+      } else {
+        auto TupleT = dyn_cast<nbdl_spec::TupleType>(Ts[I]);
+        if (!TupleT || TupleT.getTypes().size() != MemberDescs.size())
+          return F.emitError("invalid shader struct of storage buffers: ")
+                 << Ts[I];
+        for (auto [J, MemberDesc] : llvm::enumerate(MemberDescs))
+          List.push_back(CreateVar(MemberDesc,
+                                   VarName + "_" + llvm::Twine(J),
+                                   TupleT.getTypes()[J]));
+      }
+      if (llvm::is_contained(List, spirv::GlobalVariableOp()))
         return llvm::failure();
-      spirv::StorageClass SC =
-        cast<spirv::PointerType>(Var.getType()).getStorageClass();
-      if (SC == spirv::StorageClass::Input ||
-          SC == spirv::StorageClass::Output)
-        Entry.InterfaceVars.push_back(
-          mlir::FlatSymbolRefAttr::get(Var.getSymNameAttr()));
-      Vars.push_back(Var);
     }
     return llvm::success();
   };
-  llvm::SmallVector<spirv::GlobalVariableOp, 4> InputVars, OutputVars;
+  llvm::SmallVector<VarList, 4> InputVars, OutputVars;
   if (llvm::failed(CreateVars(InputDescs, FT.getInputs(), "_arg",
                               InputVars)) ||
       llvm::failed(CreateVars(OutputDescs, FT.getResults(), "_result",
                               OutputVars)))
     return llvm::failure();
+
+  // Load the parameters at the beginning of the body and pack the members
+  // of each struct.
+  mlir::Block& Body = F.front();
+  mlir::OpBuilder BodyB = mlir::OpBuilder::atBlockBegin(&Body);
+  mlir::Location Loc = F.getLoc();
+  llvm::SmallVector<std::pair<mlir::Value, mlir::DictionaryAttr>, 4> Buffers;
+  for (auto [Arg, Vars, InputDesc] :
+       llvm::zip_equal(Body.getArguments(), InputVars, InputDescs)) {
+    auto MemberDescs = dyn_cast<mlir::ArrayAttr>(InputDesc);
+    if (!MemberDescs) {
+      mlir::Value Value = loadInterfaceVar(BodyB, Loc, Arg.getType(),
+                                           Vars.front());
+      Buffers.emplace_back(Value, cast<mlir::DictionaryAttr>(InputDesc));
+      Arg.replaceAllUsesWith(Value);
+      continue;
+    }
+    auto TupleT = cast<nbdl_spec::TupleType>(Arg.getType());
+    llvm::SmallVector<mlir::Value, 4> Members;
+    for (auto [T, Var, MemberDesc] :
+         llvm::zip_equal(TupleT.getTypes(), Vars, MemberDescs)) {
+      Members.push_back(loadInterfaceVar(BodyB, Loc, T, Var));
+      Buffers.emplace_back(Members.back(),
+                           cast<mlir::DictionaryAttr>(MemberDesc));
+    }
+    Arg.replaceAllUsesWith(
+      nbdl_spec::TuplePackOp::create(BodyB, Loc, TupleT, Members));
+  }
+  Body.eraseArguments(0, Body.getNumArguments());
+  foldTuples(F);
+
   if (auto LengthDesc = Desc.getAs<mlir::DictionaryAttr>("length_buffer"))
     if (llvm::failed(lowerBufferLengths(B, F, Name.getValue(), LengthDesc,
-                                        InputDescs)))
+                                        Buffers)))
       return llvm::failure();
-
-  // Load the parameters at the beginning of the body.
-  mlir::Block& Body = F.front();
-  B.setInsertionPointToStart(&Body);
-  for (auto [Arg, Var] : llvm::zip_equal(Body.getArguments(), InputVars))
-    Arg.replaceAllUsesWith(loadInterfaceVar(B, F.getLoc(), Arg.getType(),
-                                            Var));
-  Body.eraseArguments(0, Body.getNumArguments());
 
   // Store the results at each return.
   llvm::SmallVector<func::ReturnOp, 4> Returns;
   F.walk([&](func::ReturnOp Ret) { Returns.push_back(Ret); });
   for (func::ReturnOp Ret : Returns) {
     B.setInsertionPoint(Ret);
-    for (auto [Result, Var] : llvm::zip_equal(Ret.getOperands(), OutputVars)) {
-      mlir::Value Ptr = spirv::AddressOfOp::create(B, Ret.getLoc(), Var);
+    for (auto [Result, Vars] :
+         llvm::zip_equal(Ret.getOperands(), OutputVars)) {
+      mlir::Value Ptr = spirv::AddressOfOp::create(B, Ret.getLoc(),
+                                                   Vars.front());
       spirv::StoreOp::create(B, Ret.getLoc(), Ptr, Result);
     }
     Ret->eraseOperands(0, Ret->getNumOperands());
@@ -876,6 +1307,71 @@ llvm::LogicalResult inlineStorageBufferCalls(spirv::ModuleOp SPIRVModule) {
       });
 }
 
+// Lower a tuple_pack to a spirv.CompositeConstruct.
+struct TuplePackToSPIRV : mlir::OpConversionPattern<nbdl_spec::TuplePackOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::TuplePackOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    mlir::Type T = getTypeConverter()->convertType(Op.getType());
+    if (!T)
+      return R.notifyMatchFailure(Op, "tuple type conversion failed");
+    R.replaceOpWithNewOp<spirv::CompositeConstructOp>(Op, T,
+                                                      Adaptor.getElements());
+    return llvm::success();
+  }
+};
+
+struct TupleExtractToSPIRV
+    : mlir::OpConversionPattern<nbdl_spec::TupleExtractOp> {
+  using Base::Base;
+
+  llvm::LogicalResult matchAndRewrite(
+        nbdl_spec::TupleExtractOp Op, OpAdaptor Adaptor,
+        mlir::ConversionPatternRewriter& R) const override {
+    R.replaceOpWithNewOp<spirv::CompositeExtractOp>(
+        Op, Adaptor.getTuple(),
+        llvm::ArrayRef<int32_t>{int32_t(Op.getIndex())});
+    return llvm::success();
+  }
+};
+
+// Convert a tuple to a spirv.struct (with no layout) of its element types
+// unless it has a pointer which a composite cannot have.
+void populateTupleToSPIRV(schir_common::SPIRVTypeConverter& TC,
+                          mlir::RewritePatternSet& PS) {
+  TC.addConversion(
+      [&TC](nbdl_spec::TupleType T) -> std::optional<mlir::Type> {
+        llvm::SmallVector<mlir::Type, 4> Ts;
+        if (llvm::failed(TC.convertTypes(T.getTypes(), Ts)) ||
+            llvm::any_of(Ts, llvm::IsaPred<spirv::PointerType>))
+          return mlir::Type();
+        return spirv::StructType::get(Ts);
+      });
+  PS.add<TuplePackToSPIRV, TupleExtractToSPIRV>(TC, PS.getContext());
+}
+
+// Determine if a function has a tuple with a memref in its signature.
+bool hasTupleWithMemRef(func::FuncOp F) {
+  mlir::FunctionType FT = F.getFunctionType();
+  return llvm::any_of(FT.getInputs(), isTupleWithMemRef) ||
+         llvm::any_of(FT.getResults(), isTupleWithMemRef);
+}
+
+// Inline each call with a struct of memrefs and erase each function with
+// one in its signature since a struct cannot hold a storage buffer.
+llvm::LogicalResult inlineTuplesWithMemRefs(mlir::ModuleOp M) {
+  if (llvm::failed(inlineCalls<func::CallOp, func::FuncOp>(
+          M, [](mlir::Type T) { return isTupleWithMemRef(T); })))
+    return llvm::failure();
+  for (func::FuncOp F : llvm::make_early_inc_range(M.getOps<func::FuncOp>()))
+    if (hasTupleWithMemRef(F) &&
+        !F->hasAttr(nbdl_spec::ShaderEntryAttrName))
+      F.erase();
+  return llvm::success();
+}
+
 // Lower the mid level dialects that nbdl-lower produces to SPIRV.
 class LowerToSPIRVPass
     : public nbdl_spec::impl::LowerToSPIRVPassBase<LowerToSPIRVPass> {
@@ -902,6 +1398,8 @@ public:
 
     // Turn the marked functions into entry point functions with each call
     // with a memref inlined so the sizes of its storage buffers are known.
+    if (llvm::failed(inlineTuplesWithMemRefs(M)))
+      return signalPassFailure();
     schir_common::SPIRVTypeConverter TC(TEA);
     llvm::SmallVector<ShaderEntry, 4> Entries;
     for (func::FuncOp F :
@@ -931,7 +1429,19 @@ public:
     if (DimResult.wasInterrupted())
       return signalPassFailure();
 
-    if (llvm::failed(schir_common::lowerToSPIRV(M)))
+    // Reject the remaining structs of memrefs.
+    foldTuples(M);
+    mlir::WalkResult TupleResult = M.walk([](mlir::Operation* Op) {
+      if (llvm::none_of(Op->getResultTypes(), isTupleWithMemRef))
+        return mlir::WalkResult::advance();
+      Op->emitError("struct of memrefs is not supported in SPIRV"
+                    " except as a parameter of a shader entry");
+      return mlir::WalkResult::interrupt();
+    });
+    if (TupleResult.wasInterrupted())
+      return signalPassFailure();
+
+    if (llvm::failed(schir_common::lowerToSPIRV(M, populateTupleToSPIRV)))
       return signalPassFailure();
 
     // Move the lowered functions into a spirv.module.

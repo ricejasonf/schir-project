@@ -16,6 +16,8 @@
       (load-builtin "nbdl_spec_write_spirv_binary"))
     (define %dynamic-memref?
       (load-builtin "nbdl_spec_is_dynamic_memref"))
+    (define %memref?
+      (load-builtin "nbdl_spec_is_memref"))
 
     (define %shader-global '%shader-global)
 
@@ -33,6 +35,8 @@
     ;;   (shader-global 'storage-buffer T)
     ;;   (shader-global 'readwrite-storage-buffer T)
     ;;   (shader-global 'builtin "Name" T)
+    ;; Let a storage buffer be a struct of memrefs with a binding for
+    ;; each member (in order of definition.)
     (define-syntax shader-global
       (syntax-rules ()
         ((shader-global Kind Arg ...)
@@ -89,6 +93,48 @@
                      (cdr Stage)))
          (list "GLCompute" (cdr Stage)))
         (else (error-with-loc Loc "unknown shader stage: {}" Stage))))
+
+    ;; Get the storage buffer of each member of a struct of storage buffers
+    ;; or #f if T is not one.
+    (define (%struct-buffers Loc T)
+      (and (memq (%shader-kind T) '(storage-buffer readwrite-storage-buffer))
+           (named-struct? (shader-global-type T))
+           (let ((Struct (shader-global-type T)))
+             (map (lambda (MemberT)
+                    (unless (%memref? MemberT)
+                      (error-with-loc Loc
+                        "storage buffer struct member is not a memref: {}"
+                        (named-struct-sym-name Struct)))
+                    (list %shader-global (shader-global-kind T) #f MemberT))
+                  (struct-member-types Struct)))))
+
+    ;; Replace each struct of storage buffers with its storage buffers.
+    (define (%flatten-shader-types Loc Ts)
+      (let Loop ((Ts Ts) (Result '()))
+        (if (null? Ts)
+          (reverse Result)
+          (let ((Members (%struct-buffers Loc (car Ts))))
+            (Loop (cdr Ts)
+                  (if Members
+                    (append (reverse Members) Result)
+                    (cons (car Ts) Result)))))))
+
+    ;; Group the descriptions of the storage buffers of each struct of
+    ;; storage buffers in Ts as an array attribute string.
+    (define (%group-shader-interface Loc Ts Descs)
+      (let Loop ((Ts Ts) (Descs Descs) (Result '()))
+        (if (null? Ts)
+          (reverse Result)
+          (let ((Members (%struct-buffers Loc (car Ts))))
+            (if Members
+              (let Take ((Members Members) (Descs Descs) (Group '()))
+                (if (null? Members)
+                  (Loop (cdr Ts) Descs
+                        (cons (string-append
+                                "[" (string-join (reverse Group) ", ") "]")
+                              Result))
+                  (Take (cdr Members) (cdr Descs) (cons (car Descs) Group))))
+              (Loop (cdr Ts) (cdr Descs) (cons (car Descs) Result)))))))
 
     ;; Write a string as a quoted string literal.
     (define (%quote String)
@@ -264,9 +310,12 @@
         (define ModelAndLocalSize (%parse-shader-stage Loc Stage))
         (define Model (car ModelAndLocalSize))
         (define LocalSize (cadr ModelAndLocalSize))
-        (define Inputs (%shader-interface Loc Name Model ArgTs #t))
+        (define FlatArgTs (%flatten-shader-types Loc ArgTs))
+        (define Inputs
+          (%group-shader-interface
+            Loc ArgTs (%shader-interface Loc Name Model FlatArgTs #t)))
         (define Outputs (%shader-interface Loc Name Model RetTs #f))
-        (define LengthBinding (%length-binding ArgTs))
+        (define LengthBinding (%length-binding FlatArgTs))
         (define EntryAttr
           (attr (string-append
                   "{name = " (%quote (string-copy Name 0))
@@ -294,7 +343,7 @@
               (Thunk SymName
                      (map %shader-type ArgTs)
                      (map %shader-type RetTs)))))
-        (define Row (%shader-entry-row Name Model LocalSize ArgTs))
+        (define Row (%shader-entry-row Name Model LocalSize FlatArgTs))
         (add-lower-op FuncOp)
         (set! %shader-entries
           (cons (list FuncOp EntryAttr Row) %shader-entries))

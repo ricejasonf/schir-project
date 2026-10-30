@@ -57,6 +57,36 @@ SPIRVTypeConverter::SPIRVTypeConverter(spirv::TargetEnvAttr TEA)
       return std::nullopt;
     return spirv::ArrayType::get(ElementT, VT.getNumElements());
   });
+  // Lay out a memref of 3-element vectors with the array stride of
+  // 4-element vectors as the standard layout aligns them the same.
+  addConversion([this](mlir::MemRefType MT) -> std::optional<mlir::Type> {
+    auto VT = llvm::dyn_cast<mlir::VectorType>(MT.getElementType());
+    if (!VT || VT.getShape() != llvm::ArrayRef<int64_t>{3} || VT.isScalable())
+      return std::nullopt;
+    auto PaddedT = mlir::MemRefType::get(
+        MT.getShape(), mlir::VectorType::get({4}, VT.getElementType()),
+        MT.getLayout(), MT.getMemorySpace());
+    auto PtrT = llvm::dyn_cast_or_null<spirv::PointerType>(
+        convertType(PaddedT));
+    auto StructT = PtrT
+      ? llvm::dyn_cast<spirv::StructType>(PtrT.getPointeeType())
+      : spirv::StructType();
+    mlir::Type ElementT = convertType(VT);
+    if (!StructT || StructT.getNumElements() != 1 || !StructT.hasOffset() ||
+        !ElementT)
+      return std::nullopt;
+    mlir::Type ArrayT;
+    mlir::Type PaddedArrayT = StructT.getElementType(0);
+    if (auto RT = llvm::dyn_cast<spirv::RuntimeArrayType>(PaddedArrayT))
+      ArrayT = spirv::RuntimeArrayType::get(ElementT, RT.getArrayStride());
+    else if (auto AT = llvm::dyn_cast<spirv::ArrayType>(PaddedArrayT))
+      ArrayT = spirv::ArrayType::get(ElementT, AT.getNumElements(),
+                                     AT.getArrayStride());
+    else
+      return std::nullopt;
+    return spirv::PointerType::get(spirv::StructType::get({ArrayT}, {0}),
+                                   PtrT.getStorageClass());
+  });
 }
 
 void populateFromElementsToArrayPatterns(SPIRVTypeConverter& TC,

@@ -139,6 +139,17 @@ def Nbdl_StructName : TypeDef<Nbdl_Dialect, "StructName"> {
   }];
 }
 
+def Nbdl_Tuple : TypeDef<Nbdl_Dialect, "Tuple"> {
+  let mnemonic = "tuple";
+  let description = [{
+    Represent a product of element types with no name. nbdl-lower
+    converts each !nbdl.struct to the tuple of its member types (in order
+    of definition) so the result can be lowered to LLVM or SPIRV.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::Type">:$types);
+  let assemblyFormat = "`<` $types `>`";
+}
+
 def Nbdl_Closure : TypeDef<Nbdl_Dialect, "Closure"> {
   let mnemonic = "closure";
   let description = [{
@@ -379,6 +390,10 @@ def Nbdl_DefineStructOp : Nbdl_Op<"define_struct",
     // Get the value of the member with a member name
     // or null if there is none.
     ::mlir::Value lookupMember(::llvm::StringRef Name);
+
+    // Get the name and value of each member in order of definition.
+    ::llvm::SmallVector<std::pair<::llvm::StringRef, ::mlir::Value>, 4>
+    getMembers();
   }];
 }
 
@@ -447,6 +462,27 @@ def Nbdl_ConstructOp : Nbdl_Op<"construct", []> {
 
   let arguments = (ins Variadic<AnyType>:$args);
   let results = (outs AnyType:$result);
+}
+
+def Nbdl_TuplePackOp : Nbdl_Op<"tuple_pack", [Pure]> {
+  let description = [{
+    Create a tuple or struct from its elements.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$elements);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+}
+
+def Nbdl_TupleExtractOp : Nbdl_Op<"tuple_extract", [Pure]> {
+  let description = [{
+    Get the element of a tuple at an index.
+  }];
+
+  let arguments = (ins Nbdl_Tuple:$tuple, I64Attr:$index);
+  let results = (outs AnyType:$result);
+  let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 def Nbdl_EmptyOp : Nbdl_Op<"empty", []> {

@@ -513,6 +513,37 @@ void nbdl_spec_is_define_struct(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(schir::Bool(isa<nbdl_spec::DefineStructOp>(Op)));
 }
 
+// Get the list of the types of the members of a nbdl.define_struct
+// in order of definition.
+// (struct-member-types op)
+void nbdl_spec_struct_member_types(schir::Context& C,
+                                   schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  auto* Op = dyn_cast<mlir::Operation>(Args.front());
+  auto Def = dyn_cast_or_null<nbdl_spec::DefineStructOp>(Op);
+  if (!Def)
+    return C.RaiseError("expecting nbdl.define_struct: {}", Args.front());
+  llvm::SmallVector<schir::Value, 4> Types;
+  for (auto [Name, Member] : Def.getMembers()) {
+    mlir::Type T = Member.getType();
+    if (auto Lift = Member.getDefiningOp<nbdl_spec::LiftStoreOp>())
+      T = Lift.getValue().getType();
+    Types.push_back(C.CreateAny<mlir::Type>(T));
+  }
+  C.Cont(C.CreateList(Types));
+}
+
+// Return true if the mlir.type is a memref.
+void nbdl_spec_is_memref(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  auto T = schir::any_cast<mlir::Type>(Args.front());
+  if (!T)
+    return C.RaiseError("expecting mlir.type: {}", Args.front());
+  C.Cont(schir::Bool(isa<mlir::MemRefType>(T)));
+}
+
 // Return true if the mlir.type is a memref with a dynamic size.
 void nbdl_spec_is_dynamic_memref(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)

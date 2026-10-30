@@ -38,7 +38,8 @@ namespace scf = mlir::scf;
 namespace spirv = mlir::spirv;
 
 namespace schir_common {
-llvm::LogicalResult lowerToLLVM(mlir::ModuleOp M) {
+llvm::LogicalResult lowerToLLVM(mlir::ModuleOp M,
+                                PopulateLLVMFn Populate) {
   mlir::MLIRContext* Ctx = M.getContext();
 
   // Expand memref view operations (e.g. subview) into operations
@@ -63,6 +64,8 @@ llvm::LogicalResult lowerToLLVM(mlir::ModuleOp M) {
   mlir::populateFuncToLLVMConversionPatterns(TC, PS);
   mlir::populateVectorToLLVMConversionPatterns(TC, PS);
   mlir::ub::populateUBToLLVMConversionPatterns(TC, PS);
+  if (Populate)
+    Populate(TC, PS);
 
   if (llvm::failed(mlir::applyPartialConversion(M, Target, std::move(PS))))
     return llvm::failure();
@@ -74,7 +77,8 @@ llvm::LogicalResult lowerToLLVM(mlir::ModuleOp M) {
   return llvm::success();
 }
 
-llvm::LogicalResult lowerToSPIRV(mlir::ModuleOp M) {
+llvm::LogicalResult lowerToSPIRV(mlir::ModuleOp M,
+                                 PopulateSPIRVFn Populate) {
   mlir::MLIRContext* Ctx = M.getContext();
 
   // Inline the regions of scf.execute_region which has no SPIRV lowering.
@@ -102,6 +106,8 @@ llvm::LogicalResult lowerToSPIRV(mlir::ModuleOp M) {
   mlir::populateMemRefToSPIRVPatterns(TC, PS);
   mlir::populateVectorToSPIRVPatterns(TC, PS);
   mlir::ub::populateUBToSPIRVConversionPatterns(TC, PS);
+  if (Populate)
+    Populate(TC, PS);
 
   // Allow casts that are made equivalent to be removed after conversion.
   Target->addLegalOp<mlir::UnrealizedConversionCastOp>();

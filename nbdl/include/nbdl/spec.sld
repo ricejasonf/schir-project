@@ -43,6 +43,8 @@
       (load-builtin "nbdl_spec_cpp_alias_type"))
     (define nbdl_spec_struct_type
       (load-builtin "nbdl_spec_struct_type"))
+    (define nbdl_spec_struct_member_types
+      (load-builtin "nbdl_spec_struct_member_types"))
     (define verify-recursive-visits
       (load-builtin "nbdl_spec_verify_recursive_visits"))
 
@@ -172,9 +174,20 @@
               (Fn Op)))
           (loop (cdr Rest)))))
 
-    ;; Functions exported via export-c, export-c-internal, or export-shader
-    ;; that are lowered by finalize-module (ie by define-fn.)
+    ;; Track functions exported via export-c, export-c-internal, or
+    ;; export-shader that are lowered by finalize-module.
     (define %lower-ops '())
+
+    ;; Track Structs exported similar to %lower-ops.
+    (define %lowerable-struct-ops '())
+
+    ;; Copy each struct definition into the lower-module
+    ;; so nbdl-lower can convert struct types to tuples.
+    (define (%copy-struct-ops StructOps)
+      (let Loop ((Rest StructOps))
+        (unless (null? Rest)
+          (copy-to-module lower-module (car Rest))
+          (Loop (cdr Rest)))))
 
     ;; Add a function to be lowered by finalize-module.
     (define (add-lower-op FuncOp)
@@ -206,6 +219,7 @@
       (set! export-c-internal-ops '())
       (set! export-shader-ops '())
       (set! %lower-ops '())
+      (set! %lowerable-struct-ops '())
       (set! %write-lower-module? #f))
 
     ;; Clear the modules of the lowering stage and exit dialects.
@@ -225,6 +239,7 @@
       (define CInternalOps export-c-internal-ops)
       (define ShaderOps export-shader-ops)
       (define LowerOps %lower-ops)
+      (define StructOps %lowerable-struct-ops)
       (define WriteLower? %write-lower-module?)
       (define (lower-op? Op) (memq Op LowerOps))
       (define FinalizeShaders #f)
@@ -251,6 +266,7 @@
       (%finalize-exports CInternalOps lower-op? add-to-lower-module)
       (%finalize-exports ShaderOps lower-op? add-to-lower-module)
       (when lower-module
+        (%copy-struct-ops StructOps)
         (apply run-passes lower-module "nbdl-lower" %lowering-passes)
         (when WriteLower?
           (write lower-module)
@@ -772,8 +788,11 @@
             (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
          (%define-store
            (lambda (SymName DefineStructOp)
-             (make-named-struct SymName DefineStructOp
-                                (and (memq 'Name export-cpp-names) #t)))
+             (define CppVisible (and (memq 'Name export-cpp-names) #t))
+             (unless CppVisible
+               (set! %lowerable-struct-ops
+                 (cons DefineStructOp %lowerable-struct-ops)))
+             (make-named-struct SymName DefineStructOp CppVisible))
            Name (Formals ...)
            (%struct-member
              (syntax-source-loc KeyN)
@@ -817,6 +836,10 @@
 
     (define (named-struct-op NamedStruct)
       (car (cddr NamedStruct)))
+
+    ;; Get the types of the members of a named-struct in order of definition.
+    (define (struct-member-types NamedStruct)
+      (nbdl_spec_struct_member_types (named-struct-op NamedStruct)))
 
     ;; Map a named-struct to a C++ type if it is visible to C++
     ;; or to a !nbdl.struct type otherwise.
@@ -1801,6 +1824,9 @@
     copy-to-module
     finalize-llvm-module
     emit-cpp
+    named-struct?
+    named-struct-sym-name
+    struct-member-types
     mark-c-adapter
     define-llvm-wrapper
     %cpp-or-type
