@@ -121,6 +121,24 @@ def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
   }];
 }
 
+def Nbdl_Struct : TypeDef<Nbdl_Dialect, "Struct"> {
+  let mnemonic = "struct";
+  let description = [{
+    Represent an instance of a struct defined by a DefineStructOp
+    that is not visible to C++.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$name);
+  let assemblyFormat = "`<` $name `>`";
+}
+
+def Nbdl_StructName : TypeDef<Nbdl_Dialect, "StructName"> {
+  let mnemonic = "struct_name";
+  let description = [{
+    Represent the type of a result of lifting the symbol
+    name of a struct (ie a DefineStructOp) to a value.
+  }];
+}
+
 def Nbdl_Closure : TypeDef<Nbdl_Dialect, "Closure"> {
   let mnemonic = "closure";
   let description = [{
@@ -292,6 +310,16 @@ def Nbdl_FuncNameOp : Nbdl_Op<"func_name", [Pure]> {
   let results = (outs Nbdl_FuncName:$result);
 }
 
+def Nbdl_StructNameOp : Nbdl_Op<"struct_name", [Pure]> {
+  let description = [{
+    Lift the symbol name of a struct (ie a DefineStructOp)
+    to a store-like value.
+  }];
+
+  let arguments = (ins FlatSymbolRefAttr:$name);
+  let results = (outs Nbdl_StructName:$result);
+}
+
 def Nbdl_StoreComposeOp : Nbdl_Op<"store_compose", []> {
   let description = [{
     Add a value $lhs as a member to another store $rhs using a key $key
@@ -347,6 +375,10 @@ def Nbdl_DefineStructOp : Nbdl_Op<"define_struct",
   let results = (outs);
   let extraClassDeclaration = [{
     bool isExternal() { return getBody().empty(); }
+
+    // Get the value of the member with a member name
+    // or null if there is none.
+    ::mlir::Value lookupMember(::llvm::StringRef Name);
   }];
 }
 

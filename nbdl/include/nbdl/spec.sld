@@ -41,6 +41,8 @@
       (load-builtin "nbdl_spec_type_to_cpp_type"))
     (define nbdl_spec_cpp_alias_type
       (load-builtin "nbdl_spec_cpp_alias_type"))
+    (define nbdl_spec_struct_type
+      (load-builtin "nbdl_spec_struct_type"))
     (define verify-recursive-visits
       (load-builtin "nbdl_spec_verify_recursive_visits"))
 
@@ -50,12 +52,15 @@
     (define (!cpp Typename)
       (nbdl_spec_cpp_alias_type Typename))
 
-    ;; Lift a string-like or named-store to a C++ type
+    ;; Lift a string-like, named-store, or named-struct to its type
     ;; or return the mlir type as is.
-    (define (%cpp-or-type T)
+    ;; Raise errors at the optional source location of T.
+    (define (%cpp-or-type T . MaybeLoc)
       (cond
         ((or (string? T) (symbol? T)) (!cpp T))
         ((named-store? T) (named-store->cpp T))
+        ((named-struct? T)
+         (named-struct->type T (if (pair? MaybeLoc) (car MaybeLoc) #f)))
         (else T)))
 
     ;; Create a !nbdl.store type where string-likes are lifted to C++ types.
@@ -385,6 +390,7 @@
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.func_name (type "!nbdl.func_name"))
+    (define !nbdl.struct_name (type "!nbdl.struct_name"))
     (define !nbdl.closure (type "!nbdl.closure"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define !nbdl.unknown (type "!nbdl.unknown"))
@@ -483,6 +489,8 @@
          (%match-path-spec Expr Fn))
         ((named-fn? Expr)
          (Fn (build-func-name Expr)))
+        ((named-struct? Expr)
+         (Fn (build-struct-name Loc Expr)))
         ((uncallable? Expr)
          (error-with-loc Loc (uncallable-message Expr)
                          (uncallable-name Expr)))
@@ -580,7 +588,7 @@
           (loc: Loc)
           (operands: InitArgs)
           (attributes:)
-          (result-types: (%cpp-or-type Typename))
+          (result-types: (%cpp-or-type Typename Loc))
           )))
 
     (define (construct-aux Loc Typename InitArgExprs)
@@ -704,6 +712,14 @@
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
+         (%define-store make-named-store Name (InitParams ...)
+           StoreFunctionalN ...))))
+
+    ;; Define Name as the result of Make applied to the symbol name
+    ;; and the nbdl.define_struct.
+    (define-syntax %define-store
+      (syntax-rules ()
+        ((%define-store Make Name (InitParams ...) StoreFunctionalN ...)
          (define Name
            (let ((SymName #f))
             (let ((DefineStructOp
@@ -726,7 +742,7 @@
                                       ;; Ensure nonempty lambda.
                                       (ProcessBody StoreFunctionalN) ... #t)
                                     )))))))
-             (make-named-store SymName DefineStructOp)))))))
+             (Make SymName DefineStructOp)))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -754,7 +770,11 @@
       (syntax-rules (member: init-args:)
         ((define-struct Name (Formals ...)
             (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
-         (define-store Name (Formals ...)
+         (%define-store
+           (lambda (SymName DefineStructOp)
+             (make-named-struct SymName DefineStructOp
+                                (and (memq 'Name export-cpp-names) #t)))
+           Name (Formals ...)
            (%struct-member
              (syntax-source-loc KeyN)
              KeyN
@@ -779,6 +799,50 @@
     ;; Convert a named-store to a c++ type.
     (define (named-store->cpp NamedStore)
       (!cpp (named-store-sym-name NamedStore)))
+
+    (define %named-struct '%named-struct)
+
+    ;; Denote the name of a struct defined via define-struct
+    ;; where CppVisible is true if it is exported to C++.
+    (define (make-named-struct SymbolName DefineStructOp CppVisible)
+      (list %named-struct SymbolName DefineStructOp CppVisible
+            (%main-module)))
+
+    (define (named-struct? Value)
+      (and (pair? Value)
+           (eq? %named-struct (car Value))))
+
+    (define (named-struct-sym-name NamedStruct)
+      (cadr NamedStruct))
+
+    (define (named-struct-op NamedStruct)
+      (car (cddr NamedStruct)))
+
+    ;; Map a named-struct to a C++ type if it is visible to C++
+    ;; or to a !nbdl.struct type otherwise.
+    ;; Raise errors at Loc unless it is #f.
+    (define (named-struct->type NamedStruct Loc)
+      (define-values (_ SymName _ CppVisible Module)
+        (apply values NamedStruct))
+      (define Message "struct is not defined: {}")
+      (cond
+        (CppVisible (!cpp SymName))
+        ;; Reject a struct that is not in the module.
+        ((and (not (eq? Module main-module)) Loc)
+         (error-with-loc Loc Message SymName))
+        ((not (eq? Module main-module))
+         (error Message SymName))
+        (else (nbdl_spec_struct_type SymName))))
+
+    (define (build-struct-name Loc NamedStruct)
+      (result (create-op
+                "nbdl.struct_name"
+                (loc: Loc)
+                (operands:)
+                (attributes:
+                  ("name" (flat-symbolref-attr
+                            (named-struct-sym-name NamedStruct))))
+                (result-types: !nbdl.struct_name))))
 
     (define %named-fn '%named-fn)
 
@@ -1425,8 +1489,11 @@
                            ("function_type"
                             (type-attr
                               (%function-type
-                                (vector (%cpp-or-type ArgT) ...)
-                                (vector (%cpp-or-type RetT) ...)))))
+                                (vector (%cpp-or-type
+                                          ArgT (syntax-source-loc ArgT)) ...)
+                                (vector (%cpp-or-type
+                                          RetT (syntax-source-loc RetT))
+                                        ...)))))
                          (result-types:)
                          (region: "body" ((Arg : (%cpp-or-type ArgT))
                                           ...)
@@ -1541,6 +1608,8 @@
               (define-values (_ _ DefineStructOp)
                 (apply values Name))
               DefineStructOp))
+          ((named-struct? Name)
+            (named-struct-op Name))
          (else (module-lookup (%main-module) Name))))
       (translate-cpp Op)
       (newline))

@@ -89,6 +89,9 @@ mlir::Value lookThroughStoreCompose(mlir::Value Store, mlir::Value Key);
 // Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);
 
+// Look up the DefineStructOp of a struct type in the module of From.
+DefineStructOp lookupStruct(mlir::Operation* From, StructType T);
+
 // Get the ClosureOp that defines V or null if V is not a closure.
 ClosureOp getClosure(mlir::Value V);
 

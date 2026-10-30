@@ -459,6 +459,21 @@ void nbdl_spec_cpp_alias_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(C.CreateAny<mlir::Type>(Result));
 }
 
+// Create a !nbdl.struct type from the string-like symbol name
+// of a struct.
+// (struct-type sym-name)
+void nbdl_spec_struct_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef SymName = Args[0].getStringRef();
+  if (SymName.empty())
+    return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
+  mlir::MLIRContext* Ctx = C.MLIRContext.get();
+  mlir::Type Result = nbdl_spec::StructType::get(Ctx,
+      mlir::FlatSymbolRefAttr::get(Ctx, SymName));
+  C.Cont(C.CreateAny<mlir::Type>(Result));
+}
+
 // Create a !nbdl.store<alts...> from an arbitrary set of mlir.types.
 void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   mlir::MLIRContext* Ctx = C.MLIRContext.get();

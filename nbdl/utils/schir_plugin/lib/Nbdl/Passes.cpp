@@ -236,8 +236,8 @@ bool isSettledLoop(nbdl_spec::LoopOp Loop) {
   }).wasInterrupted();
 }
 
-// Get the name of a function name or member name
-// or a null attribute if V is neither.
+// Get the name of a function name, struct name, or member name
+// or a null attribute if V is none of them.
 mlir::Attribute getNameAttr(mlir::Value V) {
   if (nbdl_spec::FuncNameOp FN = nbdl_spec::getFuncName(V))
     return FN.getNameAttr();
@@ -246,6 +246,8 @@ mlir::Attribute getNameAttr(mlir::Value V) {
     V = nbdl_spec::lookThroughLoopArgs(Op.getValue());
   if (auto MN = V.getDefiningOp<nbdl_spec::MemberNameOp>())
     return MN.getNameAttr();
+  if (auto SN = V.getDefiningOp<nbdl_spec::StructNameOp>())
+    return SN.getNameAttr();
   return {};
 }
 
@@ -254,7 +256,7 @@ bool isNameType(mlir::Type T) {
   if (mlir::Type AltT = getSingleAltT(T))
     T = AltT;
   return isa<nbdl_spec::FuncNameType, nbdl_spec::MemberNameType,
-             nbdl_spec::ClosureType>(T);
+             nbdl_spec::StructNameType, nbdl_spec::ClosureType>(T);
 }
 
 // Return true if every continue of a loop passes a value to the
@@ -907,6 +909,46 @@ struct InferLiftStoreType : mlir::OpRewritePattern<nbdl_spec::LiftStoreOp> {
   }
 };
 
+// Get the member of a struct that a get accesses with a member key
+// or null if there is none (emitting an error if EmitErrors is true.)
+mlir::Value getStructMember(nbdl_spec::GetOp Op, nbdl_spec::StructType StructT,
+                            bool EmitErrors) {
+  llvm::StringRef StructName = StructT.getName().getValue();
+  auto MemberName = nbdl_spec::lookThroughLoopArgs(Op.getKey())
+                      .getDefiningOp<nbdl_spec::MemberNameOp>();
+  if (!MemberName) {
+    // TODO Support any TagLike key type.
+    if (EmitErrors)
+      Op.emitError("expecting a member name as the key of struct: ")
+        << StructName;
+    return nullptr;
+  }
+  nbdl_spec::DefineStructOp Def = nbdl_spec::lookupStruct(Op, StructT);
+  if (!Def) {
+    if (EmitErrors)
+      Op.emitError("struct is not defined: ") << StructName;
+    return nullptr;
+  }
+  mlir::Value Member = Def.lookupMember(MemberName.getName());
+  if (!Member && EmitErrors)
+    Op.emitError("struct ") << StructName << " has no member: "
+                            << MemberName.getName();
+  return Member;
+}
+
+// Check that each get on a struct accesses one of its members.
+llvm::LogicalResult checkStructGets(mlir::Operation* Root) {
+  bool HasError = false;
+  Root->walk([&](nbdl_spec::GetOp Op) {
+    auto StructT = dyn_cast_or_null<nbdl_spec::StructType>(
+        getSingleAlt(Op.getState()));
+    if (StructT && !Op.hasUnitKey() &&
+        !getStructMember(Op, StructT, /*EmitErrors=*/true))
+      HasError = true;
+  });
+  return llvm::failure(HasError);
+}
+
 // Infer the result of getting a member from a store.
 // Any other key (or no key) uses `nbdl::get` as in the C++ translation.
 struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
@@ -916,6 +958,9 @@ struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
       nbdl_spec::GetOp Op, mlir::PatternRewriter& Rewriter) const override {
     if (!needsResolve(Op.getResult()))
       return Rewriter.notifyMatchFailure(Op, "type already resolved");
+    if (auto StructT = dyn_cast_or_null<nbdl_spec::StructType>(
+          getSingleAlt(Op.getState())))
+      return inferStructGet(Op, StructT, Rewriter);
     llvm::StringRef StoreTypeStr = getCppTypename(Op.getState());
     if (StoreTypeStr.empty())
       return Rewriter.notifyMatchFailure(Op, "store is not a single C++ alt");
@@ -956,6 +1001,27 @@ struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
     auto NewStoreT = nbdl_spec::StoreType::get(Ctx,
         mlir::TypeAttr::get(nbdl_spec::CppType::get(Ctx, Typename)));
     Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(NewStoreT); });
+    return llvm::success();
+  }
+
+  // Infer the type of a member of a struct from its definition.
+  llvm::LogicalResult inferStructGet(nbdl_spec::GetOp Op,
+                                     nbdl_spec::StructType StructT,
+                                     mlir::PatternRewriter& Rewriter) const {
+    // Get the struct itself with the unit key.
+    if (Op.hasUnitKey()) {
+      mlir::Type StateT = Op.getState().getType();
+      Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(StateT); });
+      return llvm::success();
+    }
+
+    mlir::Value Member = getStructMember(Op, StructT, /*EmitErrors=*/false);
+    if (!Member)
+      return Rewriter.notifyMatchFailure(Op, "struct member not found");
+    mlir::Type MemberT = Member.getType();
+    if (needsResolveT(MemberT))
+      return Rewriter.notifyMatchFailure(Op, "member type not resolved");
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(MemberT); });
     return llvm::success();
   }
 };
@@ -1531,6 +1597,8 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
       << ParseError;
 
   if (llvm::failed(PM.run(Op)))
+    return llvm::failure();
+  if (llvm::failed(checkStructGets(Op)))
     return llvm::failure();
 
   // It is an error if any function result type was not inferred.

@@ -30,7 +30,11 @@ struct int_sink {
 
 #pragma schir_scheme
 {
-(import (nbdl spec))
+(import (nbdl spec)
+        (only (schir mlir) type))
+
+(define i32 (type "i32"))
+(define f32 (type "f32"))
 
 (export-cpp point
             make_int
@@ -60,6 +64,40 @@ struct int_sink {
 (define-fn make_point_y ((Sink : 'foo::int_sink)) -> ()
   (visit Sink (get (lift-store (construct point 3 4)) '.y))
   (return))
+
+; // Define structs that are not exported to C++.
+(define-struct vec2_s (X Y)
+  (member: '.x i32 (init-args: X))
+  (member: '.y f32 (init-args: Y)))
+
+(define-struct segment_s (A B)
+  (member: '.a vec2_s (init-args: A 1.0))
+  (member: '.b vec2_s (init-args: B 2.0)))
+
+; // Resolve the member types of structs without C++.
+; // CHECK-LABEL: "nbdl.define_struct"() <{sym_name = "segment_s"}>
+; // CHECK: "nbdl.construct"(%arg0, {{%[0-9]+}})
+; // CHECK-SAME: -> !nbdl.struct<@vec2_s>
+; // CHECK-LABEL: func.func @segment_b_y
+; // CHECK: [[SEG:%[0-9]+]] = "nbdl.construct"(%arg0, %arg1)
+; // CHECK-SAME: -> !nbdl.struct<@segment_s>
+; // CHECK-NEXT: [[SEG_STORE:%[0-9]+]] = "nbdl.lift_store"([[SEG]])
+; // CHECK: [[B:%[0-9]+]] = "nbdl.get"([[SEG_STORE]],
+; // CHECK-SAME: -> !nbdl.store<!nbdl.struct<@vec2_s>>
+; // CHECK: [[Y:%[0-9]+]] = "nbdl.get"([[B]],
+; // CHECK-SAME: -> !nbdl.store<f32>
+; // CHECK-NEXT: "nbdl.return"([[Y]])
+(define-fn segment_b_y ((A : i32) (B : i32)) -> (f32)
+  (match (get (lift-store (construct segment_s A B)) '.b '.y)
+    (else => (lambda (Y) (return Y)))))
+
+; // CHECK-LABEL: func.func @segment_a(%arg0: !nbdl.struct<@segment_s>)
+; // CHECK-SAME: -> !nbdl.struct<@vec2_s>
+; // CHECK: "nbdl.get"
+; // CHECK-SAME: -> !nbdl.store<!nbdl.struct<@vec2_s>>
+(define-fn segment_a ((S : segment_s)) -> (vec2_s)
+  (match (get (lift-store S) '.a)
+    (else => (lambda (A) (return A)))))
 
 (write-nbdl-module (finalize-module))
 }

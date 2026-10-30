@@ -54,6 +54,8 @@ public:
 
   schir::LexerWriterFnRef LexerWriter;
   std::string OutputBuffer;
+  // Hold the flushed output until it is committed.
+  llvm::SmallVector<std::pair<schir::SourceLocation, std::string>, 0> Chunks;
   llvm::raw_string_ostream OS;
 
   // Track number of members of context
@@ -124,8 +126,17 @@ public:
   void Flush() {
     if (OutputBuffer.empty())
       return;
-    LexerWriter(CurLoc, llvm::StringRef(OutputBuffer));
+    Chunks.emplace_back(CurLoc, OutputBuffer);
     OutputBuffer.clear();
+  }
+
+  // Write the flushed output to the lexer unless there is an error.
+  void Commit() {
+    Flush();
+    if (!CheckError())
+      for (auto& [Loc, Buffer] : Chunks)
+        LexerWriter(Loc, llvm::StringRef(Buffer));
+    Chunks.clear();
   }
 
   Derived& getDerived() {
@@ -1243,6 +1254,7 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
     Writer.IsDeclaration = Mode != TranslateMode::Definition;
     Writer.IsLLVMWrapper = Mode == TranslateMode::LLVMWrapper;
     Writer.Visit(Op);
+    Writer.Commit();
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);
   } else if (Mode != TranslateMode::Definition) {
@@ -1251,11 +1263,13 @@ translate_cpp(schir::LexerWriterFnRef LexerWriter, mlir::Operation* Op,
   } else if (auto DefineStructOp = dyn_cast<nbdl_spec::DefineStructOp>(Op)) {
     DefineStructWriter Writer(LexerWriter);
     Writer.VisitDefineStruct(DefineStructOp);
+    Writer.Commit();
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);
   } else if (auto ContextOp = dyn_cast<nbdl_spec::ContextOp>(Op)) {
     ContextWriter Writer(LexerWriter);
     Writer.VisitContext(ContextOp);
+    Writer.Commit();
     return std::make_tuple(std::move(Writer.ErrMsg),
                            Writer.ErrLoc, Writer.Irritant);
   } else {
@@ -1285,7 +1299,7 @@ writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
   }
 
   Writer.WriteVisitExpr(Op);
-  Writer.Flush(); // Writer has its own buffer.
+  Writer.Commit(); // Writer has its own buffer.
   return {llvm::failure(Writer.CheckError()), std::move(Writer.ErrMsg)};
 }
 } // namespace nbdl_spec

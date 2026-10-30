@@ -76,6 +76,31 @@ nbdl_spec::FuncNameOp nbdl_spec::getFuncName(mlir::Value V) {
   return V.getDefiningOp<nbdl_spec::FuncNameOp>();
 }
 
+nbdl_spec::DefineStructOp nbdl_spec::lookupStruct(mlir::Operation* From,
+                                                   StructType T) {
+  auto M = From->getParentOfType<mlir::ModuleOp>();
+  if (!M)
+    return nullptr;
+  return M.lookupSymbol<DefineStructOp>(T.getName());
+}
+
+mlir::Value nbdl_spec::DefineStructOp::lookupMember(llvm::StringRef Name) {
+  if (isExternal())
+    return nullptr;
+  auto Cont = llvm::dyn_cast<ContOp>(getBody().front().getTerminator());
+  if (!Cont)
+    return nullptr;
+  mlir::Value Store = Cont.getArg();
+  while (auto SC = Store.getDefiningOp<StoreComposeOp>()) {
+    mlir::Value Key = SC.getKey();
+    if (auto MN = Key ? Key.getDefiningOp<MemberNameOp>() : MemberNameOp())
+      if (MN.getName() == Name)
+        return SC.getLhs();
+    Store = SC.getRhs();
+  }
+  return nullptr;
+}
+
 nbdl_spec::ClosureOp nbdl_spec::getClosure(mlir::Value V) {
   V = lookThroughLoopArgs(V);
   if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
