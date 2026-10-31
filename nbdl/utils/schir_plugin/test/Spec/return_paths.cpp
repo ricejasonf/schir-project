@@ -27,7 +27,8 @@ namespace foo {
 (load-dialect "memref")
 (export-c max_i32 sum_to_i32 sum_sums_i32 count_down_i32 max_k_i32
           sum_to_k_i32 early_max_i32 clamp_k_i32 sum_if_positive_i32
-          find_positive_i32 find_positive_2d_i32 store_while_positive)
+          two_exits_i32 nested_exit_i32 find_positive_i32
+          find_positive_2d_i32 store_while_positive)
 (export-c-internal is_zero_i32 is_positive_i32 add_i32 sub_one_i32
                    store_first_i32)
 (export-shader vs_main max_i32 sum_to_i32 sum_sums_i32 count_down_i32
@@ -219,6 +220,35 @@ namespace foo {
     (visit sum_down N 0 (match-fn (Sum) (return Sum))))
   (return 0))
 
+; // Guard the code after a scope that follows another scope.
+; // CHECK-LABEL: func.func @"::foo::two_exits_i32"
+; // CHECK-SAME: (%arg0: i32, %arg1: i32) -> i32 {
+; // CHECK: [[OUTER:%.+]]:2 = scf.execute_region -> (i1, i32) {
+; // CHECK-NEXT: [[FIRST:%.+]]:2 = scf.execute_region -> (i1, i32) {
+; // CHECK: scf.if [[FIRST]]#0 -> (i1, i32) {
+; // CHECK: scf.if [[OUTER]]#0 -> (i32) {
+(define-fn two_exits_i32 ((A : i32) (B : i32)) -> (i32)
+  (match-if (visit is_positive_i32 A)
+    (return A))
+  (match-if (visit is_positive_i32 B)
+    (return B))
+  (return (constant-i32 "7")))
+
+; // Guard the code after a scope within a scope.
+; // CHECK-LABEL: func.func @"::foo::nested_exit_i32"
+; // CHECK-SAME: (%arg0: i32, %arg1: i32) -> i32 {
+; // CHECK: [[OUTER:%.+]]:2 = scf.execute_region -> (i1, i32) {
+; // CHECK: scf.if {{%.+}} -> (i1, i32) {
+; // CHECK-NEXT: [[INNER:%.+]]:2 = scf.execute_region -> (i1, i32) {
+; // CHECK: scf.if [[INNER]]#0 -> (i1, i32) {
+; // CHECK: scf.if [[OUTER]]#0 -> (i32) {
+(define-fn nested_exit_i32 ((A : i32) (B : i32)) -> (i32)
+  (match-cond ((visit is_positive_i32 A)
+    (match-if (visit is_zero_i32 B)
+      (return A))
+    (return B)))
+  (return (constant-i32 "7")))
+
 ; // Exit a loop over a memref with the result of a return.
 ; // CHECK-LABEL: func.func @"::foo::find_positive_i32"
 ; // CHECK: scf.while
@@ -310,6 +340,12 @@ int main() {
   SCHIR_ASSERT(foo::clamp_k_i32(-4) == 0);
   SCHIR_ASSERT(foo::sum_if_positive_i32(4) == 10);
   SCHIR_ASSERT(foo::sum_if_positive_i32(-4) == 0);
+  SCHIR_ASSERT(foo::two_exits_i32(1, 2) == 1);
+  SCHIR_ASSERT(foo::two_exits_i32(-1, 2) == 2);
+  SCHIR_ASSERT(foo::two_exits_i32(-1, -2) == 7);
+  SCHIR_ASSERT(foo::nested_exit_i32(1, 0) == 1);
+  SCHIR_ASSERT(foo::nested_exit_i32(1, 2) == 2);
+  SCHIR_ASSERT(foo::nested_exit_i32(-1, 2) == 7);
 
   std::vector<std::int32_t> v{-1, 0, 5, 7};
   SCHIR_ASSERT(foo::find_positive_i32(nbdl::bind_memref(v), 9) == 5);
