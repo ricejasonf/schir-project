@@ -21,7 +21,8 @@ namespace foo {
         (only (schir mlir) attr create-op load-dialect result))
 
 (load-dialect "memref")
-(export-shader copy_at store_first sum_4 cs_main vs_main cs_sum)
+(export-shader copy_at store_first sum_4 is_positive_f32 find_positive_4
+               cs_main vs_main cs_sum)
 
 (define f32 (type "f32"))
 (define i32 (type "i32"))
@@ -93,6 +94,33 @@ namespace foo {
     (lambda (X)
       (visit store_first X D)))
   (return))
+
+(define (f32-zero)
+  (result (create-op "arith.constant"
+                     (loc: 0)
+                     (operands:)
+                     (attributes: ("value" (attr "0.0" f32)))
+                     (result-types: f32))))
+
+(define-fn is_positive_f32 ((X : f32)) -> ((type "i1"))
+  (return (result (create-op "arith.cmpf"
+                             (loc: 0)
+                             (operands: X (f32-zero))
+                             (attributes:
+                               ("predicate" (attr "2" (type "i64"))))
+                             (result-types: (type "i1"))))))
+
+; // Exit the loop over a storage buffer with the result of a return.
+; // CHECK-LABEL: spirv.func @"::foo::find_positive_4"
+; // CHECK-SAME: -> f32
+; // CHECK: spirv.mlir.loop
+; // CHECK: spirv.ReturnValue
+(define-fn find_positive_4 ((W : !buf_4)) -> (f32)
+  (match-each (lift-store W)
+    (lambda (X)
+      (match-if (visit is_positive_f32 X)
+        (return X))))
+  (return (f32-zero)))
 
 ; // Read-only storage buffers are in set 0, read-write storage buffers in
 ; // set 1, and uniform buffers in set 2 of a compute shader.
