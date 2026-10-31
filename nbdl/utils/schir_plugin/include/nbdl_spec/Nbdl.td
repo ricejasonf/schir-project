@@ -435,9 +435,10 @@ def Nbdl_ReturnClosureOp : Nbdl_Op<"return_closure", [Pure]> {
     it is inlined into. Let the flatten pass replace each visit on it
     in tail position with a nbdl.return of the arguments of the visit
     (unwrapping each store argument.)
+    Name the func.func that it returns from with the function attribute.
   }];
 
-  let arguments = (ins);
+  let arguments = (ins FlatSymbolRefAttr:$function);
   let results = (outs Nbdl_Closure:$result);
 }
 

@@ -203,8 +203,8 @@
 (import (nbdl spec))
 (export-cpp run_return_not_tail)
 (define-fn run_return_not_tail ((N : 'int)) -> ('int)
-  (with-return (K)
-    (visit '|nbdl::noop_t{}| (visit K N))))
+  (with-return K)
+  (visit '|nbdl::noop_t{}| (visit K N)))
 (finalize-module)
 }
 

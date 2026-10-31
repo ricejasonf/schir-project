@@ -451,8 +451,8 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
 
     mlir::ValueRange Args = Op.getArgs();
-    if (nbdl_spec::getReturnClosure(Op.getFn()))
-      return inlineReturn(Op, Rewriter);
+    if (nbdl_spec::ReturnClosureOp K = nbdl_spec::getReturnClosure(Op.getFn()))
+      return inlineReturn(Op, K, Rewriter);
     if (nbdl_spec::ClosureOp Closure = nbdl_spec::getClosure(Op.getFn())) {
       if (Args.size() != Closure.getBody().getNumArguments()) {
         Op.emitError("invalid visit arity");
@@ -660,7 +660,11 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
   // Replace a visit on a return closure with a nbdl.return of
   // its arguments where each store argument is unwrapped.
   llvm::LogicalResult inlineReturn(nbdl_spec::VisitOp Op,
+                                   nbdl_spec::ReturnClosureOp K,
                                    mlir::PatternRewriter& Rewriter) const {
+    auto Fn = Op->getParentOfType<mlir::func::FuncOp>();
+    if (!Fn || Fn.getSymName() != K.getFunction())
+      return Rewriter.notifyMatchFailure(Op, "visit is not in its function");
     nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
     if (!Discard)
       return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
@@ -1655,10 +1659,24 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
       llvm::failed(checkStoreParents(Op)))
     return llvm::failure();
 
+  // It is an error to visit a return closure in another function.
+  llvm::SmallPtrSet<mlir::Operation*, 4> ForeignReturns;
+  Op->walk([&](VisitOp Visit) {
+    ReturnClosureOp K = getReturnClosure(Visit.getFn());
+    auto Fn = Visit->getParentOfType<mlir::func::FuncOp>();
+    if (!K || !Fn || Fn.getSymName() == K.getFunction())
+      return;
+    Visit.emitError("return continuation used outside of its function")
+      .attachNote(K.getLoc()) << "the continuation is bound here";
+    ForeignReturns.insert(K);
+    HasError = true;
+  });
+
   // It is an error if any closure outside of a match-fn is not inlined.
   Op->walk([&](mlir::Operation* Closure) {
     if (!isa<ClosureOp, ReturnClosureOp>(Closure) ||
-        Closure->getParentOfType<DefineMatchFnOp>())
+        Closure->getParentOfType<DefineMatchFnOp>() ||
+        ForeignReturns.contains(Closure))
       return;
     Closure->emitError("closure is not inlined");
     HasError = true;

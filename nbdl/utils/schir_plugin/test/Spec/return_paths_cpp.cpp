@@ -37,10 +37,10 @@ namespace foo {
 
 ; // Visit a return continuation in place of return.
 (define-fn abs_int ((X : 'int)) -> ('int)
-  (with-return (K)
-    (match-if (visit '|std::less<int>{}| X '|int{0}|)
-      (visit K (visit '|std::negate<int>{}| X)))
-    (visit K X)))
+  (with-return K)
+  (match-if (visit '|std::less<int>{}| X '|int{0}|)
+    (visit K (visit '|std::negate<int>{}| X)))
+  (visit K X))
 
 ; // End the function from a match-fn that receives the continuation.
 (define-match-fn find_greater_than (Range X Fn)
@@ -50,9 +50,9 @@ namespace foo {
         (visit Fn E)))))
 
 (define-fn find_greater_k ((V : '|std::vector<int>|) (X : 'int)) -> ('int)
-  (with-return (K)
-    (visit find_greater_than (lift-store V) X K)
-    (visit K X)))
+  (with-return K)
+  (visit find_greater_than (lift-store V) X K)
+  (visit K X))
 
 (finalize-module)
 }

@@ -128,18 +128,18 @@ namespace foo {
 ; // CHECK-NOT: nbdl.return_closure
 ; // CHECK: return
 (define-fn max_k_i32 ((A : i32) (B : i32)) -> (i32)
-  (with-return (K)
-    (match-if (cmpi "4" A B)
-      (visit K A)
-      (visit K B))))
+  (with-return K)
+  (match-if (cmpi "4" A B)
+    (visit K A)
+    (visit K B)))
 
 ; // Pass the return continuation as the continuation of a loop.
 ; // CHECK-LABEL: func.func @"::foo::sum_to_k_i32"
 ; // CHECK: [[WHILE:%.+]]:3 = scf.while
 ; // CHECK: return [[WHILE]]#2 : i32
 (define-fn sum_to_k_i32 ((N : i32)) -> (i32)
-  (with-return (K)
-    (visit sum_down N 0 K)))
+  (with-return K)
+  (visit sum_down N 0 K))
 
 ; // Sum the sums from N down to 1 adding to Acc via nested loops.
 (define-match-fn sum_sums_down (N Acc Fn)
@@ -204,10 +204,10 @@ namespace foo {
 ; // CHECK-LABEL: func.func @"::foo::clamp_k_i32"
 ; // CHECK: scf.execute_region -> (i1, i32)
 (define-fn clamp_k_i32 ((X : i32)) -> (i32)
-  (with-return (K)
-    (match-if (visit is_positive_i32 X)
-      (visit K X))
-    (visit K 0)))
+  (with-return K)
+  (match-if (visit is_positive_i32 X)
+    (visit K X))
+  (visit K 0))
 
 ; // Yield the flag to continue after the scope from a loop within it.
 ; // CHECK-LABEL: func.func @"::foo::sum_if_positive_i32"

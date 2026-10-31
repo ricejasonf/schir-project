@@ -322,7 +322,8 @@
     ;; Initial passes and C++ translation are deferred to finalize-module.
     (define (top-level-op Loc Name Thunk)
       (%check-exports Loc Name)
-      (let ((TopLevelOp (%create-top-level-op (top-level-name Name) Thunk)))
+      (let ((TopLevelOp (%create-top-level-op Loc (top-level-name Name)
+                                               Thunk)))
         (cond
           ((memq Name export-cpp-names)
            (set! export-cpp-ops
@@ -356,15 +357,31 @@
                         "name cannot be exported to both C++ and a shader: {}"
                         Name)))
 
+    ;; Denote that the Thunk of a top level operation is running.
+    (define %in-top-level-op #f)
+
     ;; Create and verify a top level operation via Thunk
     ;; which receives the symbol name.
-    (define (%create-top-level-op SymName Thunk)
-      (with-module-builder
-        (%main-module)
+    ;; Raise an error if it is nested within another top level operation.
+    (define (%create-top-level-op Loc SymName Thunk)
+      (when %in-top-level-op
+        (error-with-loc Loc "definition must be at the top level"))
+      (set! %in-top-level-op #t)
+      ;; Clear the flag on error since raise does not unwind dynamic-wind.
+      (with-exception-handler
+        (lambda (E)
+          (set! %in-top-level-op #f)
+          (raise E))
         (lambda ()
-          (define TopLevelOp (Thunk SymName))
-          ;; The verify pass may also raise a more specific error.
-          (verify TopLevelOp)
+          (define TopLevelOp
+            (with-module-builder
+              (%main-module)
+              (lambda ()
+                (define TopLevelOp (Thunk SymName))
+                ;; The verify pass may also raise a more specific error.
+                (verify TopLevelOp)
+                TopLevelOp)))
+          (set! %in-top-level-op #f)
           TopLevelOp)))
 
     (define %uncallable '%uncallable)
@@ -402,7 +419,7 @@
       (when (memq Name export-shader-names)
         (error-with-loc Loc "match-fn cannot be exported to a shader: {}"
                         Name))
-      (%create-top-level-op (%match-fn-name Name) Thunk))
+      (%create-top-level-op Loc (%match-fn-name Name) Thunk))
 
     (define !nbdl.member_name (type "!nbdl.member_name"))
     (define !nbdl.func_name (type "!nbdl.func_name"))
@@ -1492,9 +1509,25 @@
     ;; Use lift-store on a parameter to use it with Nbdl operations.
     ;; A result type of !nbdl.unknown is inferred from the returned values
     ;; by the inference passes. (see register-inference-pass)
+    ;; An optional (with-return K) clause before the body binds K to a
+    ;; continuation where (visit K Expr ...) is (return Expr ...)
+    ;; so it may be passed to match-fns that end the function.
+    ;; Each visit on K must be in tail position.
     (define-syntax define-fn
-      (syntax-rules (: ->)
+      (syntax-rules (: -> with-return)
+        ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...)
+           (with-return K) Body1 BodyN ...)
+         (%define-fn Name ((Arg : ArgT) ...) (RetT ...) (K)
+           Body1 BodyN ...))
         ((define-fn Name ((Arg : ArgT) ...) -> (RetT ...) Body1 BodyN ...)
+         (%define-fn Name ((Arg : ArgT) ...) (RetT ...) ()
+           Body1 BodyN ...))))
+
+    ;; Define a function for define-fn binding each K to a return closure.
+    (define-syntax %define-fn
+      (syntax-rules (:)
+        ((%define-fn Name ((Arg : ArgT) ...) (RetT ...) (K ...)
+           Body1 BodyN ...)
          (define Name
            (let ((SymName #f))
             (let ((FuncOp
@@ -1520,7 +1553,11 @@
                          (result-types:)
                          (region: "body" ((Arg : (%cpp-or-type ArgT))
                                           ...)
-                                  Body1 BodyN ...))))))
+                                  (let ((K (%return-closure
+                                             (syntax-source-loc K)
+                                             SymName))
+                                        ...)
+                                    Body1 BodyN ...)))))))
              ;; Process exports if any.
              (when (or (memq 'Name export-c-names)
                        (memq 'Name export-c-internal-names)
@@ -1601,25 +1638,24 @@
                      (list (%single-expr Expr1) (%single-expr ExprN) ...)))))
 
     ;; Create a closure as an expr that returns its arguments from the
-    ;; function that it is inlined into.
-    (define (%return-closure Loc)
+    ;; function named SymName.
+    (define (%return-closure Loc SymName)
       (%expr Loc
              (lambda (Loc Fn)
                (Fn (result
                      (create-op "nbdl.return_closure"
                                 (loc: Loc)
                                 (operands:)
-                                (attributes:)
+                                (attributes:
+                                  ("function" (flat-symbolref-attr SymName)))
                                 (result-types: !nbdl.closure)))))))
 
-    ;; Bind K to a continuation where (visit K Expr ...) is (return Expr ...)
-    ;; so it may be passed to match-fns that end the function.
-    ;; Each visit on K must be in tail position.
+    ;; Reject a with-return clause with a nice error message.
     (define-syntax with-return
       (syntax-rules ()
-        ((with-return (K) Body1 BodyN ...)
-         (let ((K (%return-closure (syntax-source-loc K))))
-           Body1 BodyN ...))))
+        ((with-return Form ...)
+         (error-with-loc (syntax-source-loc)
+           "unexpected with-return"))))
 
     ;; Match stores via a let* like syntax.
     ;; Optionally, append a type constraint via `:` indentifier.
