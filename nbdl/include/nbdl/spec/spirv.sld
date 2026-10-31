@@ -384,7 +384,7 @@
     (define %spirv-binary #f)
 
     ;; Export the SPIRV binary of the functions exported via export-shader
-    ;; as a C function Name that returns its words as a
+    ;; as a C function Name_get_program that returns its words as a
     ;; nbdl::memref<std::int32_t, 1> and a C++ table Name_entries of
     ;; nbdl::shader_entry for each entry point.
     (define-syntax export-spirv-binary
@@ -442,7 +442,10 @@
               (Loop (cdr Rest)
                     (if Entry (cons (car (cddr Entry)) Result) Result))))))
       (let ((FuncOp (%define-spirv-binary SPIRVModule (finalize-llvm-module)
-                                          (namespace-prefix Name) Loc)))
+                                          (string-append
+                                            (namespace-prefix Name)
+                                            "_get_program")
+                                          Loc)))
         (mark-c-adapter FuncOp)
         ((emit-cpp Module define-llvm-wrapper) FuncOp)
         (write-lexer

@@ -133,11 +133,11 @@ int main() {
                                     ""));
 
   SDL_GPUComputePipeline* Pipeline =
-      nbdl::sdl3::create_compute_pipeline(Device, foo::shaders(), CsScale);
+      nbdl::sdl3::create_compute_pipeline(Device, foo::shaders_get_program(), CsScale);
   SCHIR_ASSERT(Pipeline != nullptr);
 
   // A vertex or fragment shader cannot be made from a compute entry point.
-  SCHIR_ASSERT(nbdl::sdl3::create_shader(Device, foo::shaders(), CsScale)
+  SCHIR_ASSERT(nbdl::sdl3::create_shader(Device, foo::shaders_get_program(), CsScale)
                == nullptr);
 
   std::array<float, NumSrc> Src = {1.0f, 2.0f, 3.0f};

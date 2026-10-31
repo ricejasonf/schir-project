@@ -114,13 +114,13 @@ int main() {
                                     ""));
 
   // A compute pipeline cannot be made from a vertex entry point.
-  SCHIR_ASSERT(nbdl::sdl3::create_compute_pipeline(Device, foo::shaders(),
+  SCHIR_ASSERT(nbdl::sdl3::create_compute_pipeline(Device, foo::shaders_get_program(),
                                                    VsTriangle) == nullptr);
 
   SDL_GPUShader* VertexShader =
-      nbdl::sdl3::create_shader(Device, foo::shaders(), VsTriangle);
+      nbdl::sdl3::create_shader(Device, foo::shaders_get_program(), VsTriangle);
   SDL_GPUShader* FragmentShader =
-      nbdl::sdl3::create_shader(Device, foo::shaders(), FsColor);
+      nbdl::sdl3::create_shader(Device, foo::shaders_get_program(), FsColor);
   SCHIR_ASSERT(VertexShader != nullptr && FragmentShader != nullptr);
 
   // Draw without culling so the winding and y direction do not matter.

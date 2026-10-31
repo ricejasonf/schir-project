@@ -10,9 +10,9 @@
 // RUN: %t
 
 // The binary is a private constant returned via a C adapter.
-// LLVM: @"::foo::shaders.spv" = private constant [{{[0-9]+}} x i32] [i32 119734787,
+// LLVM: @"::foo::shaders_get_program.spv" = private constant [{{[0-9]+}} x i32] [i32 119734787,
 // LLVM-SAME: align 4
-// LLVM-LABEL: define void @nbdl_c_3foo7shaders(ptr %0)
+// LLVM-LABEL: define void @nbdl_c_3foo19shaders_get_program(ptr %0)
 
 // SPIRV-DAG: OpEntryPoint Fragment %fs_main "fs_main"
 // SPIRV-DAG: OpEntryPoint Vertex %vs_main "vs_main"
@@ -105,7 +105,7 @@ static_assert(foo::shaders_entries[2].threadcount[2] == 1);
 
 int main() {
   // Receive the SPIRV words of the binary.
-  nbdl::memref<std::int32_t, 1> code = foo::shaders();
+  nbdl::memref<std::int32_t, 1> code = foo::shaders_get_program();
   SCHIR_ASSERT(code.size > 5);
   SCHIR_ASSERT(code.stride == 1);
   SCHIR_ASSERT(static_cast<std::uint32_t>(code.aligned[code.offset])
