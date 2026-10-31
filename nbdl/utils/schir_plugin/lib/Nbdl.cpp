@@ -20,6 +20,7 @@
 #include <mlir/Dialect/LLVMIR/LLVMTypes.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SPIRV/IR/SPIRVOps.h>
+#include <mlir/Dialect/Vector/IR/VectorOps.h>
 #include <mlir/Target/SPIRV/Serialization.h>
 #include <llvm/Support/FileSystem.h>
 #include <memory>
@@ -402,10 +403,11 @@ void nbdl_spec_register_nbdl_dialect(schir::Context& C,
   if (Args.size() != 0)
     return C.RaiseError("invalid arity");
   C.DialectRegistry->insert<nbdl_spec::NbdlDialect>();
-  // Functions exported via export-c or export-shader may use arith and
-  // memref operations.
+  // Functions exported via export-c or export-shader may use arith,
+  // memref, and vector operations.
   C.DialectRegistry->insert<mlir::arith::ArithDialect,
-                            mlir::memref::MemRefDialect>();
+                            mlir::memref::MemRefDialect,
+                            mlir::vector::VectorDialect>();
   C.DialectRegistry->addExtension(
     +[](mlir::MLIRContext*, nbdl_spec::NbdlDialect* D) {
       D->addInterfaces<NbdlMappableToCpp>();

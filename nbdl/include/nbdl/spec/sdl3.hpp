@@ -74,6 +74,16 @@ compute_pipeline_create_info(memref<std::int32_t, 1> Code,
   return Info;
 }
 
+// Describe a graphics pipeline with the given shaders and default state.
+inline SDL_GPUGraphicsPipelineCreateInfo
+graphics_pipeline_create_info(SDL_GPUShader* VertexShader,
+                              SDL_GPUShader* FragmentShader) {
+  SDL_GPUGraphicsPipelineCreateInfo Info{};
+  Info.vertex_shader = VertexShader;
+  Info.fragment_shader = FragmentShader;
+  return Info;
+}
+
 // Create the shader of a vertex or fragment entry point.
 inline SDL_GPUShader* create_shader(SDL_GPUDevice* Device,
                                     memref<std::int32_t, 1> Code,
