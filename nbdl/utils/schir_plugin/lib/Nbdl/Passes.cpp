@@ -451,6 +451,8 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
       return Rewriter.notifyMatchFailure(Op, "sfinae visit is not inlined");
 
     mlir::ValueRange Args = Op.getArgs();
+    if (nbdl_spec::getReturnClosure(Op.getFn()))
+      return inlineReturn(Op, Rewriter);
     if (nbdl_spec::ClosureOp Closure = nbdl_spec::getClosure(Op.getFn())) {
       if (Args.size() != Closure.getBody().getNumArguments()) {
         Op.emitError("invalid visit arity");
@@ -649,6 +651,40 @@ struct InlineVisit : OpRewriteSchirClang<nbdl_spec::VisitOp> {
     // The closure body replaces both the visit and the discard.
     for (mlir::Operation& ClosureOp : ClosureBody)
       Rewriter.clone(ClosureOp, Mapping);
+
+    Rewriter.eraseOp(Discard);
+    Rewriter.eraseOp(Op);
+    return llvm::success();
+  }
+
+  // Replace a visit on a return closure with a nbdl.return of
+  // its arguments where each store argument is unwrapped.
+  llvm::LogicalResult inlineReturn(nbdl_spec::VisitOp Op,
+                                   mlir::PatternRewriter& Rewriter) const {
+    nbdl_spec::DiscardOp Discard = getTailDiscard(Op);
+    if (!Discard)
+      return Rewriter.notifyMatchFailure(Op, "visit result is not discarded");
+    for (mlir::Value Arg : Op.getArgs()) {
+      if (!isa<nbdl_spec::StoreType>(Arg.getType()))
+        continue;
+      if (needsResolve(Arg))
+        return Rewriter.notifyMatchFailure(Op, "args are not resolved");
+      if (!getSingleAlt(Arg)) {
+        Op.emitError("returned store must have a single alternative");
+        return llvm::failure();
+      }
+    }
+
+    Rewriter.setInsertionPoint(Discard);
+    llvm::SmallVector<mlir::Value, 4> Results;
+    for (mlir::Value Arg : Op.getArgs()) {
+      if (mlir::Type AltT = getSingleAlt(Arg))
+        Results.push_back(nbdl_spec::UnwrapOp::create(
+              Rewriter, Arg.getLoc(), AltT, Arg));
+      else
+        Results.push_back(Arg);
+    }
+    nbdl_spec::ReturnOp::create(Rewriter, Op.getLoc(), Results);
 
     Rewriter.eraseOp(Discard);
     Rewriter.eraseOp(Op);
@@ -1620,11 +1656,11 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
     return llvm::failure();
 
   // It is an error if any closure outside of a match-fn is not inlined.
-  Op->walk([&](ClosureOp Closure) {
-    if (Closure->getParentOfType<DefineMatchFnOp>())
+  Op->walk([&](mlir::Operation* Closure) {
+    if (!isa<ClosureOp, ReturnClosureOp>(Closure) ||
+        Closure->getParentOfType<DefineMatchFnOp>())
       return;
-    Closure.emitError("closure is not inlined (ie each visit on it "
-                      "must be in tail position)");
+    Closure->emitError("closure is not inlined");
     HasError = true;
   });
   return llvm::failure(HasError);

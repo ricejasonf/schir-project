@@ -182,7 +182,7 @@
 
 // Require each visit on a closure to be in tail position.
 // expected-error@* {{nbdl inference passes failed}}
-// expected-note@+6 {{closure is not inlined (ie each visit on it must be in tail position)}}
+// expected-note@+6 {{closure is not inlined}}
 #pragma schir_scheme
 {
 (import (nbdl spec))
@@ -192,6 +192,19 @@
     (visit '|nbdl::noop_t{}| N)
     (visit '|nbdl::noop_t{}| N))
   (return))
+(finalize-module)
+}
+
+// Require each visit on a return continuation to be in tail position.
+// expected-error@* {{nbdl inference passes failed}}
+// expected-note@+6 {{closure is not inlined}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-cpp run_return_not_tail)
+(define-fn run_return_not_tail ((N : 'int)) -> ('int)
+  (with-return (K)
+    (visit '|nbdl::noop_t{}| (visit K N))))
 (finalize-module)
 }
 

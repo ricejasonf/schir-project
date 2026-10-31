@@ -429,6 +429,18 @@ def Nbdl_ClosureOp : Nbdl_Op<"closure", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Nbdl_ReturnClosureOp : Nbdl_Op<"return_closure", [Pure]> {
+  let description = [{
+    Create a closure that returns its arguments from the function that
+    it is inlined into. Let the flatten pass replace each visit on it
+    in tail position with a nbdl.return of the arguments of the visit
+    (unwrapping each store argument.)
+  }];
+
+  let arguments = (ins);
+  let results = (outs Nbdl_Closure:$result);
+}
+
 def Nbdl_ContextOp : Nbdl_Op<"context", [Symbol]> {
   let description = [{
     Encapsulate a store object to serve as a root node in a state tree.

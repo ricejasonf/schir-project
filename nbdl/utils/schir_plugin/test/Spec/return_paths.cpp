@@ -19,7 +19,8 @@ namespace foo {
         (nbdl spec spirv)
         (only (schir mlir) attr create-op result))
 
-(export-c max_i32 sum_to_i32 sum_sums_i32 count_down_i32)
+(export-c max_i32 sum_to_i32 sum_sums_i32 count_down_i32 max_k_i32
+          sum_to_k_i32)
 (export-c-internal is_zero_i32 is_positive_i32 add_i32 sub_one_i32)
 (export-shader vs_main max_i32 sum_to_i32 sum_sums_i32 count_down_i32
                is_zero_i32 is_positive_i32 add_i32 sub_one_i32)
@@ -108,6 +109,25 @@ namespace foo {
 (define-fn sum_to_i32 ((N : i32)) -> (i32)
   (visit sum_down N 0 (match-fn (Sum) (return Sum))))
 
+; // Visit a return continuation in each branch.
+; // CHECK-LABEL: func.func @"::foo::max_k_i32"
+; // CHECK: scf.if
+; // CHECK-NOT: nbdl.return_closure
+; // CHECK: return
+(define-fn max_k_i32 ((A : i32) (B : i32)) -> (i32)
+  (with-return (K)
+    (match-if (cmpi "4" A B)
+      (visit K A)
+      (visit K B))))
+
+; // Pass the return continuation as the continuation of a loop.
+; // CHECK-LABEL: func.func @"::foo::sum_to_k_i32"
+; // CHECK: [[WHILE:%.+]]:3 = scf.while
+; // CHECK: return [[WHILE]]#2 : i32
+(define-fn sum_to_k_i32 ((N : i32)) -> (i32)
+  (with-return (K)
+    (visit sum_down N 0 K)))
+
 ; // Sum the sums from N down to 1 adding to Acc via nested loops.
 (define-match-fn sum_sums_down (N Acc Fn)
   (match-if (visit is_zero_i32 N)
@@ -167,6 +187,10 @@ int main() {
   SCHIR_ASSERT(foo::max_i32(5, -3) == 5);
   SCHIR_ASSERT(foo::sum_to_i32(0) == 0);
   SCHIR_ASSERT(foo::sum_to_i32(4) == 10);
+  SCHIR_ASSERT(foo::max_k_i32(2, 3) == 3);
+  SCHIR_ASSERT(foo::max_k_i32(5, -3) == 5);
+  SCHIR_ASSERT(foo::sum_to_k_i32(0) == 0);
+  SCHIR_ASSERT(foo::sum_to_k_i32(4) == 10);
   // 6 + 3 + 1
   SCHIR_ASSERT(foo::sum_sums_i32(3) == 10);
   SCHIR_ASSERT(foo::sum_sums_i32(0) == 0);

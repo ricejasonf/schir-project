@@ -133,11 +133,21 @@ nbdl_spec::DefineStructOp::getMembers() {
   return Members;
 }
 
-nbdl_spec::ClosureOp nbdl_spec::getClosure(mlir::Value V) {
-  V = lookThroughLoopArgs(V);
+// Get the value that a closure (possibly lifted to a store) is from.
+static mlir::Value lookThroughClosureArg(mlir::Value V) {
+  V = nbdl_spec::lookThroughLoopArgs(V);
   if (auto Op = V.getDefiningOp<nbdl_spec::LiftStoreOp>())
-    V = lookThroughLoopArgs(Op.getValue());
-  return V.getDefiningOp<nbdl_spec::ClosureOp>();
+    V = nbdl_spec::lookThroughLoopArgs(Op.getValue());
+  return V;
+}
+
+nbdl_spec::ClosureOp nbdl_spec::getClosure(mlir::Value V) {
+  return lookThroughClosureArg(V).getDefiningOp<nbdl_spec::ClosureOp>();
+}
+
+nbdl_spec::ReturnClosureOp nbdl_spec::getReturnClosure(mlir::Value V) {
+  return lookThroughClosureArg(V)
+    .getDefiningOp<nbdl_spec::ReturnClosureOp>();
 }
 
 // Look up the function in the parent module of a visit

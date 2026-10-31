@@ -95,6 +95,9 @@ DefineStructOp lookupStruct(mlir::Operation* From, StructType T);
 // Get the ClosureOp that defines V or null if V is not a closure.
 ClosureOp getClosure(mlir::Value V);
 
+// Get the ReturnClosureOp that defines V or null if there is none.
+ReturnClosureOp getReturnClosure(mlir::Value V);
+
 // Check that each visit on a function within its own body (ie a
 // recursive visit) is in tail position and that there is a base case.
 llvm::LogicalResult verifyRecursiveVisits(DefineMatchFnOp Fn);

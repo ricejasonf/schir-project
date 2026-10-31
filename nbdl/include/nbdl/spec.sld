@@ -1600,6 +1600,27 @@
          (return-aux (syntax-source-loc Expr1)
                      (list (%single-expr Expr1) (%single-expr ExprN) ...)))))
 
+    ;; Create a closure as an expr that returns its arguments from the
+    ;; function that it is inlined into.
+    (define (%return-closure Loc)
+      (%expr Loc
+             (lambda (Loc Fn)
+               (Fn (result
+                     (create-op "nbdl.return_closure"
+                                (loc: Loc)
+                                (operands:)
+                                (attributes:)
+                                (result-types: !nbdl.closure)))))))
+
+    ;; Bind K to a continuation where (visit K Expr ...) is (return Expr ...)
+    ;; so it may be passed to match-fns that end the function.
+    ;; Each visit on K must be in tail position.
+    (define-syntax with-return
+      (syntax-rules ()
+        ((with-return (K) Body1 BodyN ...)
+         (let ((K (%return-closure (syntax-source-loc K))))
+           Body1 BodyN ...))))
+
     ;; Match stores via a let* like syntax.
     ;; Optionally, append a type constraint via `:` indentifier.
     ;; For example,
@@ -1775,6 +1796,7 @@
     lift-store
     get-parent
     return
+    with-return
     register-inference-pass
     register-lowering-pass
     match-params
