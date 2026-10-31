@@ -635,9 +635,12 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
   }
 
   void Visit(ReturnOp Op) {
-    if (!isa<mlir::func::FuncOp>(Op->getParentOp()))
-      return SetError("nbdl.return is nested in an operation"
-                      " that was not inlined", Op);
+    // Reject a return that would return from a lambda.
+    for (mlir::Operation* Parent = Op->getParentOp();
+         !isa<mlir::func::FuncOp>(Parent); Parent = Parent->getParentOp())
+      if (!isa<MatchIfOp, MatchEachOp, ScopeOp>(Parent))
+        return SetError("nbdl.return is nested in an operation"
+                        " that is translated to a lambda", Op);
     if (Op.getArgs().size() > 1)
       return SetError("nbdl.return of multiple values cannot be translated"
                       " to C++", Op);
@@ -944,15 +947,14 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
       return SetError("match_each on a memref is not supported in C++ "
                       "(see export-c)", Op);
 
-    OS << "::std::ranges::for_each(";
-    WriteExpr(Range);
-
     ValueMapScope Scope(ValueMap);
-    OS << ", [&]([[maybe_unused]] auto&& "
-       << SetLocalVarName(Arg, "arg_");
+    OS << "for ([[maybe_unused]] auto&& "
+       << SetLocalVarName(Arg, "arg_")
+       << " : ";
+    WriteExpr(Range);
     OS << ") {\n";
     VisitRegion(Body);
-    OS << "});\n";
+    OS << "}\n";
   }
 
   // Write a loop as a recursive lambda invoked with the initial values.
