@@ -70,8 +70,6 @@ class ContinuationStack {
     bool operator==(DWind Other) const { return Vec == Other.Vec; }
   };
 
-  DWind CurDW;
-
   bool DidCallContinuation = false; // debug info
 
   Derived& getDerived() {
@@ -146,7 +144,7 @@ private:
   //  - Allows escape procedures to call their
   //    dynamic-wind points when entering or exiting
   //    a "dynamic extent".
-  //  - Do not modify CurDW in this function
+  //  - Set CurDW to each winding as it is exited or entered.
   //  - Inspired by travel-to-point!
   void TraverseWindings(DWind Src, DWind Dest) {
 #if SCHIR_DYNAMIC_WIND_DEBUG
@@ -165,6 +163,10 @@ private:
     if (Src.getDepth() < Dest.getDepth()) {
       C.PushCont([](Derived& C, ValueRefs) {
         DWind Dest = C.getCapture(0);
+        C.PushCont([](Derived& C, ValueRefs) {
+          C.CurDW = C.getCapture(0);
+          C.Cont();
+        }, CaptureList{Dest});
         C.ApplyThunk(Value(Dest.getBeforeFn()));
       }, CaptureList{Dest});
       C.TraverseWindings(Src, Dest.getParent());
@@ -174,9 +176,20 @@ private:
         DWind Dest = C.getCapture(1);
         C.TraverseWindings(Src.getParent(), Dest);
       }, CaptureList{Src, Dest});
+      C.CurDW = Src.getParent();
       C.ApplyThunk(Value(Src.getAfterFn()));
     }
   }
+
+protected:
+  // FIXME Add garbage collection for CurDW and BottomDW.
+  DWind CurDW;
+
+  // Store the winding that an uncaught error unwinds to.
+  DWind BottomDW;
+
+  // Call the after-thunks from the current winding down to the bottom winding.
+  void UnwindToBottom() { TraverseWindings(CurDW, BottomDW); }
 
 public:
   ContinuationStack()
@@ -367,12 +380,10 @@ public:
       C.PushCont([](Derived& C, ValueRefs) {
         String* SavedStack  = cast<String>(C.getCapture(0));
         Vector* SavedArgs   = cast<Vector>(C.getCapture(1));
-        C.CurDW = C.getCapture(2); // SavedDW
         C.RestoreStack(SavedStack);
         C.Cont(SavedArgs->getElements());
-      }, CaptureList{SavedStack, SavedArgs, SavedDW});
+      }, CaptureList{SavedStack, SavedArgs});
       C.TraverseWindings(this->CurDW, SavedDW);
-      CurDW = SavedDW;
     }, CaptureList{SavedStack, SavedDW});
 
     C.Apply(InputProc, Proc);

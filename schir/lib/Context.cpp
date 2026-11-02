@@ -1300,12 +1300,15 @@ void Context::Raise(Value Obj) {
   ClearContinuation();
   if (isa<Empty>(ExceptionHandlers)) {
     ClearStack();
-    return Cont();
+    return UnwindToBottom();
   }
   if (!isa<Pair>(ExceptionHandlers)) {
     if (isa<schir::Error>(Obj)) {
       Value BottomHandler = ExceptionHandlers;
-      return Apply(BottomHandler, Obj);
+      PushCont([](Context& C, ValueRefs) {
+        C.Apply(C.getCapture(0), C.getCapture(1));
+      }, CaptureList{BottomHandler, Obj});
+      return UnwindToBottom();
     } else {
       std::string Msg;
       llvm::raw_string_ostream Stream(Msg);
@@ -1364,14 +1367,15 @@ void Context::ManagedObjectWind(void* Ptr, DestructorTy Destructor,
   // Sentinel is referenced by each lambda
   // to share the state of the object's lifetime.
   // This is checked everytime we enter the dynamic extent.
-  Value Sentinel = CreateVector(std::initializer_list<Value>{Bool{true}});
+  Value Sentinel = CreateVector(std::initializer_list<Value>{
+      /*IsAlive=*/Bool{true}, /*IsError=*/Bool{false}});
 
   Value Destroy = CreateLambda([Ptr, Destructor](Context& C, ValueRefs Args) {
     Vector* Sentinel = dyn_cast<Vector>(C.getCapture(0));
     if (!Sentinel || !Sentinel->get(0)) {
       // We could only get here if the user saved an escape proc
       // in the After thunk.
-      C.RaiseError("managed object is already destroyed");
+      return C.RaiseError("managed object is already destroyed");
     }
 
     // Clear the sentinel value and delete the managed object.
@@ -1392,18 +1396,29 @@ void Context::ManagedObjectWind(void* Ptr, DestructorTy Destructor,
     C.Apply(Before, {});
   }, CaptureList{Sentinel, Before});
 
+  Value SafeAfter = CreateLambda([](Context& C, ValueRefs) {
+    Vector* Sentinel = cast<Vector>(C.getCapture(0));
+    Value After = C.getCapture(1);
+    Value Destroy = C.getCapture(2);
+    // Destroy the object when an error leaves the extent.
+    if (Sentinel->get(1) == Bool{true})
+      C.PushCont(Destroy);
+    C.Apply(After, {});
+  }, CaptureList{Sentinel, After, Destroy});
+
   Value ErrorThunk = CreateLambda([](Context& C, ValueRefs) {
     Value SafeBefore = C.getCapture(0);
     Value Thunk = C.getCapture(1);
-    Value After = C.getCapture(2);
-    C.DynamicWind(SafeBefore, Thunk, After);
-  }, CaptureList{SafeBefore, Thunk, After});
+    Value SafeAfter = C.getCapture(2);
+    C.DynamicWind(SafeBefore, Thunk, SafeAfter);
+  }, CaptureList{SafeBefore, Thunk, SafeAfter});
 
   Value ErrorHandler = CreateLambda([](Context& C, ValueRefs Args) {
-    // Destroy the managed object on error.
-    Value Destroy = C.getCapture(0);
-    C.Apply(Destroy, Args);
-  }, CaptureList{Destroy});
+    // Mark the error and continue raising it.
+    Vector* Sentinel = cast<Vector>(C.getCapture(0));
+    Sentinel->get(1) = Bool{true};
+    C.Cont(Args);
+  }, CaptureList{Sentinel});
 
   // Destroy the object upon continuing.
   PushCont(Destroy);
@@ -1446,21 +1461,13 @@ public:
 
     // Since we don't own PrevEnv do not capture it in scheme land.
     Value After = Context.CreateLambda(
-      [PrevOpGen, PrevEnv](schir::Context& C, ValueRefs Args) {
+      [PrevOpGen, PrevEnv](schir::Context& C, ValueRefs) {
         C.setEnvironment(PrevEnv);
         C.OpGen = PrevOpGen;
-        if (Args.size() == 1 && isa<Error>(Args[0]))
-          return C.Cont(Args[0]);
         C.Cont();
       }, {});
 
-    Value SafeThunk = Context.CreateLambda([](schir::Context& C, ValueRefs) {
-      schir::Value Thunk = C.getCapture(0);
-      schir::Value After = C.getCapture(1);
-      // Clean up with the After-thunk.
-      C.WithExceptionHandler(After, Thunk);
-    }, CaptureList{Thunk, After});
-    Context.DynamicWind(std::move(Ptr), Before, SafeThunk, After);
+    Context.DynamicWind(std::move(Ptr), Before, Thunk, After);
   }
 };
 } // namespace
@@ -1481,11 +1488,14 @@ Value Context::RunSync(Value Callee, ValueRefs Args) {
       C.Yield(Args);
     });
   Value PrevHandlers = ExceptionHandlers;
+  Value PrevBottomDW = BottomDW;
   ExceptionHandlers = CatchHandler;
+  BottomDW = CurDW;
   PushBreak();
   Apply(Callee, Args);
   Resume();
   ExceptionHandlers = PrevHandlers;
+  BottomDW = PrevBottomDW;
   return getCurrentResult();
 }
 

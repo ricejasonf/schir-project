@@ -60,3 +60,28 @@
 ; CHECK: within-environment-4
 ; CHECK: exit-environment-4
 (enter 0)
+
+; Escape into a sibling extent of the same depth.
+(define sibling-k #f)
+(define sibling-done #f)
+; CHECK: a-before
+; CHECK-NEXT: a-during
+; CHECK-NEXT: a-after
+(dynamic-wind
+  (lambda () (write 'a-before) (newline))
+  (lambda ()
+    (call/cc (lambda (k) (set! sibling-k k)))
+    (write 'a-during)
+    (newline))
+  (lambda () (write 'a-after) (newline)))
+; CHECK-NEXT: b-before
+; CHECK-NEXT: b-after
+; CHECK-NEXT: a-before
+; CHECK-NEXT: a-during
+; CHECK-NEXT: a-after
+(if sibling-done
+  #f
+  (dynamic-wind
+    (lambda () (write 'b-before) (newline))
+    (lambda () (set! sibling-done #t) (sibling-k 0))
+    (lambda () (write 'b-after) (newline))))

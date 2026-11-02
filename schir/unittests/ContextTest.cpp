@@ -99,6 +99,77 @@ TEST(ContextTest, DynamicWindExceptionExit) {
   EXPECT_FALSE(IsAlive);
 }
 
+TEST(ContextTest, DynamicWindExceptionExitAfterInner) {
+  auto Context = schir::Context();
+  bool IsAlive = false;
+  bool Check_1 = false;
+  auto TrackerPtr = std::make_unique<LifetimeTracker>(IsAlive);
+
+  schir::Value Noop = Context.CreateLambda(
+    [](schir::Context& C, schir::ValueRefs) { C.Cont(); });
+  schir::Value InnerAfter = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      Check_1 = IsAlive;
+      C.Cont();
+    });
+  schir::Value Fail = Context.CreateLambda(
+    [](schir::Context& C, schir::ValueRefs) {
+      C.Raise(schir::Undefined());
+    });
+  schir::Value Thunk = Context.CreateLambda(
+    [](schir::Context& C, schir::ValueRefs) {
+      C.DynamicWind(C.getCapture(0), C.getCapture(1), C.getCapture(2));
+    }, schir::CaptureList{Noop, Fail, InnerAfter});
+
+  // Destroy the managed object after the inner after-thunk on error.
+  Context.DynamicWind(std::move(TrackerPtr), Thunk);
+  Context.Resume();
+  EXPECT_TRUE(Check_1);
+  EXPECT_FALSE(IsAlive);
+}
+
+TEST(ContextTest, DynamicWindReenterDestroyed) {
+  auto Context = schir::Context();
+  bool IsAlive = false;
+  int BeforeCount = 0;
+  int ResumeCount = 0;
+  schir::Value EscapeProc;
+  auto TrackerPtr = std::make_unique<LifetimeTracker>(IsAlive);
+
+  schir::Value Before = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      ++BeforeCount;
+      C.Cont();
+    });
+  schir::Value After = Context.CreateLambda(
+    [](schir::Context& C, schir::ValueRefs) { C.Cont(); });
+  schir::Value Thunk = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      C.PushCont([&](schir::Context& C, schir::ValueRefs) {
+        ++ResumeCount;
+        C.Cont();
+      });
+      // Save an escape procedure into the extent.
+      C.CallCC(C.CreateLambda([&](schir::Context& C, schir::ValueRefs Args) {
+        EscapeProc = Args[0];
+        C.Cont();
+      }));
+    });
+
+  Context.DynamicWind(std::move(TrackerPtr), Before, Thunk, After);
+  Context.Resume();
+  EXPECT_EQ(BeforeCount, 1);
+  EXPECT_EQ(ResumeCount, 1);
+  EXPECT_FALSE(IsAlive);
+
+  // Do not reenter the extent of the destroyed object.
+  Context.Apply(EscapeProc, schir::Value(schir::Undefined()));
+  Context.Resume();
+  EXPECT_EQ(BeforeCount, 1);
+  EXPECT_EQ(ResumeCount, 1);
+  EXPECT_FALSE(IsAlive);
+}
+
 TEST(ContextTest, SharedAnyLifetime) {
   auto Context = schir::Context();
   bool IsAlive = false;
