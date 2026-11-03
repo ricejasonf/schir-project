@@ -366,23 +366,17 @@
     (define (%create-top-level-op Loc SymName Thunk)
       (when %in-top-level-op
         (error-with-loc Loc "definition must be at the top level"))
-      (set! %in-top-level-op #t)
-      ;; Clear the flag on error since raise does not unwind dynamic-wind.
-      (with-exception-handler
-        (lambda (E)
-          (set! %in-top-level-op #f)
-          (raise E))
+      (dynamic-wind
+        (lambda () (set! %in-top-level-op #t))
         (lambda ()
-          (define TopLevelOp
-            (with-module-builder
-              (%main-module)
-              (lambda ()
-                (define TopLevelOp (Thunk SymName))
-                ;; The verify pass may also raise a more specific error.
-                (verify TopLevelOp)
-                TopLevelOp)))
-          (set! %in-top-level-op #f)
-          TopLevelOp)))
+          (with-module-builder
+            (%main-module)
+            (lambda ()
+              (define TopLevelOp (Thunk SymName))
+              ;; The verify pass may also raise a more specific error.
+              (verify TopLevelOp)
+              TopLevelOp)))
+        (lambda () (set! %in-top-level-op #f))))
 
     (define %uncallable '%uncallable)
 
