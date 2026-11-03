@@ -2,6 +2,18 @@ cmake_minimum_required(VERSION 3.31)
 
 project(schir_project)
 
+# Enable assertions by default only for Debug builds.
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(SCHIR_ENABLE_ASSERTIONS_DEFAULT ON)
+else()
+  set(SCHIR_ENABLE_ASSERTIONS_DEFAULT OFF)
+endif()
+option(SCHIR_ENABLE_ASSERTIONS "Enable assertions"
+       ${SCHIR_ENABLE_ASSERTIONS_DEFAULT})
+if (SCHIR_ENABLE_ASSERTIONS)
+  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-UNDEBUG>)
+endif()
+
 if (DEFINED SCHIR_LLVM_ROOT)
   file(REAL_PATH "${SCHIR_LLVM_ROOT}" SCHIR_LLVM_ROOT EXPAND_TILDE)
   set(MLIR_DIR ${SCHIR_LLVM_ROOT}/lib/cmake/mlir)
