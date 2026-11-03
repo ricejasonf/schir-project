@@ -55,3 +55,31 @@
 ; CHECK-NEXT: (1 2 3)
 (write (front-append (1 2 3) ()))
 (newline)
+
+(define-syntax repeat-outer
+  (syntax-rules ()
+    ((repeat-outer x y ...) '((f x y) ...))))
+
+; CHECK-NEXT: ((f a 1) (f a 2) (f a 3))
+(write (repeat-outer a 1 2 3))
+(newline)
+
+; CHECK-NEXT: ()
+(write (repeat-outer a))
+(newline)
+
+(define-syntax repeat-outer-nested
+  (syntax-rules ()
+    ((repeat-outer-nested x (y ...) ...) '((x (x y) ...) ...))))
+
+; CHECK-NEXT: ((a (a 1) (a 2)) (a (a 3)))
+(write (repeat-outer-nested a (1 2) (3)))
+(newline)
+
+(define-syntax repeat-pack-var
+  (syntax-rules ()
+    ((repeat-pack-var (z y) ...) '((z y y) ...))))
+
+; CHECK-NEXT: ((1 2 2) (3 4 4))
+(write (repeat-pack-var (1 2) (3 4)))
+(newline)

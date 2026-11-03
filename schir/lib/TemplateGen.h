@@ -197,6 +197,10 @@ private:
       --CurPackDepth;
     }
 
+    // Repeat a depth-0 variable in each iteration of enclosing ellipses.
+    if (VarDepth == 0)
+      return Result;
+
     if (CurPackDepth > 0)
       return OpGen.SetError(
           "pattern variable followed by too many ellipsis", S);
@@ -215,7 +219,7 @@ private:
       auto [Block, CP] = PackCaptureInfo;
       auto Itr = std::find(CP->begin(), CP->end(), Result);
       if (Itr != CP->end()) {
-        Result = Block->getArgument(std::distance(Itr, CP->begin()));
+        Result = Block->getArgument(std::distance(CP->begin(), Itr));
       } else {
         CP->push_back(Result);
         mlir::Type SchirValueT = OpGen.Builder.getType<SchirValueType>();
