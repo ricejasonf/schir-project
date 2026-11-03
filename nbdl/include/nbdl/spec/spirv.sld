@@ -43,19 +43,19 @@
          (%shader-global-aux (syntax-source-loc Kind) Kind (list Arg ...)))))
 
     (define (%shader-global-aux Loc Kind Args)
-      (cond
-        ((memq Kind '(uniform-buffer storage-buffer readwrite-storage-buffer))
+      (case Kind
+        ((uniform-buffer storage-buffer readwrite-storage-buffer)
          (unless (eqv? (length Args) 1)
            (error-with-loc Loc "expecting (shader-global '{} T)" Kind))
          (list %shader-global Kind #f (car Args)))
-        ((eq? Kind 'builtin)
+        ((builtin)
          (unless (eqv? (length Args) 2)
            (error-with-loc Loc
              "expecting (shader-global 'builtin \"Name\" T)"))
          (unless (member (car Args) %shader-builtins)
            (error-with-loc Loc "unknown shader builtin: {}" (car Args)))
          (list %shader-global Kind (car Args) (cadr Args)))
-        ((memq Kind '(sampled-texture storage-texture))
+        ((sampled-texture storage-texture)
          (error-with-loc Loc "TODO shader-global kind is not supported yet: {}"
                          Kind))
         (else (error-with-loc Loc "unknown shader-global kind: {}" Kind))))

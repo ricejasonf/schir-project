@@ -68,24 +68,23 @@
          (begin result1 result2 ...))
         ((case key
            ((atoms ...) => result))
-         ; FIXME Atoms are actually datums so quote should be used
-         ;       like in the reference implementation.
-         (if (memv key (list atoms ...))
+         (if (memv key '(atoms ...))
            (result key)))
         ((case key
            ((atoms ...) => result)
            clause clauses ...)
-         (if (memv key (list atoms ...))
+         (if (memv key '(atoms ...))
            (result key)
-           (case key clause clauses ...)))((case key
+           (case key clause clauses ...)))
+        ((case key
            ((atoms ...) result1 result2 ...))
-         (if (memv key (list atoms ...))
+         (if (memv key '(atoms ...))
            (begin result1 result2 ...)))
 
         ((case key
            ((atoms ...) result1 result2 ...)
            clause clauses ...)
-         (if (memv key (list atoms ...))
+         (if (memv key '(atoms ...))
            (begin result1 result2 ...)
            (case key clause clauses ...)))))
 

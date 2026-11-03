@@ -1717,11 +1717,11 @@
     ;; Return true if Name is exported as Kind
     ;; ('cpp, 'c, 'c-internal, or 'shader.)
     (define (exported-as? Name Kind)
-      (and (memq Name (cond
-                        ((eq? Kind 'cpp) export-cpp-names)
-                        ((eq? Kind 'c) export-c-names)
-                        ((eq? Kind 'c-internal) export-c-internal-names)
-                        ((eq? Kind 'shader) export-shader-names)
+      (and (memq Name (case Kind
+                        ((cpp) export-cpp-names)
+                        ((c) export-c-names)
+                        ((c-internal) export-c-internal-names)
+                        ((shader) export-shader-names)
                         (else (error "unknown export kind: {}" Kind))))
            #t))
 

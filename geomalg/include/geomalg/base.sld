@@ -111,8 +111,8 @@
     (define (with-metric MetricTag)
       (define IntVal
         (case MetricTag
-          (('unknown) 0)
-          (('cga) 1)
+          ((unknown) 0)
+          ((cga) 1)
           (else (error "invalid metric tag: {}" MetricTag))))
       (%with-metric IntVal))
 
