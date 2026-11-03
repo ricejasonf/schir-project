@@ -3,6 +3,7 @@
 (define-library (schir mlir)
   (export
     create-op
+    create-op*
     with-module-builder
     ; (schir mlir builtins)
     create-top-module
@@ -109,6 +110,52 @@
            (init-regions Op BlockArgLocList BlockArgTypesList UserFns)
            Op))
         ))
+
+    ;; Create an operation (as a procedure.)
+    ;;  Attrs - list of (AttrName Attr)
+    ;;  Operands - list of values
+    ;;  ResultTypes - list of types or #f to infer them
+    ;;  Regions - list with elements that are
+    ;;      (BlockArgTypes BodyProc) to call BodyProc with the block arguments
+    ;;      or #f to leave the region empty (ie no blocks.)
+    (define (create-op* Name Loc Attrs Operands ResultTypes Regions)
+      (define (List? X) (or (null? X) (pair? X)))
+      (define (CheckList What X)
+        (unless (List? X)
+          (error "expecting list of {}: {}" What X)))
+      (define (Pair2? X)
+        (and (pair? X) (pair? (cdr X)) (null? (cddr X))))
+      (CheckList "attributes" Attrs)
+      (for-each
+        (lambda (A)
+          (unless (Pair2? A)
+            (error "expecting (AttrName Attr): {}" A)))
+        Attrs)
+      (CheckList "operands" Operands)
+      (when ResultTypes (CheckList "result types" ResultTypes))
+      (CheckList "regions" Regions)
+      (for-each
+        (lambda (R)
+          (unless (or (not R)
+                      (and (Pair2? R) (List? (car R)) (procedure? (cadr R))))
+            (error "expecting #f or (BlockArgTypes BodyProc) for region: {}"
+                   R)))
+        Regions)
+      (let ((Op (%create-op
+                  Name
+                  Loc
+                  (list->vector Attrs)
+                  (list->vector Operands)
+                  (length Regions)
+                  (if ResultTypes (list->vector ResultTypes) '())
+                  #()))
+            (ArgTypesList (map (lambda (R) (if R (car R) '())) Regions)))
+        (init-regions
+          Op
+          (map (lambda (Ts) (map (lambda (T) Loc) Ts)) ArgTypesList)
+          ArgTypesList
+          (map (lambda (R) (and R (cadr R))) Regions))
+        Op))
 
     ;; Create new builder context for inserting module level operations.
     (define (with-module-builder ModuleOp Thunk)

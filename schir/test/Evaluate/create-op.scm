@@ -127,3 +127,23 @@
 (write my-func)
 (newline)
 
+
+; CHECK: #op{"func.func"() <{
+; CHECK-SAME: sym_name = "my_proc_func"
+; CHECK-NEXT: ^bb0(%arg0: !schir.context, %arg1: !schir.value, %arg2: !schir.value)
+; CHECK-NEXT: "schir.apply"(%arg0, %arg1, %arg2)
+(import (only (schir base) list list->vector))
+(define ArgTypes (list !schir.context !schir.value !schir.value))
+(define my-proc-func
+  (create-op* "func.func" 0
+    (list (list "sym_name" (string-attr "my_proc_func"))
+          (list "function_type"
+                (type-attr (%function-type (list->vector ArgTypes) #()))))
+    '()
+    '()
+    (list
+      (list ArgTypes
+            (lambda Args
+              (create-op* "schir.apply" 0 '() Args '() '()))))))
+(write my-proc-func)
+(newline)

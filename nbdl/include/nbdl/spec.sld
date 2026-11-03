@@ -728,37 +728,44 @@
     (define-syntax define-store
       (syntax-rules ()
         ((define-store Name (InitParams ...) StoreFunctionalN ...)
-         (%define-store make-named-store Name (InitParams ...)
-           StoreFunctionalN ...))))
-
-    ;; Define Name as the result of Make applied to the symbol name
-    ;; and the nbdl.define_struct.
-    (define-syntax %define-store
-      (syntax-rules ()
-        ((%define-store Make Name (InitParams ...) StoreFunctionalN ...)
          (define Name
-           (let ((SymName #f))
-            (let ((DefineStructOp
-                   (top-level-op
-                     (syntax-source-loc Name)
-                     'Name
-                     (lambda (SymName_)
-                       (define Loc (syntax-source-loc Name))
-                       (set! SymName SymName_)
-                       (create-op
-                         "nbdl.define_struct"
-                         (loc: Loc)
-                         (operands:)
-                         (attributes: ("sym_name" (string-attr SymName)))
-                         (result-types:)
-                         (region: "body" ((InitParams : !nbdl.unknown) ...)
-                                  (define-store-aux
-                                    Loc
-                                    (lambda (ProcessBody)
-                                      ;; Ensure nonempty lambda.
-                                      (ProcessBody StoreFunctionalN) ... #t)
-                                    )))))))
-             (Make SymName DefineStructOp)))))))
+           (make-named-store
+             (top-level-name 'Name)
+             (%define-struct-op
+               (syntax-source-loc Name)
+               'Name
+               (length '(InitParams ...))
+               (lambda (ProcessBody InitParams ...)
+                 ;; Ensure nonempty lambda.
+                 (ProcessBody StoreFunctionalN) ... #t)))))))
+
+    ;; Convert a definition name to a symbol.
+    (define (%name->symbol Name)
+      (cond
+        ((symbol? Name) Name)
+        ((string? Name) (string->symbol Name))
+        (else (error "expecting a symbol or string as a name: {}" Name))))
+
+    ;; Create a nbdl.define_struct as a top level operation whose body
+    ;; calls BodyProc with ProcessBody and the init params.
+    (define (%define-struct-op Loc Name InitParamCount BodyProc)
+      (top-level-op
+        Loc
+        Name
+        (lambda (SymName)
+          (create-op*
+            "nbdl.define_struct"
+            Loc
+            (list (list "sym_name" (string-attr SymName)))
+            '()
+            '()
+            (list
+              (list (make-list InitParamCount !nbdl.unknown)
+                    (lambda Params
+                      (define-store-aux
+                        Loc
+                        (lambda (ProcessBody)
+                          (apply BodyProc ProcessBody Params))))))))))
 
     ;; For now, this is just an alternative interface to define-store.
     ;; The idea was to encapsulate a root node in the state graph
@@ -774,32 +781,62 @@
            ...
            ))))
 
-    ;; Pass through a StoreFunctional of a struct member
-    ;; if Key is a member name.
-    (define (%struct-member Loc Key StoreFunctional)
-      (unless (member-name-literal? Key)
-        (error-with-loc Loc "expecting a member name as a struct key: {}" Key))
-      StoreFunctional)
+    ;; Create the StoreFunctional of a struct member
+    ;; (Key Store) or (Key Store KeyLoc) where Key is a member name.
+    (define (%struct-member Loc Member)
+      (unless (and (pair? Member) (pair? (cdr Member)))
+        (error-with-loc Loc "expecting (Key Store) as a struct member: {}"
+                        Member))
+      (let ((Key (car Member))
+            (Store (cadr Member))
+            (KeyLoc (if (pair? (cddr Member)) (caddr Member) Loc)))
+        (unless (member-name-literal? Key)
+          (error-with-loc KeyLoc
+                          "expecting a member name as a struct key: {}" Key))
+        (lambda (ParentStore)
+          (store-compose-aux
+            KeyLoc
+            (%single-expr+ KeyLoc Key)
+            (%single-expr KeyLoc Store)
+            ParentStore))))
+
+    ;; Define a struct named Name and return its named-struct.
+    ;; Call MembersProc with the init params to get a list of members
+    ;; (Key Store) or (Key Store KeyLoc) where each Key is a member name.
+    (define (make-struct Loc Name InitParamCount MembersProc)
+      (define Sym (%name->symbol Name))
+      (define DefineStructOp
+        (%define-struct-op
+          Loc
+          Sym
+          InitParamCount
+          (lambda (ProcessBody . Params)
+            (for-each
+              (lambda (Member)
+                (ProcessBody (%struct-member Loc Member)))
+              (apply MembersProc Params)))))
+      (define CppVisible (and (memq Sym export-cpp-names) #t))
+      (unless CppVisible
+        (set! %lowerable-struct-ops
+          (cons DefineStructOp %lowerable-struct-ops)))
+      (make-named-struct (top-level-name Sym) DefineStructOp CppVisible))
 
     ;; Define a struct where each key is a member name.
     (define-syntax define-struct
       (syntax-rules (member: init-args:)
         ((define-struct Name (Formals ...)
             (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
-         (%define-store
-           (lambda (SymName DefineStructOp)
-             (define CppVisible (and (memq 'Name export-cpp-names) #t))
-             (unless CppVisible
-               (set! %lowerable-struct-ops
-                 (cons DefineStructOp %lowerable-struct-ops)))
-             (make-named-struct SymName DefineStructOp CppVisible))
-           Name (Formals ...)
-           (%struct-member
-             (syntax-source-loc KeyN)
-             KeyN
-             (store-compose KeyN (store TypenameN (init-args: InitArgsNN ...))))
-           ...
-           ))))
+         (define Name
+           (make-struct
+             (syntax-source-loc Name)
+             'Name
+             (length '(Formals ...))
+             (lambda (Formals ...)
+               (list
+                 (list KeyN
+                       (store TypenameN (init-args: InitArgsNN ...))
+                       (syntax-source-loc KeyN))
+                 ...)))))))
 
     ;; Denote the name of a store defined as top level operation
     ;; in the module.
@@ -1393,62 +1430,76 @@
            (begin result1 result2 ...)
            (match-cond clause1 clause2 ...)))))
 
+    ;; Define a match-fn named Name and return its named-fn.
+    ;; Call BodyProc with ArgCount parameters as unresolved stores.
+    ;; If Name is exported to C++, define a wrapper function with
+    ;; the exported name that visits the match-fn with each raw
+    ;; parameter lifted to a store.
+    (define (make-match-fn Loc Name ArgCount BodyProc)
+      (define Sym (%name->symbol Name))
+      (define MatchFn
+        (make-named-fn
+          (%match-fn-name Sym)
+          (%top-level-match-fn
+            Loc
+            Sym
+            (lambda (SymName)
+              (define Op
+                (create-op*
+                  "nbdl.define_match_fn"
+                  Loc
+                  (list (list "sym_name" (string-attr SymName)))
+                  '()
+                  '()
+                  (list (list (make-list ArgCount (!nbdl.store)) BodyProc))))
+              (verify-recursive-visits Op)
+              Op))))
+      (when (memq Sym export-cpp-names)
+        (top-level-op
+          Loc
+          Sym
+          (lambda (WrapperName)
+            (create-op*
+              "func.func"
+              Loc
+              (list (list "sym_name" (string-attr WrapperName))
+                    (list "function_type"
+                          (type-attr
+                            (%function-type
+                              (make-vector ArgCount !nbdl.unknown)
+                              #()))))
+              '()
+              '()
+              (list
+                (list (make-list ArgCount !nbdl.unknown)
+                      (lambda Args
+                        (visit-aux-aux
+                          matching-results? #f Loc
+                          (cons (%single-expr+ Loc MatchFn)
+                                (map (lambda (Arg)
+                                       (%single-expr
+                                         Loc
+                                         (lift-store-aux Loc Arg)))
+                                     Args))))))))))
+      MatchFn)
+
     ;; Define a generic function to receive a matched set of parameters.
     ;; All parameters are unresolved stores which may be matched within
     ;; the body (e.g. via match-params.)
     ;; Inline every visit on the function and inline recursive tail
     ;; visits as a loop.
-    ;; If Name is exported to C++, define a wrapper function with
-    ;; the exported name that visits the match-fn with each raw
-    ;; parameter lifted to a store.
     (define-syntax define-match-fn
       (syntax-rules ()
         ((define-match-fn Name (Arg ...) Body ...)
          (define Name
-           (let ()
-            (define Loc (syntax-source-loc Name))
-            (define SymName (%match-fn-name 'Name))
-            (define MatchFn
-              (make-named-fn
-                SymName
-                (%top-level-match-fn
-                  Loc
-                  'Name
-                  (lambda (SymName_)
-                    (define Op
-                      ;; Let Name refer to the function in its body.
-                      (let ((Name (%make-self-named-fn SymName_ Loc)))
-                        (create-op
-                          "nbdl.define_match_fn"
-                          (loc: Loc)
-                          (operands:)
-                          (attributes:
-                            ("sym_name" (string-attr SymName_)))
-                          (result-types:)
-                          (region: "body" ((Arg : (!nbdl.store)) ...)
-                                   Body ...))))
-                    (verify-recursive-visits Op)
-                    Op))))
-            (when (memq 'Name export-cpp-names)
-              (top-level-op
-                Loc
-                'Name
-                (lambda (WrapperName)
-                  (create-op
-                    "func.func"
-                    (loc: Loc)
-                    (operands:)
-                    (attributes:
-                      ("sym_name" (string-attr WrapperName))
-                      ("function_type"
-                       (type-attr
-                         (%function-type
-                           (make-vector (length '(Arg ...)) !nbdl.unknown)
-                           #()))))
-                    (result-types:)
-                    (region: "body" ((Arg : !nbdl.unknown) ...)
-                             (visit MatchFn (lift-store Arg) ...))))))
-            MatchFn)))))
+           (let ((Loc (syntax-source-loc Name)))
+             (make-match-fn
+               Loc
+               'Name
+               (length '(Arg ...))
+               ;; Let Name refer to the function in its body.
+               (let ((Name (%make-self-named-fn (%match-fn-name 'Name) Loc)))
+                 (lambda (Arg ...) Body ...))))))))
 
     ;; Declare match-fns so a function may visit them before they are
     ;; defined. (e.g. Define mutually recursive functions.)
@@ -1504,41 +1555,47 @@
         ((%define-fn Name ((Arg : ArgT) ...) (RetT ...) (K ...)
            Body1 BodyN ...)
          (define Name
-           (let ((SymName #f))
-            (let ((FuncOp
-                   (top-level-op
-                     (syntax-source-loc Name)
-                     'Name
-                     (lambda (SymName_)
-                       (set! SymName SymName_)
-                       (create-op
-                         "func.func"
-                         (loc: (syntax-source-loc Name))
-                         (operands:)
-                         (attributes:
-                           ("sym_name" (string-attr SymName))
-                           ("function_type"
-                            (type-attr
-                              (%function-type
-                                (vector (%cpp-or-type
-                                          ArgT (syntax-source-loc ArgT)) ...)
-                                (vector (%cpp-or-type
-                                          RetT (syntax-source-loc RetT))
-                                        ...)))))
-                         (result-types:)
-                         (region: "body" ((Arg : (%cpp-or-type ArgT))
-                                          ...)
-                                  (let ((K (%return-closure
-                                             (syntax-source-loc K)
-                                             SymName))
-                                        ...)
-                                    Body1 BodyN ...)))))))
-             ;; Process exports if any.
-             (when (or (memq 'Name export-c-names)
-                       (memq 'Name export-c-internal-names)
-                       (memq 'Name export-shader-names))
-               (add-lower-op FuncOp))
-             (make-named-fn SymName FuncOp)))))))
+           (make-fn
+             (syntax-source-loc Name)
+             'Name
+             (list (%cpp-or-type ArgT (syntax-source-loc ArgT)) ...)
+             (list (%cpp-or-type RetT (syntax-source-loc RetT)) ...)
+             (lambda (Arg ...)
+               (let ((K (%return-closure (syntax-source-loc K)
+                                         (top-level-name 'Name)))
+                     ...)
+                 Body1 BodyN ...)))))))
+
+    ;; Define a normal function named Name and return its named-fn.
+    ;; Lift string-likes in ArgTypes and ResultTypes to C++ types and
+    ;; call BodyProc with the parameters.
+    (define (make-fn Loc Name ArgTypes ResultTypes BodyProc)
+      (define Sym (%name->symbol Name))
+      (define FuncOp
+        (top-level-op
+          Loc
+          Sym
+          (lambda (SymName)
+            (define (Lift T) (%cpp-or-type T Loc))
+            (define ArgTs (map Lift ArgTypes))
+            (create-op*
+              "func.func"
+              Loc
+              (list (list "sym_name" (string-attr SymName))
+                    (list "function_type"
+                          (type-attr
+                            (%function-type
+                              (list->vector ArgTs)
+                              (list->vector (map Lift ResultTypes))))))
+              '()
+              '()
+              (list (list ArgTs BodyProc))))))
+      ;; Process exports if any.
+      (when (or (memq Sym export-c-names)
+                (memq Sym export-c-internal-names)
+                (memq Sym export-shader-names))
+        (add-lower-op FuncOp))
+      (make-named-fn (top-level-name Sym) FuncOp))
 
     (define (build-lift-store Loc Arg)
       (define Value (maybe-build-expr Loc Arg))
@@ -1706,40 +1763,42 @@
     (define export-c-internal-ops '())
     (define export-shader-ops '())
 
+    ;; Export Names to C++.
+    (define (export-cpp* . Names)
+      (set! export-cpp-names
+        (append export-cpp-names (map %name->symbol Names))))
+
+    ;; Export Names to C.
+    (define (export-c* . Names)
+      (set! export-c-names
+        (append export-c-names (map %name->symbol Names))))
+
+    ;; Export Names to the LLVM module without exposing declarations to C++.
+    (define (export-c-internal* . Names)
+      (set! export-c-internal-names
+        (append export-c-internal-names (map %name->symbol Names))))
+
+    ;; Export Names to the backend registered via
+    ;; register-shader-backend (e.g. by (nbdl spec spirv).)
+    (define (export-shader* . Names)
+      (set! export-shader-names
+        (append export-shader-names (map %name->symbol Names))))
+
     (define-syntax export-cpp
       (syntax-rules ()
-        ((export-cpp Name ...)
-         (set! export-cpp-names
-           (append
-             export-cpp-names
-             (list 'Name ...))))))
+        ((export-cpp Name ...) (export-cpp* 'Name ...))))
 
     (define-syntax export-c
       (syntax-rules ()
-        ((export-c Name ...)
-         (set! export-c-names
-           (append
-             export-c-names
-             (list 'Name ...))))))
+        ((export-c Name ...) (export-c* 'Name ...))))
 
-    ;; Export to the LLVM module without exposing declarations to C++.
     (define-syntax export-c-internal
       (syntax-rules ()
-        ((export-c-internal Name ...)
-         (set! export-c-internal-names
-           (append
-             export-c-internal-names
-             (list 'Name ...))))))
+        ((export-c-internal Name ...) (export-c-internal* 'Name ...))))
 
-    ;; Export functions to the backend registered via
-    ;; register-shader-backend (e.g. by (nbdl spec spirv).)
     (define-syntax export-shader
       (syntax-rules ()
-        ((export-shader Name ...)
-         (set! export-shader-names
-           (append
-             export-shader-names
-             (list 'Name ...))))))
+        ((export-shader Name ...) (export-shader* 'Name ...))))
 
     (define (run-pass-nbdl-flatten)
       (nbdl_run_flatten_pass
@@ -1812,6 +1871,13 @@
     export-c
     export-c-internal
     export-shader
+    export-cpp*
+    export-c*
+    export-c-internal*
+    export-shader*
+    make-fn
+    make-match-fn
+    make-struct
     finalize-module
     write-lower-module
 
