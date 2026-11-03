@@ -120,6 +120,9 @@
     error
     error-with-loc
     error-note
+    error-object?
+    error-object-message
+    error-object-irritants
     length
     list make-list list-set! list-ref
     vector make-vector vector-length vector-set!  vector-ref

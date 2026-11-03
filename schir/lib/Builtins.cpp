@@ -94,6 +94,9 @@ schir::ExternFunction raise_continuable;
 schir::ExternFunction error;
 schir::ExternFunction error_with_loc;
 schir::ExternFunction error_note;
+schir::ExternFunction is_error_object;
+schir::ExternFunction error_object_message;
+schir::ExternFunction error_object_irritants;
 schir::ExternFunction format_string;
 schir::ExternFunction dynamic_wind;
 schir::ExternFunction load_module;
@@ -1141,6 +1144,26 @@ void error_note(Context& C, ValueRefs Args) {
   C.Cont(Err);
 }
 
+void is_error_object(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  C.Cont(Bool(isa<schir::Error>(Args[0])));
+}
+
+void error_object_message(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  if (C.CheckKind<schir::Error>(Args[0])) return;
+  C.Cont(cast<schir::Error>(Args[0])->getMessage());
+}
+
+void error_object_irritants(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  if (C.CheckKind<schir::Error>(Args[0])) return;
+  C.Cont(cast<schir::Error>(Args[0])->getIrritants());
+}
+
 void format_string(Context& C, ValueRefs Args) {
   if (Args.size() == 0) return C.RaiseError("invalid arity");
   if (C.CheckKind<String>(Args[0])) return;
@@ -1484,6 +1507,9 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(error)   = schir::builtins::error;
   SCHIR_BASE_VAR(error_with_loc) = schir::builtins::error_with_loc;
   SCHIR_BASE_VAR(error_note) = schir::builtins::error_note;
+  SCHIR_BASE_VAR(is_error_object) = schir::builtins::is_error_object;
+  SCHIR_BASE_VAR(error_object_message) = schir::builtins::error_object_message;
+  SCHIR_BASE_VAR(error_object_irritants) = schir::builtins::error_object_irritants;
   SCHIR_BASE_VAR(format_string) = schir::builtins::format_string;
   SCHIR_BASE_VAR(dynamic_wind) = schir::builtins::dynamic_wind;
 
@@ -1593,6 +1619,9 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"error", SCHIR_BASE_VAR(error)},
     {"error-with-loc", SCHIR_BASE_VAR(error_with_loc)},
     {"error-note", SCHIR_BASE_VAR(error_note)},
+    {"error-object?", SCHIR_BASE_VAR(is_error_object)},
+    {"error-object-message", SCHIR_BASE_VAR(error_object_message)},
+    {"error-object-irritants", SCHIR_BASE_VAR(error_object_irritants)},
     {"format-string", SCHIR_BASE_VAR(format_string)},
     {"dynamic-wind", SCHIR_BASE_VAR(dynamic_wind)},
 
