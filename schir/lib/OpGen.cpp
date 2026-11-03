@@ -1175,8 +1175,8 @@ mlir::Value OpGen::createTopLevelDefine(Value Id, Value DefineArgs,
       LookupSymbol(MangledNameRef));
   if (GlobalOp) {
     // Move the GlobalOp to the current ModuleBuilder insert point
-    mlir::Operation* Op = GlobalOp.getOperation();
-    Op->moveBefore(&Op->getBlock()->back());
+    GlobalOp->moveBefore(ModuleBuilder.getInsertionBlock(),
+                         ModuleBuilder.getInsertionPoint());
   } else {
     GlobalOp = createTopLevel<schir::GlobalOp>(DefineLoc, MangledNameRef,
         Builder.getType<SchirBindingType>());
