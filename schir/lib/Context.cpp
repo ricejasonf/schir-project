@@ -1333,6 +1333,17 @@ void Context::Raise(Value Obj) {
   }, {Handler, Obj}));
 }
 
+void Context::RaiseContinuable(Value Obj) {
+  // Defer to Raise when only the bottom error handler remains.
+  if (!isa<Pair>(ExceptionHandlers))
+    return Raise(Obj);
+  Pair* P = cast<Pair>(ExceptionHandlers);
+  // Call the handler with the outer handlers installed and return its result.
+  WithExceptionHandlers(P->Cdr, CreateLambda([](Context& C, ValueRefs) {
+    C.Apply(C.getCapture(0), C.getCapture(1));
+  }, {P->Car, Obj}));
+}
+
 void Context::RaiseError(SourceLocation Loc, String* Msg,
                          llvm::ArrayRef<Value> IrrArgs) {
   Value IrrList = Empty();
@@ -1417,7 +1428,12 @@ void Context::ManagedObjectWind(void* Ptr, DestructorTy Destructor,
     // Mark the error and continue raising it.
     Vector* Sentinel = cast<Vector>(C.getCapture(0));
     Sentinel->get(1) = Bool{true};
-    C.Cont(Args);
+    // Clear the mark if an outer handler resumes.
+    C.PushCont([](Context& C, ValueRefs Args) {
+      cast<Vector>(C.getCapture(0))->get(1) = Bool{false};
+      C.Cont(Args);
+    }, CaptureList{Sentinel});
+    C.RaiseContinuable(Args.front());
   }, CaptureList{Sentinel});
 
   // Destroy the object upon continuing.

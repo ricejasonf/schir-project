@@ -128,6 +128,40 @@ TEST(ContextTest, DynamicWindExceptionExitAfterInner) {
   EXPECT_FALSE(IsAlive);
 }
 
+TEST(ContextTest, DynamicWindRaiseContinuableResumes) {
+  auto Context = schir::Context();
+  bool IsAlive = false;
+  bool Check_1 = false;
+  int HandlerCalls = 0;
+  LifetimeTracker* Tracker = new LifetimeTracker(IsAlive);
+
+  schir::Value Handler = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      ++HandlerCalls;
+      C.Cont(schir::Int(5));
+    });
+  schir::Value Inner = Context.CreateLambda(
+    [&](schir::Context& C, schir::ValueRefs) {
+      C.PushCont([&](schir::Context& C, schir::ValueRefs Args) {
+        Check_1 = IsAlive && Args.size() == 1 &&
+                  Args[0] == schir::Value(schir::Int(5));
+        C.Cont();
+      });
+      C.RaiseContinuable(schir::Undefined());
+    });
+  schir::Value Thunk = Context.CreateLambda(
+    [&, Tracker](schir::Context& C, schir::ValueRefs) {
+      C.DynamicWind(std::unique_ptr<LifetimeTracker>(Tracker), Inner);
+    });
+
+  // Destroy the managed object once after a resumed raise-continuable.
+  Context.WithExceptionHandler(Handler, Thunk);
+  Context.Resume();
+  EXPECT_TRUE(Check_1);
+  EXPECT_EQ(HandlerCalls, 1);
+  EXPECT_FALSE(IsAlive);
+}
+
 TEST(ContextTest, DynamicWindReenterDestroyed) {
   auto Context = schir::Context();
   bool IsAlive = false;

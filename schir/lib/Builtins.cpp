@@ -88,6 +88,7 @@ schir::ExternFunction values;
 schir::ExternFunction call_with_values;
 schir::ExternFunction with_exception_handler;
 schir::ExternFunction raise;
+schir::ExternFunction raise_continuable;
 schir::ExternFunction error;
 schir::ExternFunction error_with_loc;
 schir::ExternFunction error_note;
@@ -1074,6 +1075,11 @@ void raise(Context& C, ValueRefs Args) {
   C.Raise(Args[0]);
 }
 
+void raise_continuable(Context& C, ValueRefs Args) {
+  if (Args.size() != 1) return C.RaiseError("invalid arity");
+  C.RaiseContinuable(Args[0]);
+}
+
 void error(Context& C, ValueRefs Args) {
   if (Args.size() == 0) return C.RaiseError("invalid arity");
   if (C.CheckKind<String>(Args[0])) return;
@@ -1454,6 +1460,7 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(with_exception_handler)
     = schir::builtins::with_exception_handler;
   SCHIR_BASE_VAR(raise)   = schir::builtins::raise;
+  SCHIR_BASE_VAR(raise_continuable) = schir::builtins::raise_continuable;
   SCHIR_BASE_VAR(error)   = schir::builtins::error;
   SCHIR_BASE_VAR(error_with_loc) = schir::builtins::error_with_loc;
   SCHIR_BASE_VAR(error_note) = schir::builtins::error_note;
@@ -1560,6 +1567,7 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"call-with-values", SCHIR_BASE_VAR(call_with_values)},
     {"with-exception-handler", SCHIR_BASE_VAR(with_exception_handler)},
     {"raise", SCHIR_BASE_VAR(raise)},
+    {"raise-continuable", SCHIR_BASE_VAR(raise_continuable)},
     {"error", SCHIR_BASE_VAR(error)},
     {"error-with-loc", SCHIR_BASE_VAR(error_with_loc)},
     {"error-note", SCHIR_BASE_VAR(error_note)},

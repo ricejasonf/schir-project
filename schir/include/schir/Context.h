@@ -179,6 +179,7 @@ public:
   void WithExceptionHandlers(Value NewHandlers, Value Thunk);
   void WithExceptionHandler(Value Handler, Value Thunk);
   void Raise(Value Obj);
+  void RaiseContinuable(Value Obj);
   void RaiseError(SourceLocation Loc, String* Msg,
                   llvm::ArrayRef<Value> IrrArgs);
   void RaiseError(String* Msg, llvm::ArrayRef<Value> IrrArgs) {

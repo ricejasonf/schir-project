@@ -88,7 +88,15 @@ schir::Lexer SchirScheme::createEmbeddedLexer(uintptr_t ExternalRawLoc,
 }
 
 void SchirScheme::RegisterErrorHandler(Lambda* Fn) {
-  ErrorHandler.set(getContext(), Fn);
+  Context& C = getContext();
+  // Re-raise after reporting so a raise-continuable never resumes.
+  Value Handler = C.CreateLambda([](Context& C, ValueRefs Args) {
+    C.PushCont([](Context& C, ValueRefs) {
+      C.Raise(C.getCapture(0));
+    }, CaptureList{Args.front()});
+    C.Apply(C.getCapture(0), Args);
+  }, CaptureList{Fn});
+  ErrorHandler.set(C, Handler);
 }
 
 void SchirScheme::ParseTopLevelCommands(
