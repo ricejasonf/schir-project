@@ -148,7 +148,7 @@
     caar cadr cdar cddr
     member memq memv
     assoc assq assv
-    reverse map
+    reverse map for-each
     every any
 
     ; eval stuff

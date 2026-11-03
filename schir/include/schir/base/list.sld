@@ -5,7 +5,7 @@
     caar cadr cdar cddr
     member memq memv
     assoc assq assv
-    reverse map
+    reverse map for-each
     case
     every any
     )
@@ -132,6 +132,17 @@
                 (Loop (+ I 1) NextLists (cons (apply Proc Args) Result)))
               Result)))
         (reverse ReverseResult)))
+
+    (define (for-each Proc List . Lists)
+      (if (pair? Lists)
+        (let Loop ((Lists (cons List Lists)))
+          (when (every pair? Lists)
+            (apply Proc (map car Lists))
+            (Loop (map cdr Lists))))
+        (let Loop ((List List))
+          (when (pair? List)
+            (Proc (car List))
+            (Loop (cdr List))))))
 
     (define (every Pred List . Lists)
       (define (every-lol Pred Lists)
