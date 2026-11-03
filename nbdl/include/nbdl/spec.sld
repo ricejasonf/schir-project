@@ -393,7 +393,7 @@
       (cadr Value))
 
     (define (uncallable-name Value)
-      (car (cddr Value)))
+      (caddr Value))
 
     ;; Create the symbol name for a match-fn.
     ;; Suffix the name of a match-fn exported to C++ so it is
@@ -846,7 +846,7 @@
       (cadr NamedStruct))
 
     (define (named-struct-op NamedStruct)
-      (car (cddr NamedStruct)))
+      (caddr NamedStruct))
 
     ;; Get the types of the members of a named-struct in order of definition.
     (define (struct-member-types NamedStruct)

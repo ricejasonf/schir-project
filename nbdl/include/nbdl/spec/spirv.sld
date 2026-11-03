@@ -68,7 +68,7 @@
       (cadr Global))
 
     (define (shader-global-builtin Global)
-      (car (cddr Global)))
+      (caddr Global))
 
     (define (shader-global-type Global)
       (cadr (cddr Global)))
@@ -278,7 +278,7 @@
         (number->string (%count-kind Kind ArgTs)))
       (define LengthBinding (%length-binding ArgTs))
       (string-append
-        "{" (%quote (string-copy Name 0)) ", ::nbdl::shader_stage::"
+        "{" (%quote (symbol->string Name)) ", ::nbdl::shader_stage::"
         (cond
           ((equal? Model "Vertex") "vertex")
           ((equal? Model "Fragment") "fragment")
@@ -318,7 +318,7 @@
         (define LengthBinding (%length-binding FlatArgTs))
         (define EntryAttr
           (attr (string-append
-                  "{name = " (%quote (string-copy Name 0))
+                  "{name = " (%quote (symbol->string Name))
                   ", execution_model = " (%quote Model) ", "
                   (if LocalSize
                     (string-append
@@ -373,8 +373,8 @@
                    ("sym_name" (string-attr SymName))
                    ("function_type"
                     (type-attr
-                      (%function-type (apply vector ArgTs)
-                                      (apply vector RetTs)))))
+                      (%function-type (list->vector ArgTs)
+                                      (list->vector RetTs)))))
                  (result-types:)
                  (region: "body" ((Arg : (%shader-type ArgT)) ...)
                           Body1 BodyN ...))))))))
@@ -440,7 +440,7 @@
             (reverse Result)
             (let ((Entry (assq (car Rest) ShaderEntries)))
               (Loop (cdr Rest)
-                    (if Entry (cons (car (cddr Entry)) Result) Result))))))
+                    (if Entry (cons (caddr Entry) Result) Result))))))
       (let ((FuncOp (%define-spirv-binary SPIRVModule (finalize-llvm-module)
                                           (string-append
                                             (namespace-prefix Name)
@@ -452,7 +452,7 @@
           (string-append
             "inline constexpr ::std::array<::nbdl::shader_entry, "
             (number->string (length Rows)) "> "
-            (string-copy Name 0) "_entries = {{"
+            (symbol->string Name) "_entries = {{"
             (string-join Rows ", ") "}};"))
         (flush-tokens)))
 
