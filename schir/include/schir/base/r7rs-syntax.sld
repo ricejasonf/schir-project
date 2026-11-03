@@ -25,6 +25,14 @@
              tag)
             val ...))))
 
+    (define-syntax let*
+      (syntax-rules ()
+        ((let* () body1 body ...)
+         (let () body1 body ...))
+        ((let* ((name1 val1) (name val) ...) body1 body ...)
+         (let ((name1 val1))
+           (let* ((name val) ...) body1 body ...)))))
+
     (define-syntax do
       (syntax-rules ()
         ((do ((var init step ...) ...)
@@ -160,7 +168,7 @@
            (guard-aux reraise clause1 clause2 ...)))))
     ) ; end begin
   (export
-    let letrec letrec*
+    let let* letrec letrec*
     cond
     and or when unless
     do

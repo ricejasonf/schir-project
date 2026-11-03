@@ -139,7 +139,7 @@
     not
 
     ; (schir base r7rs-syntax)
-    let letrec letrec*
+    let let* letrec letrec*
     cond case
     and or when unless
     do
