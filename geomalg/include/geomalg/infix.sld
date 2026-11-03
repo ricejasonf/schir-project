@@ -27,12 +27,12 @@
     (define-syntax +
       (syntax-rules ()
         ((+ V ...)
-         (sum-aux (syntax-source-loc) V ...))))
+         (sum* (syntax-source-loc) V ...))))
 
     (define-syntax -
       (syntax-rules ()
         ((- V)
-         (negate-aux (syntax-source-loc) V))
+         (negate* (syntax-source-loc) V))
         ((- V1 VN ...)
          (%nfx-sub (syntax-source-loc) V1 VN ...))))
 
@@ -41,12 +41,12 @@
         ((* V)
          V)
         ((* V1 VN ...)
-         (%nfx-fold gprod-aux (syntax-source-loc) V1 VN ...))))
+         (%nfx-fold gprod* (syntax-source-loc) V1 VN ...))))
 
     (define-syntax /
       (syntax-rules ()
         ((/ V)
-         (inverse-aux (syntax-source-loc) V))
+         (inverse* (syntax-source-loc) V))
         ((/ V1 VN ...)
          (%nfx-fold %nfx-div (syntax-source-loc) V1 VN ...))))
 
@@ -55,21 +55,21 @@
         ((⌋ V)
          V)
         ((⌋ V1 VN ...)
-         (%nfx-fold-right iprod-aux (syntax-source-loc) V1 VN ...))))
+         (%nfx-fold-right iprod* (syntax-source-loc) V1 VN ...))))
 
     (define-syntax ∧
       (syntax-rules ()
         ((∧ V)
          V)
         ((∧ V1 VN ...)
-         (%nfx-fold oprod-aux (syntax-source-loc) V1 VN ...))))
+         (%nfx-fold oprod* (syntax-source-loc) V1 VN ...))))
 
     ;; Sum the first operand with the rest negated at location L.
     (define-syntax %nfx-sub
       (syntax-rules ()
         ((_ L V1 VN ...)
          (let ((Loc L))
-           (sum-aux Loc V1 (negate-aux Loc VN) ...)))))
+           (sum* Loc V1 (negate* Loc VN) ...)))))
 
     ;; Fold operands from the left with F at location L.
     (define-syntax %nfx-fold
@@ -100,7 +100,7 @@
         ((_ () SL F FL (C ...))
          (F FL C ...))
         ((_ (T ...) SL F FL (C ...))
-         (sum-aux SL T ... (F FL C ...)))
+         (sum* SL T ... (F FL C ...)))
         ((_ (T ...) SL F FL (C ...) Y X ...)
          (%nfx-sum-op Y (syntax-source-loc Y) (T ...) SL F FL (C ...) X ...))))
 
@@ -130,7 +130,7 @@
     (define-syntax %nfx-neg
       (syntax-rules ()
         ((_ L C ...)
-         (negate-aux L (%nfx-prod () C ...)))))
+         (negate* L (%nfx-prod () C ...)))))
 
     ;; Split factors on * and / folding from the left.
     (define-syntax %nfx-prod
@@ -144,7 +144,7 @@
     (define-syntax %nfx-prod-op
       (syntax-rules (* /)
         ((_ * L (C ...) X ...)
-         (%nfx-prod-acc (%nfx-lc () C ...) gprod-aux L () X ...))
+         (%nfx-prod-acc (%nfx-lc () C ...) gprod* L () X ...))
         ((_ / L (C ...) X ...)
          (%nfx-prod-acc (%nfx-lc () C ...) %nfx-div L () X ...))
         ((_ Y L (C ...) X ...)
@@ -163,7 +163,7 @@
     (define-syntax %nfx-prod-acc-op
       (syntax-rules (* /)
         ((_ * L A F FL (C ...) X ...)
-         (%nfx-prod-acc (F FL A (%nfx-lc () C ...)) gprod-aux L () X ...))
+         (%nfx-prod-acc (F FL A (%nfx-lc () C ...)) gprod* L () X ...))
         ((_ / L A F FL (C ...) X ...)
          (%nfx-prod-acc (F FL A (%nfx-lc () C ...)) %nfx-div L () X ...))
         ((_ Y L A F FL (C ...) X ...)
@@ -172,7 +172,7 @@
     (define-syntax %nfx-div
       (syntax-rules ()
         ((_ L A B)
-         (gprod-aux L A (inverse-aux L B)))))
+         (gprod* L A (inverse* L B)))))
 
     ;; Split on ⌋ nesting to the right.
     (define-syntax %nfx-lc
@@ -185,7 +185,7 @@
     (define-syntax %nfx-lc-op
       (syntax-rules (⌋)
         ((_ ⌋ L (C ...) X ...)
-         (iprod-aux L (%nfx-wedge () C ...) (%nfx-lc () X ...)))
+         (iprod* L (%nfx-wedge () C ...) (%nfx-lc () X ...)))
         ((_ Y L (C ...) X ...)
          (%nfx-lc (C ... Y) X ...))))
 
@@ -200,7 +200,7 @@
     (define-syntax %nfx-wedge-op
       (syntax-rules (∧)
         ((_ ∧ L (C ...) X ...)
-         (oprod-aux L (%nfx-operand C ...) (%nfx-wedge () X ...)))
+         (oprod* L (%nfx-operand C ...) (%nfx-wedge () X ...)))
         ((_ Y L (C ...) X ...)
          (%nfx-wedge (C ... Y) X ...))))
 

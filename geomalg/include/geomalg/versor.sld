@@ -7,7 +7,7 @@
     !versor
     versor
     ;; Procedures taking an explicit source location
-    versor-aux
+    versor*
     )
   (import (except (schir base) + - * /)
           (schir mlir)
@@ -18,7 +18,7 @@
     (define !versor
       (load-builtin "geomalg_versor_type"))
 
-    (define (versor-aux Loc . Vs)
+    (define (versor* Loc . Vs)
       (if (null? Vs)
         (%identity Loc)
         (%versor Loc Vs)))
@@ -46,5 +46,5 @@
     (define-syntax versor
       (syntax-rules ()
         ((versor V ...)
-         (versor-aux (syntax-source-loc) V ...))))
+         (versor* (syntax-source-loc) V ...))))
     )) ;; define-library

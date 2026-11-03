@@ -24,20 +24,20 @@
     negative-dilator
     transversor
     ;; Procedures taking an explicit source location
-    up-aux
-    down-aux
-    normalize-point-aux
-    point-weight-aux
-    plane-aux
-    bisector-aux
-    sphere-aux
-    point-aux
-    line-aux
-    translator-aux
-    rotor-aux
-    dilator-aux
-    negative-dilator-aux
-    transversor-aux
+    up*
+    down*
+    normalize-point*
+    point-weight*
+    plane*
+    bisector*
+    sphere*
+    point*
+    line*
+    translator*
+    rotor*
+    dilator*
+    negative-dilator*
+    transversor*
     )
   (import (schir base)
           (schir mlir)
@@ -58,43 +58,43 @@
 
     ;; Dual plane through c normal to n.
     (define (%plane-through Loc n c)
-      (plane-aux Loc n (iprod-aux Loc n c)))
+      (plane* Loc n (iprod* Loc n c)))
 
     ;; Point P = (e₁ + c₁∞)(e₂ + c₂∞) as two dual planes through c.
     ;; As a versor: point reflection x ↦ 2c - x (a half-turn about c).
-    (define (point-aux Loc c)
-      (versor-aux Loc (%plane-through Loc (%blade Loc !e1 1) c)
+    (define (point* Loc c)
+      (versor* Loc (%plane-through Loc (%blade Loc !e1 1) c)
                       (%plane-through Loc (%blade Loc !e2 1) c)))
 
     (define-syntax point
       (syntax-rules ()
         ((point c)
-         (point-aux (syntax-source-loc) c))))
+         (point* (syntax-source-loc) c))))
 
     ;; Line through c with direction u as the dual plane through c
     ;; normal to u⌋(e₁ ∧ e₂).
     ;; As a versor: reflection in the line.
-    (define (line-aux Loc c u)
-      (define I (oprod-aux Loc (%blade Loc !e1 1) (%blade Loc !e2 1)))
-      (%plane-through Loc (iprod-aux Loc u I) c))
+    (define (line* Loc c u)
+      (define I (oprod* Loc (%blade Loc !e1 1) (%blade Loc !e2 1)))
+      (%plane-through Loc (iprod* Loc u I) c))
 
     (define-syntax line
       (syntax-rules ()
         ((line c u)
-         (line-aux (syntax-source-loc) c u))))
+         (line* (syntax-source-loc) c u))))
 
     ;; Negative dilator P D as the point P at c and the dilator D for -s,
     ;; which is even (a proper map) and keeps the sign of the weight -∞·X
     ;; of a point X.
     ;; As a versor: scaling x ↦ c + s(x - c) for s < 0.
-    (define (negative-dilator-aux Loc c Scale)
-      (versor-aux Loc (point-aux Loc c)
-                      (dilator-aux Loc c (if (number? Scale)
+    (define (negative-dilator* Loc c Scale)
+      (versor* Loc (point* Loc c)
+                      (dilator* Loc c (if (number? Scale)
                                            (- Scale)
-                                           (negate-aux Loc Scale)))))
+                                           (negate* Loc Scale)))))
 
     (define-syntax negative-dilator
       (syntax-rules ()
         ((negative-dilator c Scale)
-         (negative-dilator-aux (syntax-source-loc) c Scale))))
+         (negative-dilator* (syntax-source-loc) c Scale))))
     )) ;; define-library
