@@ -393,11 +393,11 @@ void OpGen::VisitTopLevel(Value V) {
   Context.PushCont([this, PrevIp](schir::Context& C, ValueRefs) {
     // Instead of the continuation argument we use TopLevelOp
     FinishTopLevelOp();
-    if (TopLevelOp && TopLevelHandler) {
-      // Call the TopLevelHandler
-      Value Result = TopLevelOp;
-      TopLevelOp = nullptr;
-      C.Apply(TopLevelHandler, Result);
+    // Clear TopLevelOp so an enclosing top level begin does not finish it.
+    mlir::Operation* Result = TopLevelOp;
+    TopLevelOp = nullptr;
+    if (Result && TopLevelHandler) {
+      C.Apply(TopLevelHandler, Value(Result));
     } else {
       C.Cont();
     }
