@@ -31,6 +31,20 @@ struct int_sink {
   }
 };
 
+struct int_pair {
+  int a = 0;
+  int b = 0;
+};
+
+// Accumulate results.
+struct int_sum_sink {
+  int* dest;
+
+  void operator()(int Value) const {
+    *dest += Value;
+  }
+};
+
 #pragma schir_scheme
 {
 (import (nbdl spec)
@@ -48,7 +62,10 @@ struct int_sink {
             store_sum_func_name
             add_ints_inferred
             add_three_ints
-            set_result_expr)
+            set_result_expr
+            visit_then_match
+            visit_then_match_if
+            match_then_match)
 
 (define-context context (arg1 arg2)
   (member: '.foo 'int (init-args: arg1))
@@ -292,6 +309,29 @@ struct int_sink {
          5)
   (return))
 
+; // Follow a statement visit with a match.
+(define-fn visit_then_match ((S : 'foo::int_pair)
+                             (Sink : 'foo::int_sum_sink)) -> ()
+  (visit Sink (get (lift-store S) '.a))
+  (match (get (lift-store S) '.b) (else => Sink))
+  (return))
+
+; // Follow a statement visit with a match-if.
+(define-fn visit_then_match_if ((S : 'foo::int_pair)
+                                (Sink : 'foo::int_sum_sink)) -> ()
+  (visit Sink (get (lift-store S) '.a))
+  (match-if (get (lift-store S) '.a)
+    (visit Sink (get (lift-store S) '.b)))
+  (return))
+
+; // Follow a match with a match and a statement visit.
+(define-fn match_then_match ((S : 'foo::int_pair)
+                             (Sink : 'foo::int_sum_sink)) -> ()
+  (match (get (lift-store S) '.a) (else => Sink))
+  (match (get (lift-store S) '.b) (else => Sink))
+  (visit Sink (get (lift-store S) '.b))
+  (return))
+
 (write-nbdl-module (finalize-module))
 
 }
@@ -360,4 +400,16 @@ int main() {
   foo::global_result = 0;
   foo::set_result_expr();
   SCHIR_ASSERT(foo::global_result == 5);
+
+  sum = 0;
+  foo::visit_then_match(foo::int_pair{1, 2}, foo::int_sum_sink{&sum});
+  SCHIR_ASSERT(sum == 3);
+
+  sum = 0;
+  foo::visit_then_match_if(foo::int_pair{1, 2}, foo::int_sum_sink{&sum});
+  SCHIR_ASSERT(sum == 3);
+
+  sum = 0;
+  foo::match_then_match(foo::int_pair{1, 2}, foo::int_sum_sink{&sum});
+  SCHIR_ASSERT(sum == 5);
 }

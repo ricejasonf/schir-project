@@ -1288,6 +1288,7 @@
         ((match-aux PathSpec
           (TypeN => FnN) ...)
          (let ((PathSpecExpr PathSpec))
+          (close-previous-scope)
           (%match-results (list PathSpecExpr)
           (lambda (Store)
             (unless (store-value? (car Store))
@@ -1303,7 +1304,6 @@
                     ((or (symbol? T) (string? T))
                      (!nbdl.store T))
                     (else (!nbdl.store T))))
-                (close-previous-scope)
                 (create-op "nbdl.match"
                   (loc: (syntax-source-loc PathSpec))
                   (operands: Store)
@@ -1374,6 +1374,7 @@
         (%expr Loc CondExprFn))
       (define ParamsSpec
         (list CondExpr))
+      (close-previous-scope)
       (%match-results
         ParamsSpec
         (lambda (Results)
