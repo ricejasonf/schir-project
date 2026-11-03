@@ -135,6 +135,7 @@ enum class ValueKind {
   Pair,
   PairWithSource,
   Quote,
+  Record,
   SharedAny,
   SourceValue,
   String,
@@ -1360,6 +1361,59 @@ public:
 
 };
 
+// Record - Store the fields of an instance of a record type
+//          where Type is the unique symbol of the record type.
+class Record final
+  : public ValueBase,
+    private llvm::TrailingObjects<Record, Value> {
+
+  friend class Context;
+  friend class CopyCollector;
+  friend class llvm::TrailingObjects<Record, Value>;
+
+  Symbol* Type;
+  unsigned Len = 0;
+  size_t numTrailingObjects(OverloadToken<Value> const) const {
+    return Len;
+  }
+
+public:
+  Record(Symbol* Type, llvm::ArrayRef<Value> Vs)
+    : ValueBase(ValueKind::Record),
+      Type(Type),
+      Len(Vs.size())
+  {
+    std::memcpy(getTrailingObjects(), Vs.data(),
+                Len * sizeof(Value));
+  }
+
+  template <typename Allocator>
+  void* operator new(size_t, Allocator& Heap, llvm::ArrayRef<Value> Xs) {
+    size_t Size = Record::sizeToAlloc(Xs.size());
+    void* Mem = Heap.Allocate(Size, alignof(Record));
+    return ::operator new (Size, Mem);
+  }
+
+  Symbol* getType() const { return Type; }
+
+  llvm::ArrayRef<Value> getFields() const {
+    return llvm::ArrayRef<Value>(getTrailingObjects(), Len);
+  }
+
+  llvm::MutableArrayRef<Value> getFields() {
+    return llvm::MutableArrayRef<Value>(getTrailingObjects(), Len);
+  }
+
+  static bool classof(Value V) {
+    return V.getKind() == ValueKind::Record;
+  }
+  static ValueKind getKind() { return ValueKind::Record; }
+
+  static size_t sizeToAlloc(unsigned Length) {
+    return totalSizeToAlloc<Value>(Length);
+  }
+};
+
 
 template <typename T>
 struct AnyTypeId {
@@ -2033,6 +2087,7 @@ inline llvm::StringRef getKindName(schir::ValueKind Kind) {
   GET_KIND_NAME_CASE(Pair)
   GET_KIND_NAME_CASE(PairWithSource)
   GET_KIND_NAME_CASE(Quote)
+  GET_KIND_NAME_CASE(Record)
   GET_KIND_NAME_CASE(SharedAny)
   GET_KIND_NAME_CASE(SourceValue)
   GET_KIND_NAME_CASE(String)

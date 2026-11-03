@@ -378,22 +378,13 @@
               TopLevelOp)))
         (lambda () (set! %in-top-level-op #f))))
 
-    (define %uncallable '%uncallable)
-
-    ;; Create the value of a definition that visit raises an error for
+    ;; Define the value of a definition that visit raises an error for
     ;; with a format string Message and Name.
-    (define (make-uncallable Message Name)
-      (list %uncallable Message Name))
-
-    (define (uncallable? Value)
-      (and (pair? Value)
-           (eq? %uncallable (car Value))))
-
-    (define (uncallable-message Value)
-      (cadr Value))
-
-    (define (uncallable-name Value)
-      (caddr Value))
+    (define-record-type <uncallable>
+      (make-uncallable Message Name)
+      uncallable?
+      (Message uncallable-message)
+      (Name uncallable-name))
 
     ;; Create the symbol name for a match-fn.
     ;; Suffix the name of a match-fn exported to C++ so it is
@@ -428,8 +419,7 @@
     ; (define !nbdl.tag (type "!nbdl.tag")) ; Not used.
     ; (define !nbdl.empty (type "!nbdl.empty"))
 
-    (define %nbdl-expr '%nbdl-expr)
-    ;; Create a thunk that should receive a location and callback
+    ;; Define a thunk that should receive a location and callback
     ;; to resolve a value once its dependencies are resolved.
     ;; (e.g. arguments to visit)
     ;; Additionally, an optional MatchImpl may be provided
@@ -437,13 +427,20 @@
     ;; taking the following arguments:
     ;;   MatchImpl: (Loc Store Key Fn) => ()
     ;; where Store is the Expr sans the MatchImpl.
+    (define-record-type <nbdl-expr>
+      (%make-expr Loc Thunk MatchImpl)
+      expr?
+      (Loc expr-loc)
+      (Thunk expr-thunk)
+      (MatchImpl expr-match-impl))
+
     (define-syntax %expr
       (syntax-rules ()
         ;; Thunk: (Loc Fn) -> Store
         ((%expr Loc Thunk)
-         (list %nbdl-expr Loc Thunk #f))
+         (%make-expr Loc Thunk #f))
         ((%expr Loc Thunk MatchImpl)
-         (list %nbdl-expr Loc Thunk MatchImpl))))
+         (%make-expr Loc Thunk MatchImpl))))
 
     ;; Handle the typical %expr use case of handling a single expr.
     (define-syntax %single-expr
@@ -466,22 +463,14 @@
                 (lambda (Loc_ Fn)
                   (%match-expr+ Loc_ Input Fn))))))
 
-    (define (expr? Arg)
-      (and (pair? Arg) (eqv? %nbdl-expr (car Arg))))
-
     ;; Invoke the Thunk created with %expr
     (define (%invoke-expr Expr Fn)
-      (define-values (Tag Loc Thunk MatchImpl)
-        (if (and (pair? Expr)
-                 (eq? %nbdl-expr (car Expr)))
-          (apply values Expr)
-            ;(cadr Expr)
-            ;(car (cddr Expr)))
-          (error "expecting %expr: {}" Expr)))
+      (unless (expr? Expr)
+        (error "expecting %expr: {}" Expr))
       ; TODO If MatchImpl is set, maybe create a new type?
-      (when MatchImpl
+      (when (expr-match-impl Expr)
         (error "MatchImpl is not unwrapped: {}" Expr))
-      (Thunk Loc Fn))
+      ((expr-thunk Expr) (expr-loc Expr) Fn))
 
     ; Maybe lift to a LiteralOp or ConstexprOp.
     (define (maybe-build-expr Loc Arg)
@@ -534,7 +523,7 @@
       ;       Or we stick with `visit` result being discard when not
       ;       operands to another `visit`. Maybe this was to prevent
       ;       combinational explosions.
-      (list %nbdl-discard Loc))
+      (%make-discard Loc))
 
     (define (%match-expr Loc ExprArg Fn)
       ;; Disallow expr+ extra cases.
@@ -812,41 +801,31 @@
            ...
            ))))
 
-    (define %named-store '%named-store)
-
     ;; Denote the name of a store defined as top level operation
     ;; in the module.
-    (define (make-named-store SymbolName DefineStructOp)
-      (list %named-store SymbolName DefineStructOp))
-
-    (define (named-store? Value)
-      (and (pair? Value)
-           (eq? %named-store (car Value))))
-
-    (define (named-store-sym-name NamedStore)
-      (cadr NamedStore))
+    (define-record-type <named-store>
+      (make-named-store SymName DefineStructOp)
+      named-store?
+      (SymName named-store-sym-name)
+      (DefineStructOp named-store-op))
 
     ;; Convert a named-store to a c++ type.
     (define (named-store->cpp NamedStore)
       (!cpp (named-store-sym-name NamedStore)))
 
-    (define %named-struct '%named-struct)
-
     ;; Denote the name of a struct defined via define-struct
     ;; where CppVisible is true if it is exported to C++.
+    (define-record-type <named-struct>
+      (%make-named-struct SymName DefineStructOp CppVisible Module)
+      named-struct?
+      (SymName named-struct-sym-name)
+      (DefineStructOp named-struct-op)
+      (CppVisible named-struct-cpp-visible?)
+      (Module named-struct-module))
+
     (define (make-named-struct SymbolName DefineStructOp CppVisible)
-      (list %named-struct SymbolName DefineStructOp CppVisible
-            (%main-module)))
-
-    (define (named-struct? Value)
-      (and (pair? Value)
-           (eq? %named-struct (car Value))))
-
-    (define (named-struct-sym-name NamedStruct)
-      (cadr NamedStruct))
-
-    (define (named-struct-op NamedStruct)
-      (caddr NamedStruct))
+      (%make-named-struct SymbolName DefineStructOp CppVisible
+                          (%main-module)))
 
     ;; Get the types of the members of a named-struct in order of definition.
     (define (struct-member-types NamedStruct)
@@ -856,11 +835,11 @@
     ;; or to a !nbdl.struct type otherwise.
     ;; Raise errors at Loc unless it is #f.
     (define (named-struct->type NamedStruct Loc)
-      (define-values (_ SymName _ CppVisible Module)
-        (apply values NamedStruct))
+      (define SymName (named-struct-sym-name NamedStruct))
+      (define Module (named-struct-module NamedStruct))
       (define Message "struct is not defined: {}")
       (cond
-        (CppVisible (!cpp SymName))
+        ((named-struct-cpp-visible? NamedStruct) (!cpp SymName))
         ;; Reject a struct that is not in the module.
         ((and (not (eq? Module main-module)) Loc)
          (error-with-loc Loc Message SymName))
@@ -878,25 +857,26 @@
                             (named-struct-sym-name NamedStruct))))
                 (result-types: !nbdl.struct_name))))
 
-    (define %named-fn '%named-fn)
-
     ;; A 'named-fn' can be used in an expr+
     ;; where FnOp is a func.func or nbdl.define_match_fn.
+    (define-record-type <named-fn>
+      (%make-named-fn SymName FnOp Loc)
+      named-fn?
+      (SymName named-fn-sym-name)
+      (FnOp named-fn-op)
+      (Loc named-fn-loc))
+
     (define (make-named-fn SymbolName FnOp)
-      (list %named-fn SymbolName FnOp (source-loc FnOp)))
+      (%make-named-fn SymbolName FnOp (source-loc FnOp)))
 
     ;; Let a function refer to itself within its own body before the
     ;; FnOp exists.
     (define (%make-self-named-fn SymbolName Loc)
-      (list %named-fn SymbolName #f Loc))
-
-    (define (named-fn? Value)
-      (and (pair? Value)
-           (eq? %named-fn (car Value))))
+      (%make-named-fn SymbolName #f Loc))
 
     (define (build-func-name NamedFn)
-      (define-values (_ Name FuncOp Loc)
-        (apply values NamedFn))
+      (define Name (named-fn-sym-name NamedFn))
+      (define Loc (named-fn-loc NamedFn))
       (result (create-op
                 "nbdl.func_name"
                 (loc: Loc)
@@ -1113,7 +1093,11 @@
         (lambda ()
           (set! matching-results? prev))))
 
-    (define %nbdl-discard '%nbdl-discard)
+    ;; Define the result of an expression that is discarded at Loc.
+    (define-record-type <nbdl-discard>
+      (%make-discard Loc)
+      discarded?
+      (Loc %discard-loc))
 
     (define (build-discard Loc Value)
       (create-op "nbdl.discard"
@@ -1121,7 +1105,7 @@
                    (operands: Value)
                    (attributes:)
                    (result-types:))
-      (list %nbdl-discard Loc))
+      (%make-discard Loc))
 
     (define (discard-aux Loc Expr)
       (%match-results
@@ -1138,11 +1122,8 @@
          (discard-aux (syntax-source-loc Value)
                       (%single-expr Value)))))
 
-    (define (discarded? Obj)
-      (and (pair? Obj) (eq? (car Obj) %nbdl-discard)))
-
     (define (discarded-loc Obj)
-      (and (discarded? Obj) (cadr Obj)))
+      (and (discarded? Obj) (%discard-loc Obj)))
 
     (define (build-visit MatchingResults? Sfinae? Loc Results)
       (define SfinaeAttr
@@ -1191,7 +1172,7 @@
                 (%top-level
                   (lambda () (apply Callee (cdr Results))))
                 (build-visit MatchingResults? #f Loc Results))))
-          (list %nbdl-discard Loc))))
+          (%make-discard Loc))))
 
     (define-syntax visit-aux
       (syntax-rules ()
@@ -1274,7 +1255,7 @@
           (lambda (Store)
             (unless (store-value? (car Store))
               ;; Use the source location of the %expr.
-              (error-with-loc (cadr PathSpecExpr)
+              (error-with-loc (expr-loc PathSpecExpr)
                               "expecting a store to match (see lift-store)"))
             (%top-level
               (lambda()
@@ -1673,15 +1654,9 @@
       (define Op
         (cond
           ((named-fn? Name)
-            (let ()
-              (define-values (_ _ FuncOp _)
-                (apply values Name))
-              FuncOp))
+            (named-fn-op Name))
           ((named-store? Name)
-            (let ()
-              (define-values (_ _ DefineStructOp)
-                (apply values Name))
-              DefineStructOp))
+            (named-store-op Name))
           ((named-struct? Name)
             (named-struct-op Name))
          (else (module-lookup (%main-module) Name))))

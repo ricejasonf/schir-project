@@ -494,6 +494,16 @@ private:
     OS << ')';
   }
 
+  // Write the record type symbol and the fields.
+  void VisitRecord(Record* R) {
+    OS << "#<record " << R->getType()->getStringRef();
+    for (Value X : R->getFields()) {
+      OS << ' ';
+      Visit(X);
+    }
+    OS << '>';
+  }
+
   void VisitEnvFrame(EnvFrame* E) {
     OS << "#<EnvFrame {";
     if (E->isLambdaScope())
@@ -1702,6 +1712,10 @@ Vector* Context::CreateVector(unsigned N, Value Default) {
 
 Vector* Context::CreateVector(ArrayRef<Value> Xs) {
   return new (getAllocator(), Xs) Vector(Xs);
+}
+
+Record* Context::CreateRecord(Symbol* Type, ArrayRef<Value> Fields) {
+  return new (getAllocator(), Fields) Record(Type, Fields);
 }
 
 ByteVector* Context::CreateByteVector(ArrayRef<Value> Xs) {

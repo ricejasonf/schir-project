@@ -427,6 +427,7 @@ public:
   String*     CreateFormatted(llvm::StringRef Fmt, Value List);
   Vector*     CreateVector(ArrayRef<Value> Xs);
   Vector*     CreateVector(unsigned N, Value Default = Undefined());
+  Record*     CreateRecord(Symbol* Type, ArrayRef<Value> Fields);
   ByteVector* CreateByteVector(llvm::ArrayRef<Value> Xs);
   EnvFrame*   CreateEnvFrame(llvm::ArrayRef<Value> Names, bool IsLambdaScope);
   EnvFrame*   CreateEnvFrame(unsigned N, bool IsLambdaScope = false);

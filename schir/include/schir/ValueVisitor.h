@@ -71,6 +71,7 @@ protected:
   VISIT_FN(Pair)
   // VISIT_FN(PairWithSource) **PairWithSource Implemented below**
   VISIT_FN(Quote)
+  VISIT_FN(Record)
   VISIT_FN(SharedAny)
   VISIT_FN(SourceValue)
   VISIT_FN(String)
@@ -114,6 +115,7 @@ public:
     case ValueKind::Pair:           DISPATCH(Pair);
     case ValueKind::PairWithSource: DISPATCH(PairWithSource);
     case ValueKind::Quote:          DISPATCH(Quote);
+    case ValueKind::Record:         DISPATCH(Record);
     case ValueKind::SharedAny:      DISPATCH(SharedAny);
     case ValueKind::SourceValue:    DISPATCH(SourceValue);
     case ValueKind::String:         DISPATCH(String);

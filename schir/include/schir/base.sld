@@ -4,7 +4,8 @@
   (import (schir builtins)
           (schir base r7rs-syntax)
           (schir base list)
-          (schir base int))
+          (schir base int)
+          (schir base record))
   (begin
     ; No place else to put this
     (define (not x)
@@ -160,6 +161,9 @@
     reverse map for-each
     every any
     vector->list list->vector
+
+    ; (schir base record)
+    define-record-type
 
     ; eval stuff
     compile

@@ -241,6 +241,12 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
     return new (NewHeap, Xs) schir::Vector(Xs);
   }
 
+  // Record
+  schir::Value VisitRecord(schir::Record* Record) {
+    schir::ArrayRef<schir::Value> Xs = Record->getFields();
+    return new (NewHeap, Xs) schir::Record(Record->getType(), Xs);
+  }
+
   schir::Value VisitAny(schir::Any* Any) {
     void const* TypeId = Any->TypeId;
     llvm::StringRef ObjData = Any->getObjData();

@@ -49,6 +49,7 @@ schir::ExternBuiltinSyntax quote;
 schir::ExternBuiltinSyntax set;
 schir::ExternBuiltinSyntax syntax_error;
 schir::ExternBuiltinSyntax case_lambda;
+schir::ExternBuiltinSyntax record_type_id;
 
 schir::ExternFunction apply;
 schir::ExternFunction add;
@@ -69,6 +70,10 @@ schir::ExternFunction make_vector;
 schir::ExternFunction vector_length;
 schir::ExternFunction vector_ref;
 schir::ExternFunction vector_set;
+schir::ExternFunction make_record;
+schir::ExternFunction is_record;
+schir::ExternFunction record_ref;
+schir::ExternFunction record_set;
 schir::ExternFunction make_list;
 schir::ExternFunction list_set;
 schir::ExternFunction list_ref;
@@ -159,6 +164,22 @@ mlir::Value define(OpGen& OG, Pair* P) {
   if (!isIdentifier(Id))
     return OG.SetError("invalid syntax for define", P);
   return OG.createDefine(Id, P2, P);
+}
+
+// Create a symbol that uniquely identifies the record type bound to Id
+// using the mangled name of a global or an anonymous id for a local.
+mlir::Value record_type_id(OpGen& OG, Pair* P) {
+  Pair* P2 = dyn_cast<Pair>(P->Cdr);
+  if (!P2 || !isIdentifier(P2->Car) || !isa<Empty>(P2->Cdr))
+    return OG.SetError("invalid syntax for %record-type-id", P);
+  EnvEntry Entry = OG.LookupEnv(P2->Car);
+  if (!Entry)
+    return OG.SetError("unbound record type name", P2->Car);
+  std::string Id = Entry.MangledName
+    ? std::string(Entry.MangledName->getStringRef())
+    : OG.mangleFunctionName(llvm::StringRef());
+  Value Literal = OG.getContext().CreateSymbol(Id);
+  return OG.create<LiteralOp>(P->getSourceLocation(), Literal);
 }
 
 // Binds a dynamically loaded schir::ContextLocal.
@@ -1086,6 +1107,64 @@ void vector_set(Context& C, ValueRefs Args) {
   C.Cont();
 }
 
+// Get the record and field index arguments of record-ref/record-set!.
+static std::pair<Record*, unsigned> getRecordField(Context& C,
+                                                   ValueRefs Args) {
+  Record* Rec = dyn_cast<Record>(Args[0]);
+  if (!Rec) {
+    C.RaiseError("expecting record", Args[0]);
+    return {};
+  }
+  Value Index = Args[1];
+  if (!isa<Int>(Index) || cast<Int>(Index) < 0 ||
+      static_cast<size_t>(cast<Int>(Index)) >= Rec->getFields().size()) {
+    C.RaiseError("invalid record field index", Index);
+    return {};
+  }
+  return {Rec, static_cast<unsigned>(cast<Int>(Index))};
+}
+
+// Create a record of type Type with N fields initialized to #f.
+void make_record(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  Symbol* Type = dyn_cast<Symbol>(Args[0]);
+  if (!Type)
+    return C.RaiseError("expecting record type symbol", Args[0]);
+  if (!isa<Int>(Args[1]) || cast<Int>(Args[1]) < 0)
+    return C.RaiseError("expecting positive integer", Args[1]);
+  llvm::SmallVector<Value, 8> Fields(
+      static_cast<size_t>(cast<Int>(Args[1])), Bool(false));
+  C.Cont(C.CreateRecord(Type, Fields));
+}
+
+// Check that Obj is a record of type Type.
+void is_record(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  Record* Rec = dyn_cast<Record>(Args[0]);
+  C.Cont(Bool(Rec && eqv(Rec->getType(), Args[1])));
+}
+
+void record_ref(Context& C, ValueRefs Args) {
+  if (Args.size() != 2)
+    return C.RaiseError("invalid arity");
+  auto [Rec, K] = getRecordField(C, Args);
+  if (!Rec)
+    return;
+  C.Cont(Rec->getFields()[K]);
+}
+
+void record_set(Context& C, ValueRefs Args) {
+  if (Args.size() != 3)
+    return C.RaiseError("invalid arity");
+  auto [Rec, K] = getRecordField(C, Args);
+  if (!Rec)
+    return;
+  Rec->getFields()[K] = Args[2];
+  C.Cont();
+}
+
 void with_exception_handler(Context& C, ValueRefs Args) {
   if (Args.size() != 2) return C.RaiseError("invalid arity");
   C.WithExceptionHandler(Args[0], Args[1]);
@@ -1443,6 +1522,7 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(if_)             = schir::builtins::if_;
   SCHIR_BASE_VAR(lambda)          = schir::builtins::lambda;
   SCHIR_BASE_VAR(case_lambda)     = schir::builtins::case_lambda;
+  SCHIR_BASE_VAR(record_type_id)  = schir::builtins::record_type_id;
   SCHIR_BASE_VAR(current_source_loc)
                                   = schir::builtins::current_source_loc;
   SCHIR_BASE_VAR(quasiquote)      = schir::builtins::quasiquote;
@@ -1481,6 +1561,10 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(vector_length) = schir::builtins::vector_length;
   SCHIR_BASE_VAR(vector_ref) = schir::builtins::vector_ref;
   SCHIR_BASE_VAR(vector_set) = schir::builtins::vector_set;
+  SCHIR_BASE_VAR(make_record) = schir::builtins::make_record;
+  SCHIR_BASE_VAR(is_record) = schir::builtins::is_record;
+  SCHIR_BASE_VAR(record_ref) = schir::builtins::record_ref;
+  SCHIR_BASE_VAR(record_set) = schir::builtins::record_set;
   SCHIR_BASE_VAR(make_list) = schir::builtins::make_list;
   SCHIR_BASE_VAR(list_ref) = schir::builtins::list_ref;
   SCHIR_BASE_VAR(list_set) = schir::builtins::list_set;
@@ -1559,6 +1643,7 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"syntax-fn",     SCHIR_BASE_VAR(syntax_fn)},
     {"syntax-error",  SCHIR_BASE_VAR(syntax_error)},
     {"case-lambda",   SCHIR_BASE_VAR(case_lambda)},
+    {"%record-type-id", SCHIR_BASE_VAR(record_type_id)},
     {"begin",         SCHIR_BASE_VAR(begin)},
     {"cond-expand",   SCHIR_BASE_VAR(cond_expand)},
     {"define-library",SCHIR_BASE_VAR(define_library)},
@@ -1594,6 +1679,10 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"vector-length", SCHIR_BASE_VAR(vector_length)},
     {"vector-ref", SCHIR_BASE_VAR(vector_ref)},
     {"vector-set!", SCHIR_BASE_VAR(vector_set)},
+    {"%make-record", SCHIR_BASE_VAR(make_record)},
+    {"%record?", SCHIR_BASE_VAR(is_record)},
+    {"%record-ref", SCHIR_BASE_VAR(record_ref)},
+    {"%record-set!", SCHIR_BASE_VAR(record_set)},
     {"make-list", SCHIR_BASE_VAR(make_list)},
     {"list-ref", SCHIR_BASE_VAR(list_ref)},
     {"list-set!", SCHIR_BASE_VAR(list_set)},
