@@ -125,8 +125,11 @@
     vector make-vector vector-length vector-set!  vector-ref
     number->string
     raise
+    raise-continuable
     string-append
     string-copy
+    string->symbol
+    symbol->string
     string-ref
     string-length
     string-join
@@ -143,13 +146,17 @@
     cond case
     and or when unless
     do
+    guard
 
     ; (schir base list)
     caar cadr cdar cddr
+    caaar caadr cadar caddr
+    cdaar cdadr cddar cdddr
     member memq memv
     assoc assq assv
     reverse map for-each
     every any
+    vector->list list->vector
 
     ; eval stuff
     compile

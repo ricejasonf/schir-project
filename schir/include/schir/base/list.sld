@@ -3,11 +3,14 @@
 (define-library (schir base list)
   (export
     caar cadr cdar cddr
+    caaar caadr cadar caddr
+    cdaar cdadr cddar cdddr
     member memq memv
     assoc assq assv
     reverse map for-each
     case
     every any
+    vector->list list->vector
     )
   (import (schir builtins)
           (schir base r7rs-syntax)
@@ -17,6 +20,14 @@
     (define (cadr x) (car (cdr x)))
     (define (cdar x) (cdr (car x)))
     (define (cddr x) (cdr (cdr x)))
+    (define (caaar x) (car (caar x)))
+    (define (caadr x) (car (cadr x)))
+    (define (cadar x) (car (cdar x)))
+    (define (caddr x) (car (cddr x)))
+    (define (cdaar x) (cdr (caar x)))
+    (define (cdadr x) (cdr (cadr x)))
+    (define (cddar x) (cdr (cdar x)))
+    (define (cdddr x) (cdr (cddr x)))
 
     (define (member-fast Obj List Compare)
       (if (pair? List)
@@ -173,5 +184,21 @@
           #f))
       (or Result
           (any-lol Pred Lists)))
+
+    (define vector->list
+      (case-lambda
+        ((Vec)
+         (vector->list Vec 0 (vector-length Vec)))
+        ((Vec Start)
+         (vector->list Vec Start (vector-length Vec)))
+        ((Vec Start End)
+         (let Loop ((I (- End 1))
+                    (Result '()))
+           (if (< I Start)
+             Result
+             (Loop (- I 1) (cons (vector-ref Vec I) Result)))))))
+
+    (define (list->vector List)
+      (apply vector List))
 
     )) ; end define-library

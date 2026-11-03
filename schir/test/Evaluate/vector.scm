@@ -84,3 +84,17 @@
           (vector-ref Vec 1)
           (vector-ref Vec 0))))
 (newline)
+
+; CHECK-NEXT: ((foo bar baz) (bar baz) (bar) ())
+(write
+  (let ((Vec (vector 'foo 'bar 'baz)))
+    (list (vector->list Vec)
+          (vector->list Vec 1)
+          (vector->list Vec 1 2)
+          (vector->list (vector)))))
+(newline)
+
+; CHECK-NEXT: (#(1 2 3) #())
+(write (list (list->vector '(1 2 3))
+             (list->vector '())))
+(newline)

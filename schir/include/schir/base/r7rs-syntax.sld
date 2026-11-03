@@ -172,4 +172,5 @@
     cond
     and or when unless
     do
+    guard
     ))

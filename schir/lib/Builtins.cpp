@@ -77,6 +77,8 @@ schir::ExternFunction write;
 schir::ExternFunction newline;
 schir::ExternFunction string_append;
 schir::ExternFunction string_copy;
+schir::ExternFunction string_to_symbol;
+schir::ExternFunction symbol_to_string;
 schir::ExternFunction string_length;
 schir::ExternFunction string_ref;
 schir::ExternFunction number_to_string;
@@ -678,6 +680,22 @@ void string_copy(Context& C, ValueRefs Args) {
   }
 
   return C.Cont(C.CreateString(ViewStr));
+}
+
+void string_to_symbol(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  if (!isa<String>(Args[0]))
+    return C.RaiseError("expecting string: {}", Args[0]);
+  C.Cont(C.CreateSymbol(Args[0].getStringRef()));
+}
+
+void symbol_to_string(Context& C, ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  if (!isa<Symbol>(Args[0]))
+    return C.RaiseError("expecting symbol: {}", Args[0]);
+  C.Cont(C.CreateString(Args[0].getStringRef()));
 }
 
 void number_to_string(Context& C, ValueRefs Args) {
@@ -1448,6 +1466,8 @@ void SCHIR_BASE_INIT(schir::Context& Context) {
   SCHIR_BASE_VAR(newline) = schir::builtins::newline;
   SCHIR_BASE_VAR(string_append) = schir::builtins::string_append;
   SCHIR_BASE_VAR(string_copy) = schir::builtins::string_copy;
+  SCHIR_BASE_VAR(string_to_symbol) = schir::builtins::string_to_symbol;
+  SCHIR_BASE_VAR(symbol_to_string) = schir::builtins::symbol_to_string;
   SCHIR_BASE_VAR(string_length) = schir::builtins::string_length;
   SCHIR_BASE_VAR(string_ref) = schir::builtins::string_ref;
   SCHIR_BASE_VAR(number_to_string) = schir::builtins::number_to_string;
@@ -1556,6 +1576,8 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"newline", SCHIR_BASE_VAR(newline)},
     {"string-append", SCHIR_BASE_VAR(string_append)},
     {"string-copy", SCHIR_BASE_VAR(string_copy)},
+    {"string->symbol", SCHIR_BASE_VAR(string_to_symbol)},
+    {"symbol->string", SCHIR_BASE_VAR(symbol_to_string)},
     {"string-length", SCHIR_BASE_VAR(string_length)},
     {"string-ref", SCHIR_BASE_VAR(string_ref)},
     {"number->string", SCHIR_BASE_VAR(number_to_string)},

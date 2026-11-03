@@ -277,3 +277,15 @@
       (assv 5 '((2 3) (5 7) (11 13)))
       )))
 (newline)
+
+; CHECK-NEXT: (1 2 3 4 (5) (6) (7) (8))
+(write
+  (list (caaar '(((1))))
+        (caadr '(0 (2)))
+        (cadar '((0 3)))
+        (caddr '(0 0 4))
+        (cdaar '(((0 5))))
+        (cdadr '(0 (0 6)))
+        (cddar '((0 0 7)))
+        (cdddr '(0 0 0 8))))
+(newline)
