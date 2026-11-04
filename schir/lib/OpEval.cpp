@@ -530,15 +530,13 @@ private:
     if (Op.isExternal())
       return BlockItrTy();
 
-#if 0 // TODO Replace with InitGlobalOp
-    Context.PushCont([Op](schir::Context& C, ValueRefs Args) mutable {
-      assert(Args.size() == 1 && "invalid continuation arity");
-      schir::Value Result = Args[0];
-      assert(!isa<Syntax>(Result) && "not expecting syntax in GlobalOp");
-      C.AddKnownAddress(Op.getSymName(), Result);
-      C.Cont();
-    }, ValueRefs());
-#endif
+    // Bind the name before its initializer runs so it survives an error.
+    if (!Context.GetKnownValue(Op.getSymName())) {
+      schir::SourceLocation Loc = getSourceLocation(Op.getLoc());
+      ExternName* EN = Context.CreateExternName(Loc, Op.getSymName());
+      Context.AddKnownAddress(Op.getSymName(),
+                              Context.CreateBinding(Undefined(EN)));
+    }
 
     auto Scope = ValueMapScope(ValueMap);
     BlockItrTy Itr = Op.getInitializer().front().begin();
