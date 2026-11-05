@@ -207,3 +207,39 @@
     (write (shadow-helper))
     (newline)))
 (import (rename-global-hygiene-test))
+
+; Test that a local define does not capture a template's free identifier.
+(define-syntax define-get-free-y
+  (syntax-rules ()
+    ((define-get-free-y name) (define (name) free-y))))
+(define-syntax define-free-y
+  (syntax-rules ()
+    ((define-free-y val) (define free-y val))))
+(define free-y 'global-free-y)
+
+(define (free-y-defined-after)
+  (define-get-free-y get)
+  (define free-y 'local-free-y)
+  (get))
+
+(define (free-y-defined-before)
+  (define free-y 'local-free-y)
+  (define-get-free-y get)
+  (get))
+
+(define (free-y-defined-by-macro)
+  (define-get-free-y get)
+  (define-free-y 'macro-free-y)
+  (get))
+
+; CHECK: global-free-y
+(write (free-y-defined-after))
+(newline)
+
+; CHECK-NEXT: global-free-y
+(write (free-y-defined-before))
+(newline)
+
+; CHECK-NEXT: global-free-y
+(write (free-y-defined-by-macro))
+(newline)

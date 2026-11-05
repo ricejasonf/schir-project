@@ -168,11 +168,13 @@ std::pair<uintptr_t, uintptr_t> Context::GetIdentifierUniqueId(Value V) {
           Value(SC).getOpaqueValue()};
 }
 
-// Get the localiest EnvFrame.
+// Get the localiest EnvFrame that is not sealed.
 EnvFrame* Context::GetLocalEnvFrame(Value Stack, bool IsLambdaScope) {
   EnvFrame* MostLocalEF = nullptr;
   for (Value EnvNode : Stack) {
     if (auto* EF = dyn_cast<EnvFrame>(EnvNode)) {
+      if (EF->isSealed())
+        continue;
       if (auto* NestedEF = GetLocalEnvFrame(EF->getLocalStack(),
                                             IsLambdaScope))
         return NestedEF;

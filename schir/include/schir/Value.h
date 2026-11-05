@@ -1651,7 +1651,9 @@ class EnvFrame final
   friend class Context;
   friend class CopyCollector;
 
-  bool IsLambdaScope;
+  unsigned IsLambdaScope : 1;
+  // Stop receiving new bindings and EnvFrames.
+  unsigned IsSealed : 1;
   unsigned NumBindings;
   size_t numTrailingObjects(OverloadToken<Binding*> const) const {
     return NumBindings;
@@ -1665,11 +1667,14 @@ public:
   EnvFrame(unsigned NumBindings, bool IsLambdaScope)
     : ValueBase(ValueKind::EnvFrame),
       IsLambdaScope(IsLambdaScope),
+      IsSealed(false),
       NumBindings(NumBindings),
       LocalStack(Empty())
   { }
 
   bool isLambdaScope() const { return IsLambdaScope; }
+  bool isSealed() const { return IsSealed; }
+  void seal() { IsSealed = true; }
 
   llvm::ArrayRef<Binding*> getBindings() const {
     return llvm::ArrayRef<Binding*>(

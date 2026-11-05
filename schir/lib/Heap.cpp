@@ -115,6 +115,8 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
 
     schir::EnvFrame* NewE = new (Mem) schir::EnvFrame(Bindings.size(),
                                                       IsLambdaScope);
+    if (EnvFrame->isSealed())
+      NewE->seal();
     auto NewBindings = NewE->getBindings();
     for (unsigned i = 0; i < Bindings.size(); i++) {
       NewBindings[i] = cast<schir::Binding>(Visit(Bindings[i]));

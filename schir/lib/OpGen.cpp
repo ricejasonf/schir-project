@@ -1521,7 +1521,14 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
       return BS->Fn(*this, P);
     }
     case ValueKind::Syntax: {
+      // Keep later local bindings out of the template environments.
+      bool IsLocal = Context.GetLocalEnvFrame(Context.EnvStack,
+                                              /*IsLambdaScope=*/true);
       EnvFrame* EF = Context.PushEnvFrame();
+      auto Sealer = llvm::scope_exit([EF, IsLocal] {
+          if (IsLocal)
+            EF->seal();
+        });
       schir::Context& Context = this->Context;
       Context.setLoc(P->getSourceLocation());
       Value Input = P;
