@@ -830,10 +830,10 @@ mlir::Value OpGen::createSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
     Builder.setInsertionPointToStart(&Block);
   }
 
-  Pair* TransformerSpec = dyn_cast<Pair>(SyntaxSpec->Cdr.car());
+  Pair* TransformerSpec = dyn_cast_or_null<Pair>(SyntaxSpec->Cdr.car());
   Value SyntaxOperator;
 
-  if (isIdentifier(TransformerSpec->Car))
+  if (TransformerSpec && isIdentifier(TransformerSpec->Car))
     SyntaxOperator = Context.GetSyntax(LookupEnv(TransformerSpec->Car)).Value;
 
   if (!SyntaxOperator)
