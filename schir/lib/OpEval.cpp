@@ -458,8 +458,11 @@ private:
 
     if (isa<SchirContextType>(RefsType)) {
       // Assume we always use the current context object.
-      auto* Callee = cast<Lambda>(Context.getCallee());
-      ValueRefs = Callee->getCaptures();
+      schir::Value Callee = Context.getCallee();
+      if (auto* S = dyn_cast<Syntax>(Callee))
+        ValueRefs = S->getCaptures();
+      else
+        ValueRefs = cast<Lambda>(Callee)->getCaptures();
     } else if (isa<SchirValueRefsType>(RefsType)) {
       ValueRefs = Context.getCallArgs();
     }

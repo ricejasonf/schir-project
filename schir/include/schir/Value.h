@@ -1192,21 +1192,28 @@ public:
   static ValueKind getKind() { return ValueKind::Quote; }
 };
 
+// Define a syntax function that captures values like a Lambda.
 class Syntax final
   : public ValueBase,
-    private llvm::TrailingObjects<Syntax, char> {
-  friend class llvm::TrailingObjects<Syntax, char>;
+    private llvm::TrailingObjects<Syntax, Value, char> {
+  friend class llvm::TrailingObjects<Syntax, Value, char>;
   friend Context;
 
   OpaqueFnPtrTy FnPtr;
+  unsigned short NumCaptures;
   unsigned StorageLen;
 
-  void* getStoragePtr() { return getTrailingObjects(); }
+  size_t numTrailingObjects(OverloadToken<Value> const) const {
+    return NumCaptures;
+  }
+
+  void* getStoragePtr() { return getTrailingObjects<char>(); }
 
 public:
-  Syntax(OpaqueFn FnData)
+  Syntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures = {})
     : ValueBase(ValueKind::Syntax),
       FnPtr(FnData.CallFn),
+      NumCaptures(Captures.size()),
       StorageLen(FnData.Storage.size())
   {
     // Storage
@@ -1214,6 +1221,9 @@ public:
     size_t StorageLen       = FnData.Storage.size();
     void* StoragePtr = getStoragePtr();
     std::memcpy(StoragePtr, OrigStorage, StorageLen);
+
+    // Captures
+    llvm::copy(Captures, getCaptures().begin());
   }
 
   // Accessor for copying.
@@ -1222,19 +1232,27 @@ public:
         static_cast<char const*>(getStoragePtr()), StorageLen)};
   }
 
+  llvm::MutableArrayRef<Value> getCaptures() {
+    return llvm::MutableArrayRef<Value>(
+        getTrailingObjects<Value>(), NumCaptures);
+  }
+
   void call(Context& C, ValueRefs Args) {
     return FnPtr(getStoragePtr(), C, Args);
   }
 
-  static size_t sizeToAlloc(OpaqueFn const& FnData) {
-    return totalSizeToAlloc<char>(FnData.Storage.size());
+  static size_t sizeToAlloc(OpaqueFn const& FnData,
+                            unsigned short NumCaptures = 0) {
+    return totalSizeToAlloc<Value, char>(NumCaptures,
+                                         FnData.Storage.size());
   }
   static constexpr size_t sizeToAlloc(size_t FnStorageLen) {
-    return totalSizeToAlloc<char>(FnStorageLen);
+    return totalSizeToAlloc<Value, char>(0, FnStorageLen);
   }
 
   template <typename Allocator>
-  static void* allocate(Allocator& Alloc, OpaqueFn);
+  static void* allocate(Allocator& Alloc, OpaqueFn,
+                        llvm::ArrayRef<Value> Captures = {});
 
   static bool classof(Value V) {
     return V.getKind() == ValueKind::Syntax;
@@ -2165,8 +2183,9 @@ void* Any::allocate(Allocator& Alloc, llvm::StringRef ObjData) {
 }
 
 template <typename Allocator>
-void* Syntax::allocate(Allocator& Alloc, OpaqueFn FnData) {
-  size_t size = Syntax::sizeToAlloc(FnData);
+void* Syntax::allocate(Allocator& Alloc, OpaqueFn FnData,
+                       llvm::ArrayRef<schir::Value> Captures) {
+  size_t size = Syntax::sizeToAlloc(FnData, Captures.size());
   return schir::allocate(Alloc, size, alignof(Syntax));
 }
 

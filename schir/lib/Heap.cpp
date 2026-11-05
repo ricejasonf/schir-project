@@ -225,8 +225,11 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
   // Syntax
   schir::Value VisitSyntax(schir::Syntax* Syntax) {
     OpaqueFn FnData = Syntax->getFnData();
-    void* Mem = Syntax::allocate(getAllocator(), FnData);
-    return new (Mem) schir::Syntax(FnData);
+    llvm::SmallVector<schir::Value, 4> Captures;
+    for (schir::Value Capture : Syntax->getCaptures())
+      Captures.push_back(Visit(Capture));
+    void* Mem = Syntax::allocate(getAllocator(), FnData, Captures);
+    return new (Mem) schir::Syntax(FnData, Captures);
   }
 
   // SyntaxClosure

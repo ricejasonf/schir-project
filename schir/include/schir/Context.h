@@ -460,13 +460,14 @@ public:
     return CreateLambda(Fn, {});
   }
 
+  Syntax* CreateSyntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures) {
+    void* Mem = Syntax::allocate(getAllocator(), FnData, Captures);
+    return new (Mem) Syntax(FnData, Captures);
+  }
+
   template <typename F>
   Syntax* CreateSyntax(F Fn) {
-    auto FnData = createOpaqueFn(Fn);
-    void* Mem = Syntax::allocate(getAllocator(), FnData);
-    Syntax* New = new (Mem) Syntax(FnData);
-
-    return New;
+    return CreateSyntax(createOpaqueFn(Fn), {});
   }
 
   Builtin* CreateBuiltin(ValueFn Fn) {
