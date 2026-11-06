@@ -69,8 +69,7 @@ public:
     // to serve as the base of the environment.
     mlir::OpBuilder::InsertionGuard IG(OpGen.Builder);
     OpGen.Builder.setInsertionPoint(RenameEnv);
-    auto NewRenameEnv = OpGen.create<RenameEnvOp>(Loc, RenameEnv.getEnv(),
-                                                  RenameOpVector);
+    auto NewRenameEnv = OpGen.create<RenameEnvOp>(Loc, RenameOpVector);
     RenameEnv.getResult().replaceAllUsesWith(NewRenameEnv);
     RenameEnv->erase();
     RenameEnv = NewRenameEnv;
@@ -92,9 +91,9 @@ protected:
   // Map the results of RenameOps.
   llvm::DenseMap<String*, std::pair<mlir::Value, mlir::Value>> RenameOps;
 
-  TemplateBase(schir::OpGen& O, mlir::Value EnvArg)
+  TemplateBase(schir::OpGen& O)
     : OpGen(O),
-      RenameEnv(O.create<RenameEnvOp>(schir::SourceLocation(), EnvArg,
+      RenameEnv(O.create<RenameEnvOp>(schir::SourceLocation(),
                                       llvm::ArrayRef<mlir::Value>()))
   { }
 

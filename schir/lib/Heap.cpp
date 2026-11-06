@@ -113,10 +113,10 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
 
     void* Mem = NewHeap.Allocate(MemSize, alignof(schir::EnvFrame));
 
+    schir::Value Parent = Visit(EnvFrame->getParent());
     schir::EnvFrame* NewE = new (Mem) schir::EnvFrame(Bindings.size(),
-                                                      IsLambdaScope);
-    if (EnvFrame->isSealed())
-      NewE->seal();
+                                                      IsLambdaScope, Parent);
+    NewE->AddedBindings = Visit(EnvFrame->getAddedBindings());
     auto NewBindings = NewE->getBindings();
     for (unsigned i = 0; i < Bindings.size(); i++) {
       NewBindings[i] = cast<schir::Binding>(Visit(Bindings[i]));
@@ -381,7 +381,7 @@ void Context::CollectGarbage() {
     GC.VisitModule(StringMapEntry.second.get());
   }
 
-  GC.VisitRootNode(EnvStack);
+  GC.VisitRootNode(CurrentEnv);
 
   // DefaultEnv is referenced globally.
   GC.VisitEnvironment(DefaultEnv.get());

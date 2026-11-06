@@ -657,19 +657,14 @@ private:
 
   BlockItrTy Visit(RenameEnvOp Op) {
     unsigned NumBindings = Op.getBindings().size();
-    schir::EnvFrame* EnvFrame = Context.CreateEnvFrame(NumBindings);
+    schir::EnvFrame* EnvFrame = Context.CreateEnvFrame(
+        NumBindings, /*IsLambdaScope=*/false, schir::Empty());
     llvm::MutableArrayRef<Binding*> Bindings = EnvFrame->getBindings();
     auto Vals = Op.getBindings();
     for (unsigned I = 0; I < NumBindings; ++I)
       Bindings[I] = cast<Binding>(getBindingOrValue(Vals[I]));
 
-    // Add the local environment on top of EnvFrame.
-    schir::Value Env = getValue(Op.getEnv());
-    schir::EnvFrame* LocalEnvFrame = Context.GetLocalEnvFrame(Env);
-    // EnvFrame is the tail.
-    schir::Value NewEnv = Context.CreatePair(LocalEnvFrame, EnvFrame);
-
-    setValue(Op, NewEnv);
+    setValue(Op, EnvFrame);
     return next(Op);
   }
 

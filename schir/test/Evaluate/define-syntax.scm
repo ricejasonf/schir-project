@@ -243,3 +243,31 @@
 ; CHECK-NEXT: global-free-y
 (write (free-y-defined-by-macro))
 (newline)
+
+; Test that a use-site scope does not capture a template's free identifier.
+(define-syntax get-free-y
+  (syntax-rules ()
+    ((get-free-y) free-y)))
+
+(define (free-y-in-nested-scope)
+  (define-get-free-y get)
+  (my-let ((free-y 'nested-free-y))
+    (list (get) (get-free-y))))
+
+; CHECK-NEXT: (global-free-y global-free-y)
+(write (free-y-in-nested-scope))
+(newline)
+
+; Test that a define from a nested expansion binds the use-site name.
+(define-syntax wrap-body
+  (syntax-rules ()
+    ((wrap-body body ...) (begin body ...))))
+
+(define (define-in-nested-expansion)
+  (wrap-body (wrap-body (define nested-name 'nested-name)))
+  (my-let ((z 'z))
+    (list nested-name z)))
+
+; CHECK-NEXT: (nested-name z)
+(write (define-in-nested-expansion))
+(newline)

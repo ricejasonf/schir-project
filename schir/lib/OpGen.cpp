@@ -980,22 +980,16 @@ mlir::Value OpGen::createSequence(SourceLocation Loc, Value Body) {
 //  - The BindingOps for the local defines have
 //    been inserted by the `define` syntax. They are
 //    initialized to "undefined" and their corresponding
-//    schir::Bindings placed in the EnvStack.
-//    Walk the EnvStack owned by the EnvFrame of the current lambda scope.
+//    schir::Bindings added to the EnvFrame of the lambda scope.
+//    Walk the added bindings of that EnvFrame.
 //    Collect these and insert the lazy initializers via SetOp
 //    in the lexical order that they were defined.
-bool OpGen::WalkDefineInits(Value Env, IdSet& LocalIds) {
-  Pair* P = dyn_cast<Pair>(Env);
+bool OpGen::WalkDefineInits(Value Bindings, IdSet& LocalIds) {
+  Pair* P = dyn_cast<Pair>(Bindings);
   if (!P) return false;
   // Walk the defines before this.
   if (WalkDefineInits(P->Cdr, LocalIds))
     return true;
-  // Walk any defines in nested scopes.
-  if (auto* EF = dyn_cast<EnvFrame>(P->Car)) {
-    assert(!EF->isLambdaScope() &&
-        "should not have any nested lambda scopes");
-    return WalkDefineInits(EF->getLocalStack(), LocalIds);
-  }
 
   // Check for duplicate names.
   Binding* B = cast<Binding>(P->Car);
@@ -1037,12 +1031,13 @@ void OpGen::FinishLocalDefines() {
   IsLocalDefineAllowed = false;
   IdSet LocalIds;
   // Get the most local EnvFrame that is a lambda scope.
-  EnvFrame* EF = Context.GetLocalEnvFrame(Context.EnvStack,
-                                          /*IsLambdaScope=*/true);
+  auto* EF = dyn_cast<EnvFrame>(Context.getEnvironment());
+  while (EF && !EF->isLambdaScope())
+    EF = dyn_cast<EnvFrame>(EF->getParent());
   assert(EF && "expecting a lambda scope env frame");
   if (!EF)
     return;
-  WalkDefineInits(EF->getLocalStack(), LocalIds);
+  WalkDefineInits(EF->getAddedBindings(), LocalIds);
 }
 
 mlir::Value OpGen::createBody(SourceLocation Loc, Value Body) {
@@ -1066,9 +1061,12 @@ mlir::Value OpGen::createBinding(Binding *B, mlir::Value Init) {
 mlir::Value OpGen::createDefine(Value Id, Value DefineArgs, Value OrigCall) {
   if (isTopLevel()) return createTopLevelDefine(Id, DefineArgs, OrigCall);
   if (!IsLocalDefineAllowed) return SetError("unexpected define", OrigCall);
+  // Bind a syntax closure of the current environment as its symbol.
+  if (auto* SC = dyn_cast<SyntaxClosure>(Id);
+      SC && SC->Env == Context.getEnvironment())
+    Id = SC->Node;
   // Create the binding with an undefined object that secretly holds
   // its syntax in the current environment.
-  Value Env;
   Binding* B = Context.CreateBinding(Id, Undefined(DefineArgs));
   // Push to the local environment.
   Context.PushLocalBinding(B);
@@ -1094,7 +1092,7 @@ OpGen::createTopLevelBindingInfo(Value Id) {
   // Unwrap SyntaxClosures.
   if (auto* SC = dyn_cast<SyntaxClosure>(Id)) {
     S = cast<Symbol>(SC->Node);
-    Env = Context.GetTopLevelEnvironment(SC->Env);
+    Env = dyn_cast<Environment>(SC->Env);
     if (!Env) {
       SetError("FIXME support top level names in syntax closures");
       return Result;
@@ -1105,9 +1103,6 @@ OpGen::createTopLevelBindingInfo(Value Id) {
   }
 
   assert(Env && "expecting top level environment");
-
-  // If EnvStack isn't an Environment then there is local
-  // scope information on top of it
 
   Entry = Env->Lookup(Context, S);
   if (Entry.Value && Entry.MangledName) {
@@ -1367,18 +1362,24 @@ mlir::Value OpGen::VisitSyntaxClosure(SyntaxClosure* SC) {
   // A SyntaxClosure wraps either a Symbol or a rebuilt expression that
   // substitutes all symbols as SyntaxClosures so we can simply unwrap
   // the latter.
-  if (auto* S = dyn_cast<Symbol>(SC->Node))
-    return VisitSymbol(S, SC->Env);
+  if (isa<Symbol>(SC->Node))
+    return VisitIdentifier(SC);
   else
     return Visit(SC->Node);
 }
 
-mlir::Value OpGen::VisitSymbol(Symbol* S, Value ClosedEnv) {
-  EnvEntry Entry = LookupEnv(S, ClosedEnv);
+mlir::Value OpGen::VisitSymbol(Symbol* S) {
+  return VisitIdentifier(S);
+}
+
+mlir::Value OpGen::VisitIdentifier(Value Id) {
+  EnvEntry Entry = LookupEnv(Id);
+  auto* SC = dyn_cast<SyntaxClosure>(Id);
+  Symbol* S = cast<Symbol>(SC ? SC->Node : Id);
   SourceLocation Loc = S->getSourceLocation();
 
   if (!Entry) {
-    if (!Context.GetTopLevelEnvironment(ClosedEnv))
+    if (!Context.GetRootEnvironment(SC ? SC->Env : Value()))
       return SetError("identifier is undefined in syntax closure: {}", S);
     // Default to the name of a global
     schir::Mangler Mangler = createMangler();
@@ -1521,18 +1522,10 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
       return BS->Fn(*this, P);
     }
     case ValueKind::Syntax: {
-      // Keep later local bindings out of the template environments.
-      bool IsLocal = Context.GetLocalEnvFrame(Context.EnvStack,
-                                              /*IsLambdaScope=*/true);
-      EnvFrame* EF = Context.PushEnvFrame();
-      auto Sealer = llvm::scope_exit([EF, IsLocal] {
-          if (IsLocal)
-            EF->seal();
-        });
       schir::Context& Context = this->Context;
       Context.setLoc(P->getSourceLocation());
       Value Input = P;
-      Value Env = Context.EnvStack;
+      Value Env = Context.getEnvironment();
       schir::OpGen* OpGen = Context.OpGen;
       assert(OpGen == this && "sanity check");
       ++RunSyncDepth;
@@ -1546,7 +1539,6 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
         // Propagate the error to this instance.
         SetError(ResultErr);
       }
-      // Do not call PopEnvFrame here so we do not lose local binding info.
       return toValue(Result);
     }
     default: {
@@ -1839,32 +1831,18 @@ void OpGen::UpdateExports(String* Name, String* MangledName) {
   }
 }
 
-schir::EnvEntry OpGen::LookupEnv(Value Id, Value ClosedEnv) {
+schir::EnvEntry OpGen::LookupEnv(Value Id, Value Env) {
   assert(isIdentifier(Id) && "expecting an identifier");
-  // For any given SyntaxClosure, use the object as the lookup
-  // in the current environment, and then use the raw Symbol
-  // in the closed environment.
-  if (auto* SC = dyn_cast<SyntaxClosure>(Id))
-    return LookupEnv(SC->Node, SC->Env);
+  if (!Env)
+    Env = Context.getEnvironment();
 
-  assert(isa<Symbol>(Id) && "syntax closure should be unwrapped");
-
-  if (!ClosedEnv)
-    ClosedEnv = Context.EnvStack;
-
-  schir::EnvEntry Result;
-  if (ClosedEnv) {
-    SyntaxClosure StackSC;
-    Symbol* S = cast<Symbol>(Id);
-    StackSC.Env = ClosedEnv;
-    StackSC.Node = S;
-    Result = Context.Lookup(&StackSC);
-    if (!Result)
-      Result = Context.Lookup(S, ClosedEnv);
-  } else {
-    Symbol* S = cast<Symbol>(Id);
-    Result = Context.Lookup(S);
+  // Find a binding of the syntax closure itself in Env, and then
+  // find its symbol in its closed environment.
+  if (auto* SC = dyn_cast<SyntaxClosure>(Id)) {
+    if (EnvEntry Result = Context.Lookup(SC, Env))
+      return Result;
+    return Context.Lookup(SC->Node, SC->Env);
   }
 
-  return Result;
+  return Context.Lookup(Id, Env);
 }

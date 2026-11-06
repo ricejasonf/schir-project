@@ -47,10 +47,10 @@ class TemplateGen : TemplateBase<TemplateGen> {
 public:
   using ErrorTy = TemplateError;
 
-  TemplateGen(schir::OpGen& O, mlir::Value EnvArg,
+  TemplateGen(schir::OpGen& O,
               Value Keyword, mlir::Value KeywordArg,
               NameSet& PVNames, Value Ellipsis)
-    : TemplateBase(O, EnvArg),
+    : TemplateBase(O),
       Keyword(Keyword),
       KeywordArg(KeywordArg),
       Ellipsis(Ellipsis),
@@ -256,8 +256,8 @@ class Transformer : public TemplateBase<Transformer> {
   }
 
 public:
-  Transformer(schir::OpGen& O, mlir::Value EnvArg, bool IsIr)
-    : TemplateBase(O, EnvArg),
+  Transformer(schir::OpGen& O, bool IsIr)
+    : TemplateBase(O),
       IsImplicitRename(IsIr)
   { }
 };

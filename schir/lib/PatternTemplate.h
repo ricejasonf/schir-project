@@ -90,7 +90,7 @@ public:
     }
 
     if (!OpGen.CheckError()) {
-      TemplateGen TG(OpGen, EnvArg, Keyword, KeywordArg, PatternVars, Ellipsis);
+      TemplateGen TG(OpGen, Keyword, KeywordArg, PatternVars, Ellipsis);
       TG.BuildTemplate(Template);
     }
 

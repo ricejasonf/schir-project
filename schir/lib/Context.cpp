@@ -91,7 +91,7 @@ Context::Context()
   : ContinuationStack<Context>(),
     ContextLocalLookup(),
     Heap(MiB),
-    EnvStack(Empty()),
+    CurrentEnv(Empty()),
     DialectRegistry(std::make_unique<mlir::DialectRegistry>()),
     MLIRContext(std::make_unique<mlir::MLIRContext>(*DialectRegistry)),
     SourceManager(nullptr),
@@ -169,72 +169,21 @@ std::pair<uintptr_t, uintptr_t> Context::GetIdentifierUniqueId(Value V) {
           Value(SC).getOpaqueValue()};
 }
 
-// Get the localiest EnvFrame that is not sealed.
-EnvFrame* Context::GetLocalEnvFrame(Value Stack, bool IsLambdaScope) {
-  EnvFrame* MostLocalEF = nullptr;
-  for (Value EnvNode : Stack) {
-    if (auto* EF = dyn_cast<EnvFrame>(EnvNode)) {
-      if (EF->isSealed())
-        continue;
-      if (auto* NestedEF = GetLocalEnvFrame(EF->getLocalStack(),
-                                            IsLambdaScope))
-        return NestedEF;
-      if (!IsLambdaScope || EF->isLambdaScope())
-        MostLocalEF = EF;
-    }
-  }
-  return MostLocalEF;
-}
-
-// Get the localiest EnvFrame->LocalStack or this->EnvStack.
-Value& Context::GetLocalEnvStack(Value Stack) {
-  if (!Stack)
-    Stack = this->EnvStack;
-  EnvFrame* MostLocalEF = GetLocalEnvFrame(Stack);
-  return MostLocalEF ? MostLocalEF->LocalStack : this->EnvStack;
-}
-
 EnvFrame* Context::PushEnvFrame(llvm::ArrayRef<Value> Ids,
                                 bool IsLambdaScope) {
-  EnvFrame* E = CreateEnvFrame(Ids, IsLambdaScope);
-  PushEnv(E, this->EnvStack);
+  EnvFrame* E = CreateEnvFrame(Ids, IsLambdaScope, CurrentEnv);
+  CurrentEnv = E;
   return E;
 }
 
 void Context::PushLocalBinding(Binding* B) {
-  PushEnv(B, this->EnvStack);
+  auto* EF = cast<EnvFrame>(CurrentEnv);
+  EF->AddedBindings = CreatePair(B, EF->AddedBindings);
 }
 
-void Context::PushEnv(Value V, Value Env) {
-  // Push to the localiest stack.
-  Value& Dest = GetLocalEnvStack(Env);
-  Dest = CreatePair(V, Dest);
-}
-
-// Pop the environment until after PopOff is popped off.
+// Restore the parent of PopOff as the current environment.
 void Context::PopEnvFrame(EnvFrame* PopOff) {
-  // We want to remove the current local scope.
-  // Find the EnvFrame nested in the LocalStacks of other EnvFrames.
-  Value Stack = this->EnvStack;
-  EnvFrame* CurEF = nullptr;
-
-  Pair* EnvPair;
-  while ((EnvPair = dyn_cast<Pair>(Stack))) {
-    if (auto* EF = dyn_cast<EnvFrame>(EnvPair->Car)) {
-      if (EF == PopOff) {
-        if (CurEF)
-          CurEF->LocalStack = EnvPair->Cdr;
-        else
-          this->EnvStack = EnvPair->Cdr;
-        return;
-      }
-      Stack = EF->LocalStack;
-      CurEF = EF;
-    } else {
-      assert(isa<Binding>(EnvPair->Car));
-      Stack = EnvPair->Cdr;
-    }
-  }
+  CurrentEnv = PopOff->Parent;
 }
 
 // CheckLambdaFormals - Returns true on error
@@ -265,39 +214,26 @@ bool Context::CheckLambdaFormals(Value Formals,
   return CheckLambdaFormals(P->Cdr, Names, HasRestParam);
 }
 
-EnvEntry Context::Lookup(Value Id, Value Stack) {
-  EnvEntry Result = {};
-  for (Value V : Stack) {
-    switch (V.getKind()) {
-    case ValueKind::Binding:
-      Result = cast<Binding>(V)->Lookup(Id);
-      break;
-    case ValueKind::EnvFrame: {
-      Result = Lookup(Id, cast<EnvFrame>(V)->LocalStack);
-      if (!Result)
-        Result = cast<EnvFrame>(V)->LookupBindings(Id);
-      break;
-    }
-    case ValueKind::ImportSet:
-      if (auto* Name = dyn_cast<Symbol>(Id))
-        Result = cast<ImportSet>(V)->Lookup(*this, Name);
-      break;
-    case ValueKind::Environment:
-      if (auto* Name = dyn_cast<Symbol>(Id)) {
-        Result = cast<Environment>(V)->Lookup(*this, Name);
-        if (!Result && Name->Equiv("import"))
-          return EnvEntry{_SCHIR_import, NameForImportVar};
-        else if (!Result && Name->Equiv("load_module"))
-          return EnvEntry{_SCHIR_load_module, NameForLoadModuleVar};
-      }
-      break;
-    default:
-      llvm_unreachable("Invalid Lookup Type");
-    }
-    if (Result)
+EnvEntry Context::Lookup(Value Id, Value Env) {
+  while (auto* EF = dyn_cast<EnvFrame>(Env)) {
+    if (EnvEntry Result = EF->LookupBindings(Id))
       return Result;
+    Env = EF->Parent;
   }
 
+  if (auto* E = dyn_cast<Environment>(Env)) {
+    if (auto* Name = dyn_cast<Symbol>(Id)) {
+      if (EnvEntry Result = E->Lookup(*this, Name))
+        return Result;
+      if (Name->Equiv("import"))
+        return EnvEntry{_SCHIR_import, NameForImportVar};
+      if (Name->Equiv("load_module"))
+        return EnvEntry{_SCHIR_load_module, NameForLoadModuleVar};
+    }
+    return EnvEntry();
+  }
+
+  assert(isa<Empty>(Env) && "invalid environment");
   return EnvEntry();
 }
 
@@ -517,8 +453,8 @@ private:
       [&](Value B) {
         VisitBinding(cast<Binding>(B));
       });
-    OS << "} LocalStack: {";
-    Visit(E->getLocalStack());
+    OS << "} AddedBindings: {";
+    Visit(E->getAddedBindings());
     OS << "}}>";
 
   }
@@ -1895,14 +1831,16 @@ ByteVector* Context::CreateByteVector(ArrayRef<Value> Xs) {
   return BV;
 }
 
-EnvFrame* Context::CreateEnvFrame(unsigned N, bool IsLambdaScope) {
+EnvFrame* Context::CreateEnvFrame(unsigned N, bool IsLambdaScope,
+                                  Value Parent) {
   unsigned MemSize = EnvFrame::sizeToAlloc(N);
   void* Mem = Allocate(MemSize, alignof(EnvFrame));
-  return new (Mem) EnvFrame(N, IsLambdaScope);
+  return new (Mem) EnvFrame(N, IsLambdaScope, Parent);
 }
 
-EnvFrame* Context::CreateEnvFrame(llvm::ArrayRef<Value> Ids, bool IsLambdaScope) {
-  EnvFrame* E = CreateEnvFrame(Ids.size(), IsLambdaScope);
+EnvFrame* Context::CreateEnvFrame(llvm::ArrayRef<Value> Ids, bool IsLambdaScope,
+                                  Value Parent) {
+  EnvFrame* E = CreateEnvFrame(Ids.size(), IsLambdaScope, Parent);
   auto Bindings = E->getBindings();
   for (unsigned i = 0; i < Bindings.size(); i++)
     Bindings[i] = CreateBinding(Ids[i], CreateUndefined());
@@ -2003,17 +1941,16 @@ String* Context::CreateFormatted(llvm::StringRef Fmt, Value List) {
   return CreateFormatted(Fmt, Values);
 }
 
-// Return nullptr if there is anything other
-// than the single empty EnvFrame on top.
 Environment* Context::GetTopLevelEnvironment(Value Env) {
   if (!Env)
-    Env = EnvStack;
-  if (auto* Result = dyn_cast<Environment>(Env))
-    return Result;
-  if (auto* P = dyn_cast<Pair>(Env)) {
-    if (auto* Result = dyn_cast<Environment>(P->Cdr);
-        Result && isa<EnvFrame>(P->Car))
-      return Result;
-  }
-  return nullptr;
+    Env = CurrentEnv;
+  return dyn_cast<Environment>(Env);
+}
+
+Environment* Context::GetRootEnvironment(Value Env) {
+  if (!Env)
+    Env = CurrentEnv;
+  while (auto* EF = dyn_cast<EnvFrame>(Env))
+    Env = EF->getParent();
+  return dyn_cast<Environment>(Env);
 }

@@ -577,20 +577,15 @@ def Schir_RenameGlobalOp : SchirOp<"rename_global"> {
 
 def Schir_RenameEnvOp : SchirOp<"rename_env"> {
   let description = [{
-    RenameEnvOp creates a new EnvFrame with $bindings
-    which serves as the tail of a new environment stack
-    with the most local EnvFrame from $env on top.
-
-    The local EnvFrame holds the local stack so any syntax closure
-    created will be topped with any newly added local variables
-    or EnvFrames automatically.
+    RenameEnvOp creates an EnvFrame with $bindings and no parent.
+    It is the environment that the identifiers introduced by a
+    template are closed in.
   }];
 
-  let arguments = (ins Schir_Type:$env, Variadic<Schir_ValueOrBinding>:$bindings);
+  let arguments = (ins Variadic<Schir_ValueOrBinding>:$bindings);
   let results   = (outs Schir_Type:$result);
   let builders = [
-    OpBuilder<(ins "::mlir::Value":$env,
-                   "::llvm::ArrayRef<::mlir::Value>":$args)>
+    OpBuilder<(ins "::llvm::ArrayRef<::mlir::Value>":$args)>
   ];
 }
 

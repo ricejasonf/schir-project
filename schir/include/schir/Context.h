@@ -142,17 +142,16 @@ class Context : public ContinuationStack<Context>,
   //           object.
   size_t MaxMemHint;
 
-  // EnvStack
-  //  - an improper list ending with an Environment
-  //  - Calls to procedures or eval will set the EnvStack
-  //    and swap it back upon completion (via RAII)
-  //  - TODO EnvStack et al. could probably be moved to OpGen.
-  Value EnvStack;
+  // CurrentEnv
+  //  - the innermost EnvFrame, or an Environment at top level
+  //  - Library environments set CurrentEnv and swap it back
+  //    upon completion (via RAII)
+  //  - TODO CurrentEnv et al. could probably be moved to OpGen.
+  Value CurrentEnv;
+  // Get Env (or CurrentEnv) if it is an Environment.
   Environment* GetTopLevelEnvironment(Value Env = nullptr);
-  void EnsureEnvFrame() {
-    if (isa<Environment>(EnvStack))
-      PushEnvFrame();
-  }
+  // Get the Environment at the root of Env (or CurrentEnv).
+  Environment* GetRootEnvironment(Value Env = nullptr);
 
 public: // Provide access in lib/Mlir bindings.
   std::unique_ptr<mlir::DialectRegistry> DialectRegistry;
@@ -225,16 +224,14 @@ public:
   }
 
   Value getEnvironment() {
-    return EnvStack;
+    return CurrentEnv;
   }
   void setEnvironment(Value E) {
-    assert((isa<Environment, Pair, EnvFrame, Empty>(E)) &&
+    assert((isa<Environment, EnvFrame, Empty>(E)) &&
         "invalid environment specifier");
-    EnvStack = E;
+    CurrentEnv = E;
   }
 
-  EnvFrame* GetLocalEnvFrame(Value Stack, bool IsLambdaScope = false);
-  Value& GetLocalEnvStack(Value Stack = nullptr);
   // Provide a hashable value for checking for duplicate identifiers.
   std::pair<uintptr_t, uintptr_t> GetIdentifierUniqueId(Value V);
 
@@ -279,22 +276,21 @@ public:
   //  - Takes a Symbol
   //  - Returns a matching Binder or nullptr
   EnvEntry Lookup(Value Id) {
-    return Lookup(Id, EnvStack);
+    return Lookup(Id, CurrentEnv);
   }
-  EnvEntry Lookup(Value Id, Value Stack);
+  EnvEntry Lookup(Value Id, Value Env);
 
   EnvEntry GetSyntax(EnvEntry Entry);
 
-  // PushEnvFrame - Creates and pushes an EnvFrame to the
-  //                current environment (EnvStack)
+  // PushEnvFrame - Creates an EnvFrame as a child of CurrentEnv
+  //                and makes it current
   EnvFrame* PushEnvFrame(llvm::ArrayRef<Value> Names = {},
                          bool IsLambdaScope = false);
   void PopEnvFrame(EnvFrame*);
   void PushLocalBinding(Binding* B);
-  void PushEnv(Value V, Value Env);
 
   // PushLambdaFormals - Check formals, create an EnvFrame,
-  //                     and push it onto the EnvStack
+  //                     and make it current
   //                     Return the pushed EnvFrame or nullptr.
   EnvFrame* PushLambdaFormals(Value Formals, bool& HasRestParam);
 
@@ -435,8 +431,9 @@ public:
   Vector*     CreateVector(unsigned N, Value Default = Undefined());
   Record*     CreateRecord(Symbol* Type, ArrayRef<Value> Fields);
   ByteVector* CreateByteVector(llvm::ArrayRef<Value> Xs);
-  EnvFrame*   CreateEnvFrame(llvm::ArrayRef<Value> Names, bool IsLambdaScope);
-  EnvFrame*   CreateEnvFrame(unsigned N, bool IsLambdaScope = false);
+  EnvFrame*   CreateEnvFrame(llvm::ArrayRef<Value> Names, bool IsLambdaScope,
+                             Value Parent);
+  EnvFrame*   CreateEnvFrame(unsigned N, bool IsLambdaScope, Value Parent);
 
   template <typename T>
   Any* CreateAny(T Obj) {

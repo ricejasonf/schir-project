@@ -1661,6 +1661,7 @@ public:
 //          - This should be used exclusively at compile time
 //            (unless we go the route of capturing entire scopes
 //             to keep values alive)
+//          - An environment value is a pointer to a frame.
 class EnvFrame final
   : public ValueBase,
     private llvm::TrailingObjects<EnvFrame, Binding*> {
@@ -1670,29 +1671,27 @@ class EnvFrame final
   friend class CopyCollector;
 
   unsigned IsLambdaScope : 1;
-  // Stop receiving new bindings and EnvFrames.
-  unsigned IsSealed : 1;
   unsigned NumBindings;
   size_t numTrailingObjects(OverloadToken<Binding*> const) const {
     return NumBindings;
   }
 
-  // Store shadow scopes.
-  Value LocalStack;
+  // Store the enclosing EnvFrame, Environment, or Empty.
+  Value Parent;
+  // Store the bindings added after creation, most recent first.
+  Value AddedBindings;
 
 public:
 
-  EnvFrame(unsigned NumBindings, bool IsLambdaScope)
+  EnvFrame(unsigned NumBindings, bool IsLambdaScope, Value Parent)
     : ValueBase(ValueKind::EnvFrame),
       IsLambdaScope(IsLambdaScope),
-      IsSealed(false),
       NumBindings(NumBindings),
-      LocalStack(Empty())
+      Parent(Parent),
+      AddedBindings(Empty())
   { }
 
   bool isLambdaScope() const { return IsLambdaScope; }
-  bool isSealed() const { return IsSealed; }
-  void seal() { IsSealed = true; }
 
   llvm::ArrayRef<Binding*> getBindings() const {
     return llvm::ArrayRef<Binding*>(
@@ -1704,13 +1703,20 @@ public:
         getTrailingObjects(), NumBindings);
   }
 
-  Value getLocalStack() const { return LocalStack; }
+  Value getParent() const { return Parent; }
+  Value getAddedBindings() const { return AddedBindings; }
 
   static size_t sizeToAlloc(unsigned NumBindings) {
     return totalSizeToAlloc<Binding*>(NumBindings);
   }
 
+  // Look up Id in this frame only.
   EnvEntry LookupBindings(Value Id) const {
+    for (auto* P = dyn_cast<Pair>(AddedBindings); P;
+         P = dyn_cast<Pair>(P->Cdr)) {
+      if (EnvEntry Result = cast<Binding>(P->Car)->Lookup(Id))
+        return Result;
+    }
     for (Binding* B : getBindings()) {
       if (EnvEntry Result = B->Lookup(Id))
         return Result;

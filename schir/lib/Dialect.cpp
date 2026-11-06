@@ -225,9 +225,9 @@ void VectorOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
 }
 
 void RenameEnvOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
-                    mlir::Value Env, llvm::ArrayRef<mlir::Value> Bindings) {
+                    llvm::ArrayRef<mlir::Value> Bindings) {
   mlir::Type ResultType = B.getType<SchirValueType>();
-  RenameEnvOp::build(B, OpState, ResultType, Env, Bindings);
+  RenameEnvOp::build(B, OpState, ResultType, Bindings);
 }
 
 void UndefinedOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState) {

@@ -164,7 +164,7 @@ class OpGen : public ValueVisitor<OpGen, mlir::Value> {
   };
 
   void InsertTopLevelCommandOp(SourceLocation Loc);
-  bool WalkDefineInits(Value Env, IdSet& LocalNames);
+  bool WalkDefineInits(Value Bindings, IdSet& LocalNames);
   void FinishLocalDefines();
 
 public:
@@ -424,7 +424,8 @@ public:
 
   mlir::Value VisitExternName(ExternName* EN);
   mlir::Value VisitSyntaxClosure(SyntaxClosure* SC);
-  mlir::Value VisitSymbol(Symbol* S, Value ClosedEnv = nullptr);
+  mlir::Value VisitSymbol(Symbol* S);
+  mlir::Value VisitIdentifier(Value Id);
   mlir::Value VisitBinding(Binding* B);
 
   mlir::Value VisitPair(Pair* P);
@@ -437,7 +438,7 @@ public:
   mlir::Operation* LookupSymbol(llvm::StringRef MangledName);
   void ShadowGlobalSymbol(mlir::Operation* Old);
 
-  schir::EnvEntry LookupEnv(schir::Value Id, schir::Value ClosedEnv = nullptr);
+  schir::EnvEntry LookupEnv(schir::Value Id, schir::Value Env = nullptr);
 
   // Try to get a suitable type for a known value.
   static mlir::Type getValueType(mlir::MLIRContext* MC, schir::Value V) {
