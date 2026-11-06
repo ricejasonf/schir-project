@@ -60,23 +60,11 @@ void SchirScheme::ProcessTopLevelCommands(llvm::StringRef Filename,
 // Indicate an error was raised by returning an empty string.
 static std::string SearchIncludePath(schir::Context& C,
                                      llvm::StringRef Filename) {
-  schir::Value IncludePaths = SCHIR_BASE_VAR(include_paths).get(C);
-  for (schir::Value Path : IncludePaths) {
-    llvm::StringRef PathStr = Path.getStringRef();
-    if (PathStr.empty()) {
-      C.RaiseError(
-          "expecting nonempty string-like object in include-paths: {}", Path);
-      return std::string();
-    }
-    llvm::Twine T2(Filename);
-    llvm::Twine T1(PathStr, "/");
-    if (llvm::sys::fs::exists(T1.concat(T2)))
-      return T1.concat(T2).str();
-  }
-
-  C.RaiseError("file not found using include-paths: {}",
-      Value(C.CreateString(Filename)));
-  return std::string();
+  std::string FullPath = C.FindIncludeFile(Filename);
+  if (FullPath.empty())
+    C.RaiseError("file not found using include-paths: {}",
+        Value(C.CreateString(Filename)));
+  return FullPath;
 }
 
 // This overload provides the default file system

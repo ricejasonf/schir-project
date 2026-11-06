@@ -59,10 +59,18 @@ static cl::list<std::string> InputIncludePaths(
 static cl::alias InputModulePathAlias(
   "I", cl::desc("Alias for -module-path"), cl::aliasopt(InputIncludePaths));
 
-static cl::opt<std::string> InputExportModule(
-  "export-module", cl::desc("Specify a library by its mangled name to export"
-                            " as bytecode to the module path."),
+static cl::opt<std::string> InputPrebuildModulePath(
+  "prebuild-module-path",
+  cl::desc("Specify the directory of prebuilt module files."),
   cl::init(""));
+
+static cl::opt<bool> InputNoPrebuildModule(
+  "no-prebuild-module",
+  cl::desc("Do not write prebuilt module files."));
+
+static cl::list<std::string> InputLoadModules(
+  "load-module",
+  cl::desc("Load every module in a prebuilt module file."));
 
 void ProcessTopLevelExpr(schir::Context& Context, schir::ValueRefs Values) {
   assert(Values.size() == 2 && "expecting 2 arguments");
@@ -94,6 +102,15 @@ void SetIncludePaths(schir::SchirScheme& SchirScheme) {
   }
   schir::Value PathList = C.CreateList(Paths);
   SchirScheme.SetIncludePaths(PathList);
+}
+
+void SetPrebuildModulePath(schir::SchirScheme& SchirScheme) {
+  llvm::SmallString<128> AbsPath;
+  if (!InputPrebuildModulePath.empty()) {
+    AbsPath = InputPrebuildModulePath;
+    llvm::sys::fs::make_absolute(AbsPath);
+  }
+  SchirScheme.SetPrebuildModulePath(AbsPath, !InputNoPrebuildModule);
 }
 
 static void PrintError(llvm::StringRef Label, schir::Context& C,
@@ -131,6 +148,12 @@ int main(int argc, char const** argv) {
   cl::ParseCommandLineOptions(argc, argv);
 
   SetIncludePaths(SchirScheme);
+  SetPrebuildModulePath(SchirScheme);
+  for (std::string const& Filename : InputLoadModules) {
+    // Report errors through the MLIR diagnostics.
+    if (SchirScheme.getContext().LoadModuleFile(Filename))
+      std::exit(1);
+  }
 
   // Create error handler.
   bool HasErrors = false;

@@ -27,10 +27,11 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Verifier.h" // TODO move to OpGen
-#include "mlir/Support/FileUtilities.h" // openOutputFile
+#include "mlir/Parser/Parser.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallString.h"
@@ -42,10 +43,10 @@
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/ErrorOr.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/Unicode.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -1019,6 +1020,82 @@ namespace {
     // Disallow relative path weirdness after the module root path.
     llvm::sys::path::remove_dots(Output, /*remove_dot_dot*/true);
   }
+
+  // Name the attribute that lists the source files of a prebuilt library.
+  constexpr llvm::StringLiteral SourcesAttrName = "schir.sources";
+
+  // Append to Output the prebuilt module filename of a library.
+  void getPrebuiltModuleFilename(llvm::StringRef Dir,
+                                 llvm::StringRef MangledName,
+                                 llvm::SmallVectorImpl<char>& Output) {
+    Output.append(Dir.begin(), Dir.end());
+    llvm::sys::path::append(Output, llvm::Twine(MangledName, ".sld.bc"));
+  }
+
+  // Get the prebuilt module directory or an empty string when it is unset.
+  llvm::StringRef getPrebuildModulePath(schir::Context& C) {
+    auto* Path = dyn_cast<String>(SCHIR_BASE_VAR(prebuild_module_path).get(C));
+    return Path ? Path->getView() : llvm::StringRef();
+  }
+
+  // Get the modification time of the binary that contains the compiler.
+  std::optional<llvm::sys::TimePoint<>> getCompilerModificationTime() {
+    std::string Path;
+#if SCHIR_HAS_DLADDR
+    Dl_info Info;
+    if (dladdr(reinterpret_cast<void*>(&getCompilerModificationTime), &Info) &&
+        Info.dli_fname)
+      Path = Info.dli_fname;
+#endif
+    llvm::sys::fs::file_status Status;
+    if (Path.empty() || llvm::sys::fs::status(Path, Status))
+      Path = llvm::sys::fs::getMainExecutable(nullptr, nullptr);
+    if (Path.empty() || llvm::sys::fs::status(Path, Status))
+      return std::nullopt;
+    return Status.getLastModificationTime();
+  }
+
+  // Check that a prebuilt library is newer than its sources and the compiler.
+  // Treat equal times as stale since file times are coarse.
+  bool isPrebuiltFresh(mlir::ModuleOp Lib, llvm::sys::TimePoint<> BuildTime,
+                       llvm::StringRef SourcePath) {
+    auto Sources = Lib->getAttrOfType<mlir::ArrayAttr>(SourcesAttrName);
+    if (!Sources)
+      return SourcePath.empty();
+    // Do not use a library built from a different source file.
+    if (!SourcePath.empty() &&
+        (Sources.empty() ||
+         llvm::cast<mlir::StringAttr>(Sources[0]).getValue() != SourcePath))
+      return false;
+    std::optional<llvm::sys::TimePoint<>> CompilerTime
+      = getCompilerModificationTime();
+    if (CompilerTime && *CompilerTime >= BuildTime)
+      return false;
+    for (llvm::StringRef Source : Sources.getAsValueRange<mlir::StringAttr>()) {
+      llvm::sys::fs::file_status Status;
+      if (!llvm::sys::fs::status(Source, Status) &&
+          Status.getLastModificationTime() >= BuildTime)
+        return false;
+    }
+    return true;
+  }
+
+  // Read a module file as bytecode or text.
+  mlir::OwningOpRef<mlir::ModuleOp> readModuleFile(mlir::MLIRContext* MCtx,
+                                                   llvm::StringRef Filename) {
+    return mlir::parseSourceFile<mlir::ModuleOp>(Filename,
+                                                 mlir::ParserConfig(MCtx));
+  }
+
+  // Move the libraries of a module file that are not loaded into TopOp.
+  void mergeModuleFile(mlir::ModuleOp TopOp, mlir::ModuleOp File) {
+    for (mlir::Operation& Op : llvm::make_early_inc_range(*File.getBody())) {
+      auto Sym = dyn_cast<mlir::SymbolOpInterface>(Op);
+      if (Sym && TopOp.lookupSymbol(Sym.getName()))
+        continue;
+      Op.moveBefore(TopOp.getBody(), TopOp.getBody()->end());
+    }
+  }
 }
 
 void Context::InitModule(Symbol* MangledName) {
@@ -1071,11 +1148,11 @@ void Context::LoadModule(Symbol* MangledName, bool IsFileLoaded) {
     return Cont();
   }
 
-  // Load the module from an sld file.
+  // Load the module from a prebuilt module file or an sld file.
   schir::String* Filename = nullptr;
   {
     llvm::SmallString<64> FilenameBuffer;
-    getModulePath(*this, MangledName->getStringRef(), FilenameBuffer);
+    getModulePath(*this, Name, FilenameBuffer);
     FilenameBuffer += ".sld";
     Filename = CreateString(FilenameBuffer);
   }
@@ -1087,15 +1164,20 @@ void Context::LoadModule(Symbol* MangledName, bool IsFileLoaded) {
     return RaiseError(ErrMsg, Value(Filename));
   }
 
+  String* SourcePath = CreateString(FindIncludeFile(Filename->getView()));
+  if (TryLoadPrebuiltModule(Name, SourcePath->getView()))
+    return LoadModule(MangledName, /*IsFileLoaded=*/true);
+
   PushCont(
     [](schir::Context& C, schir::ValueRefs Args) {
-      Value MangledName = C.getCapture(0);
+      auto* MangledName = cast<Symbol>(C.getCapture(0));
+      auto* SourcePath = cast<String>(C.getCapture(1));
+      if (C.WritePrebuiltModule(MangledName->getStringRef(),
+                                SourcePath->getView()))
+        return;
       // Require the module this time.
-      C.LoadModule(cast<Symbol>(MangledName), /*IsFileLoaded=*/true);
-    }, CaptureList{Value(MangledName)});
-
-  if (TryLoadPrebuiltModule(Loc, Filename))
-    return Cont();
+      C.LoadModule(MangledName, /*IsFileLoaded=*/true);
+    }, CaptureList{Value(MangledName), Value(SourcePath)});
 
   IncludeModuleFile(Loc, Filename, MangledName);
 }
@@ -1111,17 +1193,14 @@ void Context::LoadExports(schir::Module* M, mlir::Operation* ModuleOp_) {
 
   auto& Ops = ModuleOp.getBody()->getOperations();
   for (mlir::Operation& TL : Ops) {
-    if (auto IdOp = dyn_cast<ExportIdOp>(TL)) {
-      llvm::StringRef MangledName = IdOp.getSymbolName();
-      registerModuleVar(*this, M, MangledName, IdOp.getId());
-      // Load syntax objects.
-      if (auto GS = dyn_cast_or_null<schir::GlobalSyntaxOp>(
-            ModuleOp.lookupSymbol(MangledName))) {
-        PushCont([GS](Context& C, ValueRefs) {
-          Value Args[] = {Value(&(*GS))};
-          C.Apply(SCHIR_BASE_VAR(op_eval), Args);
-        });
-      }
+    if (auto IdOp = dyn_cast<ExportIdOp>(TL))
+      registerModuleVar(*this, M, IdOp.getSymbolName(), IdOp.getId());
+    // Load syntax objects including those that exported templates use.
+    if (auto GS = dyn_cast<schir::GlobalSyntaxOp>(TL)) {
+      PushCont([GS](Context& C, ValueRefs) {
+        Value Args[] = {Value(&(*GS))};
+        C.Apply(SCHIR_BASE_VAR(op_eval), Args);
+      });
     }
   }
   Cont();
@@ -1199,29 +1278,110 @@ void Context::IncludeModuleFile(schir::SourceLocation Loc,
   WithEnv(std::move(Env), Thunk);
 }
 
-// TODO Remove the appended '.bc' suffix and specify the
-//      filename the command line.
-bool Context::TryLoadPrebuiltModule(schir::SourceLocation Loc,
-                                    schir::String* Filename) {
+bool Context::TryLoadPrebuiltModule(llvm::StringRef MangledName,
+                                    llvm::StringRef SourcePath) {
+  llvm::StringRef PrebuildModulePath = getPrebuildModulePath(*this);
+  if (PrebuildModulePath.empty())
+    return false;
   auto SandboxScope = llvm::sys::sandbox::scopedDisable();
-  std::unique_ptr<llvm::MemoryBuffer> FileBuffer = nullptr;
-  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> File =
-    llvm::MemoryBuffer::getFile(
-        llvm::Twine(Filename->getStringRef(), ".bc"));
-
-  if (!File)
+  llvm::SmallString<128> Filename;
+  getPrebuiltModuleFilename(PrebuildModulePath, MangledName, Filename);
+  llvm::sys::fs::file_status Status;
+  if (llvm::sys::fs::status(Filename, Status))
     return false;
 
-  FileBuffer = std::move(File.get());
-
-  // Load the byte code into the top level ModuleOp.
+  // Fall back to the source file when the prebuilt file is unreadable.
   mlir::ModuleOp TopOp = cast<mlir::ModuleOp>(this->ModuleOp);
   mlir::MLIRContext* MCtx = TopOp->getContext();
-  if (mlir::failed(mlir::readBytecodeFile(*FileBuffer, TopOp.getBody(),
-                                             mlir::ParserConfig(MCtx))))
+  mlir::ScopedDiagnosticHandler IgnoreDiags(MCtx, [](mlir::Diagnostic&) {
+    return mlir::success();
+  });
+  mlir::OwningOpRef<mlir::ModuleOp> File = readModuleFile(MCtx, Filename);
+  if (!File)
+    return false;
+  auto Lib = dyn_cast_or_null<mlir::ModuleOp>(File->lookupSymbol(MangledName));
+  if (!Lib ||
+      !isPrebuiltFresh(Lib, Status.getLastModificationTime(), SourcePath))
     return false;
 
+  mergeModuleFile(TopOp, *File);
   return true;
+}
+
+bool Context::WritePrebuiltModule(llvm::StringRef MangledName,
+                                  llvm::StringRef SourcePath) {
+  llvm::StringRef PrebuildModulePath = getPrebuildModulePath(*this);
+  if (PrebuildModulePath.empty() ||
+      !SCHIR_BASE_VAR(prebuild_module_writable).get(*this).isTrue())
+    return false;
+  mlir::ModuleOp TopOp = cast<mlir::ModuleOp>(this->ModuleOp);
+  auto Lib = dyn_cast_or_null<mlir::ModuleOp>(TopOp.lookupSymbol(MangledName));
+  if (!Lib)
+    return false;
+  auto SandboxScope = llvm::sys::sandbox::scopedDisable();
+
+  // Record the sources of the library and of the libraries it loads.
+  mlir::Builder Builder(Lib.getContext());
+  llvm::SetVector<mlir::Attribute> Sources;
+  Sources.insert(Builder.getStringAttr(SourcePath));
+  for (LoadModuleOp Load : Lib.getOps<LoadModuleOp>()) {
+    auto Dep = dyn_cast_or_null<mlir::ModuleOp>(
+        TopOp.lookupSymbol(Load.getName()));
+    if (!Dep)
+      continue;
+    if (auto DepSources = Dep->getAttrOfType<mlir::ArrayAttr>(SourcesAttrName))
+      Sources.insert(DepSources.begin(), DepSources.end());
+  }
+  Lib->setAttr(SourcesAttrName, Builder.getArrayAttr(Sources.getArrayRef()));
+
+  llvm::SmallString<128> Filename;
+  getPrebuiltModuleFilename(PrebuildModulePath, MangledName, Filename);
+  if (std::error_code EC
+        = llvm::sys::fs::create_directories(PrebuildModulePath)) {
+    RaiseError(CreateString(PrebuildModulePath, ": ", EC.message()), {});
+    return true;
+  }
+
+  // Write a top level module that contains only the library.
+  mlir::OwningOpRef<mlir::ModuleOp> File = mlir::ModuleOp::create(Lib.getLoc());
+  File->push_back(Lib.clone());
+  llvm::Error Err = llvm::writeToOutput(Filename,
+      [&](llvm::raw_ostream& OS) -> llvm::Error {
+    if (mlir::failed(mlir::writeBytecodeToFile(*File, OS)))
+      return llvm::createStringError("failed to write bytecode");
+    return llvm::Error::success();
+  });
+  if (Err) {
+    std::string Message = llvm::toString(std::move(Err));
+    RaiseError(CreateString(Filename, ": ", Message), {});
+    return true;
+  }
+  return false;
+}
+
+bool Context::LoadModuleFile(llvm::StringRef Filename) {
+  auto SandboxScope = llvm::sys::sandbox::scopedDisable();
+  mlir::ModuleOp TopOp = cast<mlir::ModuleOp>(this->ModuleOp);
+  mlir::OwningOpRef<mlir::ModuleOp> File
+    = readModuleFile(TopOp->getContext(), Filename);
+  if (!File)
+    return true;
+  mergeModuleFile(TopOp, *File);
+  return false;
+}
+
+std::string Context::FindIncludeFile(llvm::StringRef Filename) {
+  schir::Value IncludePaths = SCHIR_BASE_VAR(include_paths).get(*this);
+  for (schir::Value Path : IncludePaths) {
+    llvm::SmallString<128> FullPath(Path.getStringRef());
+    if (FullPath.empty())
+      continue;
+    llvm::sys::path::append(FullPath, Filename);
+    llvm::sys::path::remove_dots(FullPath, /*remove_dot_dot=*/true);
+    if (llvm::sys::fs::exists(FullPath))
+      return std::string(FullPath);
+  }
+  return std::string();
 }
 
 void Context::AddKnownAddress(llvm::StringRef MangledName, schir::Value Value) {
@@ -1794,27 +1954,6 @@ EnvEntry Context::GetSyntax(EnvEntry Entry) {
     return schir::EnvEntry{V, Entry.MangledName};
   else
     return schir::EnvEntry();
-}
-
-bool Context::OutputModule(llvm::StringRef MangledName,
-                           llvm::StringRef ModulePath) {
-#if 0 // TODO Rework this to specify an output path (I think)
-  mlir::ModuleOp TopOp = cast<mlir::ModuleOp>(ModuleOp);
-  if (mlir::Operation* Op = TopOp.lookupSymbol(MangledName)) {
-    std::string ErrorMessage;
-    std::unique_ptr<llvm::ToolOutputFile> OutputFile =
-      mlir::openOutputFile(llvm::Twine(InputFilePath, ".bc"), &ErrorMessage);
-    if (!OutputFile) {
-      llvm::errs() << ErrorMessage << "\n";
-      return false;
-    }
-    if (mlir::succeeded(mlir::writeBytecodeToFile(Op, OutputFile->os()))) {
-      OutputFile->keep();
-      return true;
-    }
-  }
-#endif
-  return false;
 }
 
 schir::Value Context::ParseLiteral(llvm::StringRef Expr) {

@@ -215,7 +215,6 @@ public:
   mlir::Operation* getModuleOp();
   void printModuleOp();
   void verifyModule();
-  bool OutputModule(llvm::StringRef MangledName, llvm::StringRef ModulePath);
 
   // Return true on invalid kind
   bool CheckKind(ValueKind VK, Value V);
@@ -262,8 +261,15 @@ public:
   void PushModuleCleanup(llvm::StringRef MangledName, Value Fn);
   void IncludeModuleFile(schir::SourceLocation Loc, schir::String* Filename,
                          schir::Symbol* ModuleMangledName);
-  bool TryLoadPrebuiltModule(schir::SourceLocation Loc,
-                             schir::String* Filename);
+  bool TryLoadPrebuiltModule(llvm::StringRef MangledName,
+                             llvm::StringRef SourcePath);
+  // Return true on error.
+  bool WritePrebuiltModule(llvm::StringRef MangledName,
+                           llvm::StringRef SourcePath);
+  // Load every module in a module file. Return true on error.
+  bool LoadModuleFile(llvm::StringRef Filename);
+  // Find a file in include-paths or return an empty string.
+  std::string FindIncludeFile(llvm::StringRef Filename);
 
 
   Context();

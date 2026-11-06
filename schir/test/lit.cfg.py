@@ -21,6 +21,8 @@ config.excludes = [
     "LICENSE.txt",
 ]
 config.substitutions.append(('%schir_module_path', config.schir_module_path))
+config.substitutions.append(('%schir_prebuild_module_path',
+                             config.schir_prebuild_module_path))
 
 
 # Tweak the PATH to include the tools dir

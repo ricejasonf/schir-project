@@ -233,4 +233,11 @@ void SchirScheme::SetIncludePaths(schir::Value IncludePaths) {
   SCHIR_BASE_VAR(include_paths).set(C, IncludePaths);
 }
 
+void SchirScheme::SetPrebuildModulePath(llvm::StringRef Path,
+                                        bool IsWritable) {
+  schir::Context& C = getContext();
+  SCHIR_BASE_VAR(prebuild_module_path).set(C, C.CreateString(Path));
+  SCHIR_BASE_VAR(prebuild_module_writable).set(C, schir::Bool(IsWritable));
+}
+
 }

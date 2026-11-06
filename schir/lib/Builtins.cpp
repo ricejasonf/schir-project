@@ -117,6 +117,8 @@ schir::ExternFunction eval;
 schir::ExternFunction op_eval;
 schir::ExternFunction compile;
 schir::ContextLocal   include_paths;
+schir::ContextLocal   prebuild_module_path;
+schir::ContextLocal   prebuild_module_writable;
 
 
 // Type predicates
@@ -1718,6 +1720,9 @@ void SCHIR_BASE_LOAD_MODULE(schir::Context& Context) {
     {"op-eval", SCHIR_BASE_VAR(op_eval)},
     {"compile", SCHIR_BASE_VAR(compile)},
     {"include-paths", SCHIR_BASE_VAR(include_paths).get(Context)},
+    {"prebuild-module-path", SCHIR_BASE_VAR(prebuild_module_path).get(Context)},
+    {"prebuild-module-writable?",
+      SCHIR_BASE_VAR(prebuild_module_writable).get(Context)},
 
     // Type predicates
     {"boolean?", SCHIR_BASE_VAR(is_boolean)},

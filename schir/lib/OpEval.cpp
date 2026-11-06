@@ -341,6 +341,9 @@ private:
     schir::Value A = getValue(Op.getA());
     schir::Value B = getValue(Op.getB());
     schir::SourceLocation Loc = getSourceLocation(Op.getLoc());
+    // Use the current location for a pair from a module file.
+    if (!Loc.isValid())
+      Loc = Context.getLoc();
     schir::Pair* V = Context.CreatePairWithSource(A, B, Loc);
     setValue(Op.getResult(), V);
     return next(Op);

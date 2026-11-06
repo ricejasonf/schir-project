@@ -89,6 +89,8 @@ class SchirScheme {
                        char const* BufferPos);
   void InitSourceFileStorage();
   void SetIncludePaths(schir::Value IncludePaths);
+  // Set the directory of prebuilt module files and whether to write them.
+  void SetPrebuildModulePath(llvm::StringRef Path, bool IsWritable);
 
   // Enable the user to parse up front before processing.
   void ParseTopLevelCommands(schir::Lexer& Lexer,

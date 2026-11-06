@@ -35,6 +35,8 @@
 // Forward declare vars that are used in the C++ codebase.
 namespace schir::builtins_var {
 extern schir::ContextLocal include_paths;
+extern schir::ContextLocal prebuild_module_path;
+extern schir::ContextLocal prebuild_module_writable;
 extern schir::ContextLocal parse_source_file;
 extern schir::ExternFunction compile;
 extern schir::ExternFunction eval;
