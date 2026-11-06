@@ -485,6 +485,9 @@ public:
   Value CreateSyntaxClosure(SourceLocation Loc, Value Node, Value Env);
   SyntaxClosure* CreateSyntaxClosure(SourceLocation Loc, Symbol* S,
                                      Value Env);
+  // Close an already closed identifier again in Env.
+  SyntaxClosure* RecloseIdentifier(SourceLocation Loc, SyntaxClosure* Id,
+                                   Value Env);
   Value UnwrapSyntaxClosure(Value V);
 
   SourceValue* CreateSourceValue(SourceLocation Loc) {

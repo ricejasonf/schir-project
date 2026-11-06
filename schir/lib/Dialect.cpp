@@ -201,9 +201,10 @@ void SpliceOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
 
 void SyntaxClosureOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
                             mlir::Value SourceVal, mlir::Value Input,
-                            mlir::Value Env) {
+                            mlir::Value Env, bool Reclose) {
   mlir::Type ResultType = B.getType<SchirValueType>();
-  SyntaxClosureOp::build(B, OpState, ResultType, SourceVal, Input, Env);
+  SyntaxClosureOp::build(B, OpState, ResultType, SourceVal, Input, Env,
+                         Reclose);
 }
 
 void SyntaxOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
@@ -225,9 +226,10 @@ void VectorOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
 }
 
 void RenameEnvOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState,
+                    mlir::Value Parent,
                     llvm::ArrayRef<mlir::Value> Bindings) {
   mlir::Type ResultType = B.getType<SchirValueType>();
-  RenameEnvOp::build(B, OpState, ResultType, Bindings);
+  RenameEnvOp::build(B, OpState, ResultType, Parent, Bindings);
 }
 
 void UndefinedOp::build(mlir::OpBuilder& B, mlir::OperationState& OpState) {

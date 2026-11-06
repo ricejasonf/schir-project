@@ -60,6 +60,9 @@ public:
     llvm::SmallVector<mlir::Value, 12> RenameOpVector;
     for (auto [Str, Pair] : RenameOps) {
       auto [R, SC] = Pair;
+      // Skip an identifier of a local syntax, which has no rename.
+      if (!R)
+        continue;
       // Move RenameOps to the beginning of the block.
       R.getDefiningOp()->moveBefore(RenameEnv);
       RenameOpVector.push_back(R);
@@ -69,7 +72,8 @@ public:
     // to serve as the base of the environment.
     mlir::OpBuilder::InsertionGuard IG(OpGen.Builder);
     OpGen.Builder.setInsertionPoint(RenameEnv);
-    auto NewRenameEnv = OpGen.create<RenameEnvOp>(Loc, RenameOpVector);
+    auto NewRenameEnv = OpGen.create<RenameEnvOp>(Loc, RenameEnv.getParent(),
+                                                  RenameOpVector);
     RenameEnv.getResult().replaceAllUsesWith(NewRenameEnv);
     RenameEnv->erase();
     RenameEnv = NewRenameEnv;
@@ -90,16 +94,27 @@ protected:
   schir::RenameEnvOp RenameEnv;
   // Map the results of RenameOps.
   llvm::DenseMap<String*, std::pair<mlir::Value, mlir::Value>> RenameOps;
+  // Map the closing env and node of closed identifiers to their renames.
+  llvm::DenseMap<std::pair<uintptr_t, uintptr_t>, mlir::Value> ClosedRenames;
 
-  TemplateBase(schir::OpGen& O)
+  // Scope is the definition frame of a local syntax (or null).
+  TemplateBase(schir::OpGen& O, mlir::Value Scope = mlir::Value())
     : OpGen(O),
-      RenameEnv(O.create<RenameEnvOp>(schir::SourceLocation(),
+      RenameEnv(O.create<RenameEnvOp>(schir::SourceLocation(), Scope,
                                       llvm::ArrayRef<mlir::Value>()))
   { }
 
   mlir::Location createLoc(schir::SourceLocation Loc) {
     return mlir::OpaqueLoc::get(Loc.getOpaqueEncoding(),
                                 OpGen.Builder.getContext());
+  }
+
+  // Get the syntax function that contains the insertion point.
+  schir::FuncOp getSyntaxFunction() {
+    mlir::Operation* Op = OpGen.Builder.getBlock()->getParentOp();
+    if (auto FuncOp = dyn_cast<schir::FuncOp>(Op))
+      return FuncOp;
+    return Op->getParentOfType<schir::FuncOp>();
   }
 
   // createValue - Create a mlir::Value from its stored
@@ -183,37 +198,94 @@ protected:
       return SC;
     }
 
+    // Close an identifier of a local syntax in its definition frame.
+    if (RenameEnv.getParent()) {
+      RenameOps.insert({UniqueStr, {mlir::Value(), SC}});
+      return SC;
+    }
+
     // Insert RenameOps before the RenameEnvOp.
     OpGen.Builder.setInsertionPoint(RenameEnv);
 
-    schir::Context& Context = OpGen.getContext();
-    EnvEntry Entry = Context.Lookup(P);
+    // Rename to a global.
+    mlir::Value R = createRenameGlobal(P, OpGen.getContext().Lookup(P));
+    if (!R)
+      return OpGen.createUndefined();
+    RenameOps.insert({UniqueStr, {R, SC}});
+    return SC;
+  }
 
+  // Close an identifier of a local syntax in its definition frame, or
+  // rename an identifier of a global syntax in a rename env of its own.
+  mlir::Value createClosedRename(SyntaxClosure* ClosedId) {
+    if (OpGen.CheckError())
+      return OpGen.createUndefined();
+    mlir::OpBuilder::InsertionGuard IG(OpGen.Builder);
+    Symbol* P = unwrapIdentifier(ClosedId);
+    // Identify a closed symbol by its name.
+    Value Node = ClosedId->Node;
+    if (auto* S = dyn_cast<Symbol>(Node))
+      Node = S->getString();
+    auto Key = std::make_pair(ClosedId->Env.getOpaqueValue(),
+                              Node.getOpaqueValue());
+    if (mlir::Value SC = ClosedRenames.lookup(Key))
+      return SC;
+
+    SourceLocation Loc = P->getSourceLocation();
+    mlir::Value SC;
+    if (RenameEnv.getParent()) {
+      // Insert the operations after the RenameEnvOp.
+      OpGen.Builder.setInsertionPointAfter(RenameEnv);
+      mlir::Value Id = captureClosedId(ClosedId);
+      SC = OpGen.create<SyntaxClosureOp>(Loc, Id, Id, RenameEnv,
+                                         /*Reclose=*/true);
+    } else {
+      // Insert the operations before the RenameEnvOp.
+      OpGen.Builder.setInsertionPoint(RenameEnv);
+      EnvEntry Entry = OpGen.LookupEnv(ClosedId);
+      if (Entry && !Entry.MangledName)
+        return OpGen.SetError("unexpected closed identifier of a local",
+                              ClosedId);
+      mlir::Value R = createRenameGlobal(P, Entry);
+      if (!R)
+        return OpGen.createUndefined();
+      mlir::Value Env = OpGen.create<RenameEnvOp>(Loc, mlir::Value(), R);
+      mlir::Value Node = createLiteral(P);
+      SC = OpGen.create<SyntaxClosureOp>(Loc, Node, Node, Env);
+    }
+    ClosedRenames.insert({Key, SC});
+    return SC;
+  }
+
+  // Load a closed identifier that a local syntax captures.
+  mlir::Value captureClosedId(SyntaxClosure* ClosedId) {
+    llvm::SmallVectorImpl<Value>* Captures = OpGen.LocalSyntaxCaptures;
+    assert(Captures && "local syntax should collect captures");
+    mlir::Value Closure = getSyntaxFunction().getBody().front().getArgument(0);
+    uint32_t Index = Captures->size();
+    Captures->push_back(ClosedId);
+    return OpGen.create<LoadRefOp>(ClosedId->getSourceLocation(), Closure,
+                                   Index);
+  }
+
+  // Rename an identifier to the global of Entry or of its name.
+  mlir::Value createRenameGlobal(Symbol* P, EnvEntry Entry) {
     std::string MangledNameStr;
     llvm::StringRef MangledName;
-    if (Entry && !Entry.MangledName) {
-      // "Capture" the object and "rename" it
-      // We do not localize (aka capture) it until instantiation.
-      mlir::Value Capture = OpGen.Lookup(Entry.Value);
-      assert(Capture && "expecting value in lookup");
-      mlir::Value R = OpGen.create<schir::RenameOp>(Loc, Id, Capture);
-      RenameOps.insert({UniqueStr, {R, SC}});
-      return SC;
-    } else if (Entry.MangledName) {
+    if (Entry.MangledName) {
       MangledName = Entry.MangledName->getStringRef();
     } else {
-      // Default to the name of a global
+      // Default to the name of a global.
       schir::Mangler Mangler = OpGen.createMangler();
       MangledNameStr = Mangler.mangleVariable(OpGen.getModulePrefix(), P);
       if (MangledNameStr.empty())
-        return OpGen.createUndefined();
+        return mlir::Value();
       MangledName = llvm::StringRef(MangledNameStr);
     }
 
     assert(!MangledName.empty() && "should have mangled name");
-    mlir::Value R = OpGen.create<RenameGlobalOp>(Loc, Id, MangledName);
-    RenameOps.insert({UniqueStr, {R, SC}});
-    return SC;
+    return OpGen.create<RenameGlobalOp>(P->getSourceLocation(),
+                                        P->getStringRef(), MangledName);
   }
 
   // ValueVisitor functions

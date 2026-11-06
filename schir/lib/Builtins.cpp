@@ -214,7 +214,8 @@ std::pair<schir::Value, schir::Pair*> DestructureSyntaxSpec(OpGen& OG, Pair* P) 
   schir::Value Keyword = P->Car;
   schir::Pair* P2 = dyn_cast<Pair>(P->Cdr);
   if (P2) {
-    schir::Pair* Spec = dyn_cast<Pair>(P2->Car);
+    schir::Pair* Spec =
+        dyn_cast<Pair>(OG.getContext().UnwrapSyntaxClosure(P2->Car));
     if (Spec) {
       if (schir::Pair* SpecInput = dyn_cast<Pair>(Spec->Cdr))
         return {Keyword, SpecInput};

@@ -657,8 +657,10 @@ private:
 
   BlockItrTy Visit(RenameEnvOp Op) {
     unsigned NumBindings = Op.getBindings().size();
+    mlir::Value Parent = Op.getParent();
     schir::EnvFrame* EnvFrame = Context.CreateEnvFrame(
-        NumBindings, /*IsLambdaScope=*/false, schir::Empty());
+        NumBindings, /*IsLambdaScope=*/false,
+        Parent ? getValue(Parent) : schir::Empty());
     llvm::MutableArrayRef<Binding*> Bindings = EnvFrame->getBindings();
     auto Vals = Op.getBindings();
     for (unsigned I = 0; I < NumBindings; ++I)
@@ -998,7 +1000,11 @@ private:
     schir::SourceLocation Loc = SourceVal.getSourceLocation();
     schir::Value Input = getValue(Op.getInput());
     schir::Value Env = getValue(Op.getEnv());
-    Value SC = Context.CreateSyntaxClosure(Loc, Input, Env);
+    Value SC;
+    if (auto* Id = dyn_cast<SyntaxClosure>(Input); Id && Op.getReclose())
+      SC = Context.RecloseIdentifier(Loc, Id, Env);
+    else
+      SC = Context.CreateSyntaxClosure(Loc, Input, Env);
     setValue(Op.getResult(), SC);
 
     return next(Op);

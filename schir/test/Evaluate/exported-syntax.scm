@@ -64,6 +64,17 @@
 (write (catch-raise 9))
 (newline)
 
+;; A template defines a syntax whose template refers to hidden names.
+; CHECK-NEXT: ((hidden-proc 10) hidden-var)
+(define-tagger tag)
+(write (tag 10))
+(newline)
+
+;; A template defines a local syntax that refers to a template binding.
+; CHECK-NEXT: (count 2)
+(write (with-counter bump! (bump!) (bump!)))
+(newline)
+
 ;; Syntax of (schir base) and the libraries it imports.
 ; CHECK-NEXT: boom
 (write (guard (e (else e)) (raise 'boom)))

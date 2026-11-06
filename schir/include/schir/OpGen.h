@@ -143,6 +143,8 @@ class OpGen : public ValueVisitor<OpGen, mlir::Value> {
   size_t RunSyncDepth = 0;
 
   bool IsLocalDefineAllowed = false;
+  // Collect the captures of a local syntax while creating it (or null).
+  llvm::SmallVectorImpl<Value>* LocalSyntaxCaptures = nullptr;
   schir::Symbol* ModulePrefix = nullptr;
   unsigned LambdaNameCount = 0;
   bool IsTailPos = true;
@@ -305,6 +307,8 @@ public:
   mlir::Value createBody(SourceLocation Loc, Value Body);
   mlir::Value createSequence(SourceLocation Loc, Value Body);
   mlir::Value createSyntaxSpec(Pair* SyntaxSpec, Value OrigCall);
+  mlir::Value createLocalSyntaxSpec(Pair* SyntaxSpec, Value OrigCall);
+  schir::SyntaxOp createTransformer(Pair* SyntaxSpec);
   mlir::Value createSyntaxRules(SourceLocation Loc, Value Keyword,
                                 Value Ellipsis, Value KeywordList,
                                 Value SyntaxDef);

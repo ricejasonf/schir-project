@@ -165,7 +165,7 @@ std::pair<uintptr_t, uintptr_t> Context::GetIdentifierUniqueId(Value V) {
     return {Value(S).getOpaqueValue(), 0};
 
   auto* SC = cast<SyntaxClosure>(V);
-  return {Value(cast<Symbol>(SC->Node)->getString()).getOpaqueValue(),
+  return {Value(unwrapIdentifier(SC)->getString()).getOpaqueValue(),
           Value(SC).getOpaqueValue()};
 }
 
@@ -1868,11 +1868,17 @@ SyntaxClosure* Context::CreateSyntaxClosure(SourceLocation Loc, Symbol* S,
   return new (*this) SyntaxClosure(Loc, Env, Value(S));
 }
 
+SyntaxClosure* Context::RecloseIdentifier(SourceLocation Loc,
+                                          SyntaxClosure* Id, Value Env) {
+  assert(isIdentifier(Id->Node) && "expecting a closed identifier");
+  return new (*this) SyntaxClosure(Loc, Env, Value(Id));
+}
+
 // Unwrap any SyntaxClosure that is not an Identifier.
 // (We only keep these around for the SourceLocation.)
 Value Context::UnwrapSyntaxClosure(Value V) {
   if (auto* SC = dyn_cast<SyntaxClosure>(V);
-      SC && !isa<Symbol>(SC->Node))
+      SC && !isIdentifier(SC->Node))
     return SC->Node;
   return V;
 }

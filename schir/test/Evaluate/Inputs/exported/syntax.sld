@@ -44,7 +44,23 @@
     (define-syntax catch-raise
       (syntax-rules ()
         ((catch-raise x) (guard (e (#t (list 'caught e))) (raise x)))))
+
+    (define-syntax define-tagger
+      (syntax-rules ()
+        ((define-tagger name)
+         (define-syntax name
+           (syntax-rules () ((name x) (list (hidden-proc x) hidden-var)))))))
+
+    (define-syntax with-counter
+      (syntax-rules ()
+        ((with-counter inc! body ...)
+         ((lambda (count)
+            (define-syntax inc!
+              (syntax-rules () ((inc!) (set! count (+ count 1)))))
+            body ...
+            (list 'count count))
+          0))))
     ) ; end begin
 
   (export use-hidden use-import use-hidden-syntax define-getter
-          ⌋ match-literal my-or catch-raise))
+          ⌋ match-literal my-or catch-raise define-tagger with-counter))

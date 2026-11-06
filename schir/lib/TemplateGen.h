@@ -40,17 +40,19 @@ class TemplateGen : TemplateBase<TemplateGen> {
                   llvm::SmallVectorImpl<mlir::Value>*>;
   llvm::SmallVector<PackCaptureInfoTy, 4> PackStack;
 
+  // Compare identifiers by name.
   bool isEllipsis(schir::Value Id) {
-    return equal(Id, Ellipsis);
+    Symbol* S = unwrapIdentifier(Id);
+    return S && S->Equiv(unwrapIdentifier(Ellipsis));
   }
 
 public:
   using ErrorTy = TemplateError;
 
-  TemplateGen(schir::OpGen& O,
+  TemplateGen(schir::OpGen& O, mlir::Value Scope,
               Value Keyword, mlir::Value KeywordArg,
               NameSet& PVNames, Value Ellipsis)
-    : TemplateBase(O),
+    : TemplateBase(O, Scope),
       Keyword(Keyword),
       KeywordArg(KeywordArg),
       Ellipsis(Ellipsis),
@@ -59,7 +61,8 @@ public:
 
   // Create operations to transform syntax and compile the result.
   void BuildTemplate(schir::Value Template) {
-    {
+    // Find the keyword of a local syntax in its definition frame instead.
+    if (!RenameEnv.getParent()) {
       Symbol* KeywordStr = nullptr;
       // FIXME Unwrapping the SC like this is probably not correct.
       if (auto* SC = dyn_cast<SyntaxClosure>(Keyword))
@@ -67,11 +70,7 @@ public:
       else
         KeywordStr = cast<Symbol>(Keyword);
       // Add the Keyword (name of the syntax) as a Rename.
-      mlir::Operation* CurrentOp = OpGen.Builder.getBlock()->getParentOp();
-      auto SyntaxFuncOp = isa<FuncOp>(CurrentOp)
-                                      ? cast<FuncOp>(CurrentOp)
-                                      : CurrentOp->getParentOfType<FuncOp>();
-      llvm::StringRef SyntaxFuncName = SyntaxFuncOp.getSymName();
+      llvm::StringRef SyntaxFuncName = getSyntaxFunction().getSymName();
       // Insert RenameOps before the RenameEnvOp.
       mlir::OpBuilder::InsertionGuard IG(OpGen.Builder);
       OpGen.Builder.setInsertionPoint(RenameEnv);
@@ -238,6 +237,29 @@ private:
       return OpGen.SetError("unexpected ellipsis", P);
 
     return createRename(P);
+  }
+
+  TemplateResult VisitSyntaxClosure(SyntaxClosure* SC) {
+    // Unwrap a closed form that is not an identifier.
+    Symbol* P = unwrapIdentifier(SC);
+    if (!P)
+      return Visit(SC->Node);
+
+    // Match pattern variables and the ellipsis by name.
+    if (PatternVarNames.contains(P->getString()) || isEllipsis(P))
+      return VisitSymbol(P);
+
+    // Treat an identifier closed in the definition env as its node.
+    if (SC->Env == getDefinitionEnv())
+      return Visit(SC->Node);
+
+    return createClosedRename(SC);
+  }
+
+  // Get the env that the syntax is defined in, which encloses the frame
+  // of the pattern variables.
+  Value getDefinitionEnv() {
+    return cast<EnvFrame>(OpGen.getContext().getEnvironment())->getParent();
   }
 };
 

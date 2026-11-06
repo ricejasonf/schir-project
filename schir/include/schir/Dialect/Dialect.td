@@ -575,17 +575,21 @@ def Schir_RenameGlobalOp : SchirOp<"rename_global"> {
   ];
 }
 
-def Schir_RenameEnvOp : SchirOp<"rename_env"> {
+def Schir_RenameEnvOp : SchirOp<"rename_env", [AttrSizedOperandSegments]> {
   let description = [{
-    RenameEnvOp creates an EnvFrame with $bindings and no parent.
-    It is the environment that the identifiers introduced by a
-    template are closed in.
+    RenameEnvOp creates an EnvFrame with $bindings whose parent is the
+    optional $parent. It is the environment that the identifiers
+    introduced by a template are closed in.
+
+    The $parent of a local syntax is its definition frame.
   }];
 
-  let arguments = (ins Variadic<Schir_ValueOrBinding>:$bindings);
+  let arguments = (ins Optional<Schir_Type>:$parent,
+                       Variadic<Schir_ValueOrBinding>:$bindings);
   let results   = (outs Schir_Type:$result);
   let builders = [
-    OpBuilder<(ins "::llvm::ArrayRef<::mlir::Value>":$args)>
+    OpBuilder<(ins "::mlir::Value":$parent,
+                   "::llvm::ArrayRef<::mlir::Value>":$args)>
   ];
 }
 
@@ -641,14 +645,17 @@ def Schir_SyntaxClosureOp : SchirOp<"syntax_closure"> {
     SyntaxClosureOp captures a syntax node with the given
     environment. This supports generating code during hygienic
     macro expansion.
+
+    A syntax closure in $input keeps its own environment unless
+    $reclose is set, which closes an identifier again in $env.
   }];
 
   let arguments = (ins Schir_Type:$sourceVal, Schir_Type:$input,
-                       Schir_Type:$env);
+                       Schir_Type:$env, UnitAttr:$reclose);
   let results   = (outs Schir_Type:$result);
   let builders  = [
     OpBuilder<(ins "::mlir::Value":$sourceVal, "::mlir::Value":$input,
-                   "::mlir::Value":$env)>
+                   "::mlir::Value":$env, CArg<"bool", "false">:$reclose)>
   ];
 }
 

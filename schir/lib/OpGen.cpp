@@ -29,6 +29,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include <memory>
 
 using namespace schir;
@@ -799,73 +800,115 @@ schir::FuncOp OpGen::createSyntaxFunction(SourceLocation Loc,
 //    that is passed to the syntax function.
 //  - OrigCall is likely (define-syntax ...) or (let-syntax ...)
 mlir::Value OpGen::createSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
-  mlir::Value Result;
-  Environment* TopLevelEnv = nullptr;
-  // Save the insertion point for top level define-syntax.
-  mlir::OpBuilder::InsertPoint PrevIp = Builder.saveInsertionPoint();
-
   Symbol* Keyword = unwrapIdentifier(SyntaxSpec->Car);
   if (!Keyword) return SetError("expecting syntax spec keyword", SyntaxSpec);
+  if (!isTopLevel())
+    return createLocalSyntaxSpec(SyntaxSpec, OrigCall);
+
+  // Save the insertion point for top level define-syntax.
+  mlir::OpBuilder::InsertPoint PrevIp = Builder.saveInsertionPoint();
+  Environment* TopLevelEnv = Context.GetTopLevelEnvironment();
+  assert(TopLevelEnv && "expecting top level environment");
 
   std::string MangledName;
-  if (isTopLevel()) {
-    TopLevelEnv = Context.GetTopLevelEnvironment();
-    assert(TopLevelEnv && "expecting top level environment");
-
-    EnvEntry ExistingEntry = TopLevelEnv->Lookup(Context, Keyword);
-    if (ExistingEntry.MangledName) {
-      // Shadow any previous use of the name.
-      MangledName = ExistingEntry.MangledName->getStringRef().str();
-      if (mlir::Operation* Old = LookupSymbol(MangledName))
-        ShadowGlobalSymbol(Old);
-      Context.AddKnownAddress(MangledName, schir::Value(schir::Undefined()));
-    } else {
-      // Create the syntax as a new global.
-      MangledName = mangleVariable(Keyword);
-      if (MangledName.empty())
-        return Error();
-    }
-    SourceLocation DefineLoc = OrigCall.getSourceLocation();
-    // FIXME This code is very similar to stuff in createTopLevelDefine
-    auto GS = createTopLevel<schir::GlobalSyntaxOp>(DefineLoc, MangledName);
-    setTopLevelOp(GS.getOperation());
-    mlir::Block& Block = *GS.addEntryBlock();
-    // Set insertion point.
-    Builder.setInsertionPointToStart(&Block);
+  EnvEntry ExistingEntry = TopLevelEnv->Lookup(Context, Keyword);
+  if (ExistingEntry.MangledName) {
+    // Shadow any previous use of the name.
+    MangledName = ExistingEntry.MangledName->getStringRef().str();
+    if (mlir::Operation* Old = LookupSymbol(MangledName))
+      ShadowGlobalSymbol(Old);
+    Context.AddKnownAddress(MangledName, schir::Value(schir::Undefined()));
+  } else {
+    // Create the syntax as a new global.
+    MangledName = mangleVariable(Keyword);
+    if (MangledName.empty())
+      return Error();
   }
+  SourceLocation DefineLoc = OrigCall.getSourceLocation();
+  // FIXME This code is very similar to stuff in createTopLevelDefine
+  auto GS = createTopLevel<schir::GlobalSyntaxOp>(DefineLoc, MangledName);
+  setTopLevelOp(GS.getOperation());
+  mlir::Block& Block = *GS.addEntryBlock();
+  // Set insertion point.
+  Builder.setInsertionPointToStart(&Block);
 
-  Pair* TransformerSpec = dyn_cast_or_null<Pair>(SyntaxSpec->Cdr.car());
+  schir::SyntaxOp SyntaxOp = createTransformer(SyntaxSpec);
+  if (!SyntaxOp)
+    return Error();
+
+  // Insert a ContOp for the global that was created.
+  TopLevelEnv->Insert(Keyword, Context.CreateIdTableEntry(MangledName));
+  ContOp::create(Builder, SyntaxOp.getLoc(), SyntaxOp.getResult());
+  Builder.restoreInsertionPoint(PrevIp);
+  // Syntax should be available at compile-time.
+  Value GlobalOpVal = GS.getOperation();
+  Context.RunSync(SCHIR_BASE_VAR(op_eval), GlobalOpVal);
+  return mlir::Value();
+}
+
+// Bind a keyword to a syntax that captures the frame it is defined in.
+mlir::Value OpGen::createLocalSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
+  if (!IsLocalDefineAllowed)
+    return SetError("unexpected define-syntax", OrigCall);
+
+  // Capture the definition frame first.
+  auto* Scope = cast<EnvFrame>(Context.getEnvironment());
+  llvm::SmallVector<Value, 4> Captures = {Scope};
+
+  // Evaluate the transformer in a temporary command.
+  auto Command = createTopLevel<schir::CommandOp>(OrigCall.getSourceLocation());
+  auto CommandEraser = llvm::scope_exit([Command] { Command->erase(); });
+  Value Transformer;
+  {
+    mlir::OpBuilder::InsertionGuard IG(Builder);
+    Builder.setInsertionPointToStart(Command.addEntryBlock());
+    llvm::SaveAndRestore IsLocalDefineAllowedRAII(IsLocalDefineAllowed, false);
+    llvm::SaveAndRestore<llvm::SmallVectorImpl<Value>*>
+      LocalSyntaxCapturesRAII(LocalSyntaxCaptures, &Captures);
+    schir::SyntaxOp SyntaxOp = createTransformer(SyntaxSpec);
+    if (!SyntaxOp)
+      return Error();
+    ContOp::create(Builder, SyntaxOp.getLoc(), SyntaxOp.getResult());
+    Value CommandOpVal = Command.getOperation();
+    Transformer = Context.RunSync(SCHIR_BASE_VAR(op_eval), CommandOpVal);
+  }
+  if (auto* Err = dyn_cast_or_null<schir::Error>(Transformer))
+    return SetError(Err);
+
+  // Bind a syntax closure of the current environment as its node.
+  Value Keyword = SyntaxSpec->Car;
+  if (auto* SC = dyn_cast<SyntaxClosure>(Keyword); SC && SC->Env == Scope)
+    Keyword = SC->Node;
+  Value LocalSyntax = Context.CreateSyntax(
+      cast<Syntax>(Transformer)->getFnData(), Captures);
+  Context.PushLocalBinding(Context.CreateBinding(Keyword, LocalSyntax));
+  return createUndefined();
+}
+
+// Create the SyntaxOp of the transformer in a syntax spec.
+schir::SyntaxOp OpGen::createTransformer(Pair* SyntaxSpec) {
+  Value Transformer = SyntaxSpec->Cdr.car();
+  Pair* TransformerSpec =
+      Transformer ? dyn_cast<Pair>(Context.UnwrapSyntaxClosure(Transformer))
+                  : nullptr;
   Value SyntaxOperator;
 
   if (TransformerSpec && isIdentifier(TransformerSpec->Car))
     SyntaxOperator = Context.GetSyntax(LookupEnv(TransformerSpec->Car)).Value;
 
-  if (!SyntaxOperator)
-    return SetError("invalid syntax spec", SyntaxSpec);
+  if (!SyntaxOperator) {
+    SetError("invalid syntax spec", SyntaxSpec);
+    return {};
+  }
 
-  Result = CallSyntax(SyntaxOperator, SyntaxSpec);
+  mlir::Value Result = CallSyntax(SyntaxOperator, SyntaxSpec);
   auto SyntaxOp = Result ? Result.getDefiningOp<schir::SyntaxOp>()
                          : schir::SyntaxOp();
   if (CheckError())
-    return Error();
+    return {};
   if (!SyntaxOp)
-    return SetError("expecting syntax transformer", SyntaxSpec);
-
-  if (TopLevelEnv) {
-    assert(!MangledName.empty() && "global syntax must have mangled name");
-    // Insert a ContOp for the global that was created.
-    TopLevelEnv->Insert(Keyword,
-        Context.CreateIdTableEntry(MangledName));
-    ContOp::create(Builder, Result.getLoc(), Result);
-    Builder.restoreInsertionPoint(PrevIp);
-    // Syntax should be available at compile-time.
-    Value GlobalOpVal = SyntaxOp->getParentOp();
-    Context.RunSync(SCHIR_BASE_VAR(op_eval), GlobalOpVal);
-  } else {
-    return SetError("TODO support local syntax");
-  }
-
-  return mlir::Value();
+    SetError("expecting syntax transformer", SyntaxSpec);
+  return SyntaxOp;
 }
 
 mlir::Value OpGen::createSyntaxRules(SourceLocation Loc,
@@ -880,12 +923,13 @@ mlir::Value OpGen::createSyntaxRules(SourceLocation Loc,
   llvm::SmallPtrSet<String*, 4> Literals;
   auto insertLiteral = [&](Value V) -> bool {
     // TODO Support bound identifiers for literal list (I think).
-    Symbol* S = dyn_cast<Symbol>(V);
+    // Store a literal by its name.
+    Symbol* S = unwrapIdentifier(V);
     if (!S) {
       SetError("expecting keyword literal", V);
       return true;
     }
-    if (equal(V, (Ellipsis))) {
+    if (S->Equiv(unwrapIdentifier(Ellipsis))) {
       SetError("keyword literal cannot be same as ellipsis", S);
       return true;
     }
@@ -897,15 +941,20 @@ mlir::Value OpGen::createSyntaxRules(SourceLocation Loc,
     }
     return false;
   };
+  LiteralList = Context.UnwrapSyntaxClosure(LiteralList);
   while (Pair* X = dyn_cast<Pair>(LiteralList)) {
     Context.setLoc(X);
     if (insertLiteral(X->Car)) {
       return Error();
     }
-    LiteralList = X->Cdr;
+    LiteralList = Context.UnwrapSyntaxClosure(X->Cdr);
   }
   if (!isa<Empty>(LiteralList)) {
     return SetError("expecting keyword list", LiteralList);
+  }
+  PatternDefs = Context.UnwrapSyntaxClosure(PatternDefs);
+  if (!isa<Pair>(PatternDefs)) {
+    return SetError("expecting list of pattern templates pairs", PatternDefs);
   }
 
   // Create the SyntaxOp
@@ -917,15 +966,21 @@ mlir::Value OpGen::createSyntaxRules(SourceLocation Loc,
   mlir::OpBuilder::InsertionGuard IG(Builder);
   Builder.setInsertionPointToStart(&Body);
 
+  // Load the definition frame that a local syntax captures.
+  mlir::Value Scope;
+  if (LocalSyntaxCaptures)
+    Scope = create<LoadRefOp>(Loc, Body.getArgument(0), /*Index=*/0);
+
   // Iterate through each pattern/template pair.
   assert(!CheckError() && "should not have errors here");
   while (Pair* I = dyn_cast<Pair>(PatternDefs)) {
     schir::Value Pattern;
     schir::Value Template;
-    if (schir::Pair* X = dyn_cast<Pair>(I->Car);
-        X && isa_and_nonnull<Empty>(X->Cdr.cdr())) {
+    auto* X = dyn_cast<Pair>(Context.UnwrapSyntaxClosure(I->Car));
+    Value Rest = X ? Context.UnwrapSyntaxClosure(X->Cdr) : Value();
+    if (X && isa_and_nonnull<Empty>(Rest.cdr())) {
       Pattern  = X->Car;
-      Template = X->Cdr.car();
+      Template = Rest.car();
     } else {
       return SetError("expecting pattern template pair", I->Car);
     }
@@ -939,14 +994,14 @@ mlir::Value OpGen::createSyntaxRules(SourceLocation Loc,
       Builder.setInsertionPointToStart(&B);
     }
 
-    PatternTemplate PT(*this, Keyword, Ellipsis, EnvArg, Literals);
+    PatternTemplate PT(*this, Keyword, Ellipsis, EnvArg, Scope, Literals);
     PT.VisitPatternTemplate(Pattern, Template, ExprArg);
     if (RestoreIp.isSet())
       Builder.restoreInsertionPoint(RestoreIp);
-    PatternDefs = I->Cdr;
+    PatternDefs = Context.UnwrapSyntaxClosure(I->Cdr);
   }
 
-  if (!isa<Empty>(PatternDefs) || Body.empty()) {
+  if (!isa<Empty>(PatternDefs)) {
     return SetError("expecting list of pattern templates pairs", PatternDefs);
   }
   return SyntaxOp.getResult();
@@ -1004,6 +1059,10 @@ bool OpGen::WalkDefineInits(Value Bindings, IdSet& LocalIds) {
     SetError("local variable has duplicate definitions", Id);
     return true;
   }
+
+  // Skip a local syntax keyword, which has no initializer.
+  if (isa<Syntax>(B->getValue()))
+    return false;
 
   // Insert the binding initializer.
   auto Undef = cast<schir::Undefined>(B->getValue());
@@ -1375,7 +1434,7 @@ mlir::Value OpGen::VisitSyntaxClosure(SyntaxClosure* SC) {
   // A SyntaxClosure wraps either a Symbol or a rebuilt expression that
   // substitutes all symbols as SyntaxClosures so we can simply unwrap
   // the latter.
-  if (isa<Symbol>(SC->Node))
+  if (isIdentifier(SC->Node))
     return VisitIdentifier(SC);
   else
     return Visit(SC->Node);
@@ -1388,7 +1447,7 @@ mlir::Value OpGen::VisitSymbol(Symbol* S) {
 mlir::Value OpGen::VisitIdentifier(Value Id) {
   EnvEntry Entry = LookupEnv(Id);
   auto* SC = dyn_cast<SyntaxClosure>(Id);
-  Symbol* S = cast<Symbol>(SC ? SC->Node : Id);
+  Symbol* S = unwrapIdentifier(Id);
   SourceLocation Loc = S->getSourceLocation();
 
   if (!Entry) {
@@ -1413,6 +1472,10 @@ mlir::Value OpGen::VisitEnvEntry(schir::SourceLocation Loc, EnvEntry Entry) {
   if (!MangledName.empty()) {
     return createGlobal(Loc, MangledName);
   }
+
+  if (auto* B = dyn_cast<Binding>(Entry.Value); B && isa<Syntax>(B->getValue()))
+    return SetError(Loc, "syntax keyword used as a value: {}",
+                    B->getIdentifier());
 
   return GetSingleResultOrBinding(Entry.Value);
 }
@@ -1848,11 +1911,11 @@ schir::EnvEntry OpGen::LookupEnv(Value Id, Value Env) {
     Env = Context.getEnvironment();
 
   // Find a binding of the syntax closure itself in Env, and then
-  // find its symbol in its closed environment.
+  // look up its node in its closed environment.
   if (auto* SC = dyn_cast<SyntaxClosure>(Id)) {
     if (EnvEntry Result = Context.Lookup(SC, Env))
       return Result;
-    return Context.Lookup(SC->Node, SC->Env);
+    return LookupEnv(SC->Node, SC->Env);
   }
 
   return Context.Lookup(Id, Env);

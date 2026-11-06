@@ -1294,12 +1294,24 @@ public:
   static ValueKind getKind() { return ValueKind::SyntaxClosure; }
 };
 
-// Returns unwrapped identifier or nullptr.
+// Get the symbol of an identifier, which may be closed more than once,
+// or nullptr.
 inline Symbol* unwrapIdentifier(Value V) {
-  if (auto* SC = dyn_cast<SyntaxClosure>(V))
+  while (auto* SC = dyn_cast<SyntaxClosure>(V))
     V = SC->Node;
 
   return dyn_cast<Symbol>(V);
+}
+
+// Compare identifiers that are the same symbol closed in the same envs.
+inline bool isSameIdentifier(Value A, Value B) {
+  auto* SC1 = dyn_cast<SyntaxClosure>(A);
+  auto* SC2 = dyn_cast<SyntaxClosure>(B);
+  if (SC1 && SC2)
+    return SC1->Env == SC2->Env && isSameIdentifier(SC1->Node, SC2->Node);
+  auto* S1 = dyn_cast<Symbol>(A);
+  auto* S2 = dyn_cast<Symbol>(B);
+  return S1 && S2 && S1->Equiv(S2);
 }
 
 inline bool isIdentifier(Value V) {
@@ -1626,22 +1638,7 @@ public:
   EnvEntry Lookup(Value LookupId) {
     assert(Val && "null binding should not be a part of lookup");
 
-    Symbol* Name1 = nullptr;
-    Symbol* Name2 = nullptr;
-    Value Env;
-    if (auto* SC1 = dyn_cast<SyntaxClosure>(Identifier)) {
-      if (auto* SC2 = dyn_cast<SyntaxClosure>(LookupId)) {
-        if (SC1->Env == SC2->Env) {
-          Name1 = dyn_cast<Symbol>(SC1->Node);
-          Name2 = dyn_cast<Symbol>(SC2->Node);
-        }
-      }
-    } else {
-      Name1 = dyn_cast<Symbol>(Identifier);
-      Name2 = dyn_cast<Symbol>(LookupId);
-    }
-
-    if (Name1 && Name2 && Name1->Equiv(Name2)) {
+    if (isSameIdentifier(Identifier, LookupId)) {
       auto Result = EnvEntry{Value(this)};
       if (auto* E = dyn_cast<ExternName>(Val))
         Result.MangledName = E->getName();

@@ -33,6 +33,7 @@ class PatternTemplate : ValueVisitor<PatternTemplate, mlir::Value> {
   Value Ellipsis;
   NameSet& Literals;
   mlir::Value EnvArg;  // For syntax closures.
+  mlir::Value Scope;  // The definition frame of a local syntax (or null).
   llvm::SmallPtrSet<String*, 4> PatternVars;
 
   // P - the pattern node
@@ -47,8 +48,10 @@ class PatternTemplate : ValueVisitor<PatternTemplate, mlir::Value> {
                                 OpGen.Builder.getContext());
   }
 
+  // Compare identifiers by name.
   bool isEllipsis(schir::Value Id) {
-    return equal(Id, Ellipsis);
+    Symbol* S = unwrapIdentifier(Id);
+    return S && S->Equiv(unwrapIdentifier(Ellipsis));
   }
 
 public:
@@ -56,12 +59,14 @@ public:
                   schir::Value Keyword,
                   schir::Value Ellipsis,
                   mlir::Value EnvArg,
+                  mlir::Value Scope,
                   NameSet& Literals)
     : OpGen(O),
       Keyword(Keyword),
       Ellipsis(Ellipsis),
       Literals(Literals),
       EnvArg(EnvArg),
+      Scope(Scope),
       PatternVars()
   {
     assert(isIdentifier(Keyword) && "expecting identifier");
@@ -75,9 +80,10 @@ public:
                                    mlir::Value E) {
     schir::Context& Context = OpGen.getContext();
     EnvFrame* EF = Context.PushEnvFrame();
+    Pattern = Context.UnwrapSyntaxClosure(Pattern);
     schir::SourceLocation Loc = Pattern.getSourceLocation();
     mlir::Value KeywordArg;
-    if (isa_and_nonnull<Symbol>(Pattern.car())) {
+    if (Pattern.car() && isIdentifier(Pattern.car())) {
       // Ignore the initial keyword for matching,
       // but use its value make its source location available.
       Pair* P = cast<Pair>(Pattern);
@@ -90,7 +96,8 @@ public:
     }
 
     if (!OpGen.CheckError()) {
-      TemplateGen TG(OpGen, Keyword, KeywordArg, PatternVars, Ellipsis);
+      TemplateGen TG(OpGen, Scope, Keyword, KeywordArg, PatternVars,
+                     Ellipsis);
       TG.BuildTemplate(Template);
     }
 
@@ -213,6 +220,15 @@ public:
     return mlir::Value();
   }
 
+  // Match a closed identifier by its name.
+  mlir::Value VisitSyntaxClosure(SyntaxClosure* SC, mlir::Value E) {
+    // Unwrap a closed form that is not an identifier.
+    Symbol* P = unwrapIdentifier(SC);
+    if (!P)
+      return Visit(SC->Node, E);
+    return VisitSymbol(P, E);
+  }
+
   mlir::Value VisitSymbol(Symbol* P, mlir::Value E) {
     // <underscore>
     if (P->Equiv("_")) {
@@ -235,9 +251,11 @@ public:
                                           Entry.MangledName->getStringRef());
         OpGen.create<schir::MatchIdOp>(Loc, E, EnvArg, mlir::Value(), Name);
         return mlir::Value();
+      } else if (Scope) {
+        return OpGen.SetError(
+            "TODO support literals bound to local variables in local syntax",
+            P);
       } else {
-        // FIXME This will create captures for local syntax which
-        //       never need this.
         // Match against the binding or instance of value itself.
         mlir::Value PV = OpGen.VisitEnvEntry(Loc, Entry);
         OpGen.create<schir::MatchIdOp>(Loc, E, EnvArg, PV,
