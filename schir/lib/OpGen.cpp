@@ -129,11 +129,15 @@ std::string OpGen::mangleModule(schir::Value NameSpec) {
 }
 
 std::string OpGen::mangleFunctionName(llvm::StringRef Name) {
-  schir::Mangler Mangler = createMangler();
-  if (Name.empty()) {
-    return Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
-  }
-  return Mangler.mangleFunction(getModulePrefix(), Name);
+  if (Name.empty())
+    return mangleAnonymousId();
+  return createMangler().mangleFunction(getModulePrefix(), Name);
+}
+
+// Mangle a unique name in the current module.
+std::string OpGen::mangleAnonymousId() {
+  return createMangler().mangleAnonymousId(getModulePrefix(),
+                                           LambdaNameCount++);
 }
 
 std::string OpGen::mangleVariable(schir::Value Name) {
@@ -1092,11 +1096,20 @@ OpGen::createTopLevelBindingInfo(Value Id) {
   // Unwrap SyntaxClosures.
   if (auto* SC = dyn_cast<SyntaxClosure>(Id)) {
     S = cast<Symbol>(SC->Node);
-    Env = dyn_cast<Environment>(SC->Env);
-    if (!Env) {
-      SetError("FIXME support top level names in syntax closures");
+    if (auto* EF = dyn_cast<EnvFrame>(SC->Env)) {
+      // Bind a template-introduced name to an anonymous global.
+      Entry = EF->LookupAddedBindings(S);
+      if (Entry.MangledName) {
+        MangledName = Entry.MangledName;
+        return Result;
+      }
+      MangledName = Context.CreateIdTableEntry(mangleAnonymousId());
+      auto* EN = Context.CreateExternName(S->getSourceLocation(),
+                                          MangledName);
+      Context.AddBinding(EF, Context.CreateBinding(S, EN));
       return Result;
     }
+    Env = cast<Environment>(SC->Env);
   } else {
     S = cast<Symbol>(Id);
     Env = Context.GetTopLevelEnvironment();
@@ -1698,9 +1711,7 @@ mlir::Operation* OpGen::LookupSymbol(llvm::StringRef MangledName) {
 void OpGen::ShadowGlobalSymbol(mlir::Operation* Old) {
   mlir::ModuleOp M = getModuleOp();
   mlir::StringAttr OldName = mlir::SymbolTable::getSymbolName(Old);
-  schir::Mangler Mangler = createMangler();
-  std::string NewNameStr =
-      Mangler.mangleAnonymousId(getModulePrefix(), LambdaNameCount++);
+  std::string NewNameStr = mangleAnonymousId();
   mlir::StringAttr NewName = Builder.getStringAttr(NewNameStr);
   (void)mlir::SymbolTable::replaceAllSymbolUses(OldName, NewName, M);
   mlir::SymbolTable::setSymbolName(Old, NewNameStr);

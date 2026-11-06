@@ -40,6 +40,14 @@
    (write hidden)))
 (newline)
 
+;; The same expansion at top level.
+; CHECK-NEXT: topuser
+(define hidden 'user)
+(define-getter get-top 'top)
+(write (get-top))
+(write hidden)
+(newline)
+
 ;; A literal bound in the library matches the same binding.
 ; CHECK-NEXT: matchedno-match
 (write (match-literal ⌋))

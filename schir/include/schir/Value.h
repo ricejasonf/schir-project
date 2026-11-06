@@ -1710,13 +1710,20 @@ public:
     return totalSizeToAlloc<Binding*>(NumBindings);
   }
 
-  // Look up Id in this frame only.
-  EnvEntry LookupBindings(Value Id) const {
+  // Look up Id in the bindings added to this frame.
+  EnvEntry LookupAddedBindings(Value Id) const {
     for (auto* P = dyn_cast<Pair>(AddedBindings); P;
          P = dyn_cast<Pair>(P->Cdr)) {
       if (EnvEntry Result = cast<Binding>(P->Car)->Lookup(Id))
         return Result;
     }
+    return {};
+  }
+
+  // Look up Id in this frame only.
+  EnvEntry LookupBindings(Value Id) const {
+    if (EnvEntry Result = LookupAddedBindings(Id))
+      return Result;
     for (Binding* B : getBindings()) {
       if (EnvEntry Result = B->Lookup(Id))
         return Result;

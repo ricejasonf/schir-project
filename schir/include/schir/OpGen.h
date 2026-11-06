@@ -487,6 +487,7 @@ public:
   }
 
 private:
+  std::string mangleAnonymousId();
   mlir::Value CallSyntax(Value Operator, Pair* P);
   mlir::Value HandleCall(Pair* P, schir::EnvEntry FnEnvEntry);
 };

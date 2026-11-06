@@ -271,3 +271,21 @@
 ; CHECK-NEXT: (nested-name z)
 (write (define-in-nested-expansion))
 (newline)
+
+; Test that a template-introduced top-level define is hidden per expansion.
+(define-syntax define-counter
+  (syntax-rules ()
+    ((define-counter get)
+     (begin
+       (define count 0)
+       (define count 10)
+       (define (get) (set! count (+ count 1)) count)))))
+
+(define count 'user-count)
+(define-counter get-a)
+(define-counter get-b)
+(get-a)
+
+; CHECK-NEXT: (12 11 user-count)
+(write (list (get-a) (get-b) count))
+(newline)

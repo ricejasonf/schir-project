@@ -177,7 +177,10 @@ EnvFrame* Context::PushEnvFrame(llvm::ArrayRef<Value> Ids,
 }
 
 void Context::PushLocalBinding(Binding* B) {
-  auto* EF = cast<EnvFrame>(CurrentEnv);
+  AddBinding(cast<EnvFrame>(CurrentEnv), B);
+}
+
+void Context::AddBinding(EnvFrame* EF, Binding* B) {
   EF->AddedBindings = CreatePair(B, EF->AddedBindings);
 }
 

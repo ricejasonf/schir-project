@@ -288,6 +288,7 @@ public:
                          bool IsLambdaScope = false);
   void PopEnvFrame(EnvFrame*);
   void PushLocalBinding(Binding* B);
+  void AddBinding(EnvFrame* EF, Binding* B);
 
   // PushLambdaFormals - Check formals, create an EnvFrame,
   //                     and make it current
