@@ -29,7 +29,7 @@ struct my_struct {
             scale_foo
             sum_foo_bar)
 
-(define-context context (arg1 arg2)
+(define-struct context (arg1 arg2)
   (member: '.foo 'int (init-args: arg1))
   (member: '.bar 'int (init-args: arg2)))
 

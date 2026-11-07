@@ -42,7 +42,7 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
               match_7
               match_8)
 
-  (define-context context (arg1 arg2 arg3)
+  (define-struct context (arg1 arg2 arg3)
     (member: '.foo 'int
      (init-args: 42))
     (member: '.bar 'std::string

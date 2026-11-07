@@ -67,7 +67,7 @@ struct int_sum_sink {
             visit_then_match_if
             match_then_match)
 
-(define-context context (arg1 arg2)
+(define-struct context (arg1 arg2)
   (member: '.foo 'int (init-args: arg1))
   (member: '.bar 'int (init-args: arg2)))
 
@@ -183,7 +183,7 @@ struct int_sum_sink {
   (return))
 
 ; // Visit a match-fn with a func_name as the continuation.
-; // The parameter type is the store defined by define-context.
+; // The parameter type is the struct defined by define-struct.
 ; // The func_name is lifted to a store when the match-fn is inlined,
 ; // but the callee is still visible through the store so the visit
 ; // of the continuation is lowered to a call.

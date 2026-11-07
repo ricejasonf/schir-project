@@ -61,7 +61,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
              (store message_3)
              (store message_4)))
 
-  (define-context context ()
+  (define-struct context ()
     (member: '.sum 'int (init-args:))
     (member: '.fav_games 'my::fav_games (init-args:))
     (member: '.message_4_count 'size_t (init-args:))

@@ -767,20 +767,6 @@
                         (lambda (ProcessBody)
                           (apply BodyProc ProcessBody Params))))))))))
 
-    ;; For now, this is just an alternative interface to define-store.
-    ;; The idea was to encapsulate a root node in the state graph
-    ;; but the benefit is not apparent.
-    (define-syntax define-context
-      (syntax-rules (member: init-args:)
-        ((define-context Name (Formals ...)
-            (member: Key1 Typename1 (init-args: InitArgs1N ...))
-            (member: KeyN TypenameN (init-args: InitArgsNN ...)) ...)
-         (define-store Name (Formals ...)
-           (store-compose Key1 (store Typename1 (init-args: InitArgs1N ...)))
-           (store-compose KeyN (store TypenameN (init-args: InitArgsNN ...)))
-           ...
-           ))))
-
     ;; Create the StoreFunctional of a struct member
     ;; (Key Store) or (Key Store KeyLoc) where Key is a member name.
     (define (%struct-member Loc Member)
@@ -1842,7 +1828,6 @@
 
   ) ; end of... begin
   (export
-    define-context
     define-store
     define-struct
     store-compose
@@ -1884,6 +1869,7 @@
 
     ;; Reexport some base stuff
     define
+    for-each
     define-syntax
     error
     syntax-rules
