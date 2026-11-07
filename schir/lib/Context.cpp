@@ -162,7 +162,7 @@ EnvFrame* Context::PushLambdaFormals(Value Formals,
 std::pair<uintptr_t, uintptr_t> Context::GetIdentifierUniqueId(Value V) {
   assert(isIdentifier(V) && "expecting identifier");
   if (auto* S = dyn_cast<Symbol>(V))
-    return {Value(S).getOpaqueValue(), 0};
+    return {Value(S->getString()).getOpaqueValue(), 0};
 
   auto* SC = cast<SyntaxClosure>(V);
   return {Value(unwrapIdentifier(SC)->getString()).getOpaqueValue(),
