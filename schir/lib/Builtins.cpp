@@ -418,13 +418,22 @@ void begin(Context& C, ValueRefs Args) {
 }
 
 void include_(Context& C, ValueRefs Args) {
+  auto* P = cast<Pair>(Args[0]);
+  auto* P2 = dyn_cast<Pair>(P->Cdr);
+  if (!P2) {
+    C.RaiseError("invalid include syntax", Args[0]);
+    return;
+  }
+
   schir::SourceLocation Loc = Args[0].getSourceLocation();
   C.PushCont([Loc](Context& C, ValueRefs Args) {
+    // Return the parsed forms to splice them into a body.
+    if (C.OpGen->isExpandOnly()) {
+      C.Cont(Args[0]);
+      return;
+    }
     handleSequence(C, Loc, Args[0]);
   });
-
-  auto* P = cast<Pair>(Args[0]);
-  auto* P2 = cast<Pair>(P->Cdr);
 
   schir::Value ParseSourceFile = SCHIR_BASE_VAR(parse_source_file).get(C);
   schir::Value SourceVal = C.CreateSourceValue(Loc);

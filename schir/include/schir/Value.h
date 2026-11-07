@@ -1201,6 +1201,8 @@ class Syntax final
 
   OpaqueFnPtrTy FnPtr;
   unsigned short NumCaptures;
+  // Return the expanded form instead of generating it in expand-only mode.
+  bool IsExpandable;
   unsigned StorageLen;
 
   size_t numTrailingObjects(OverloadToken<Value> const) const {
@@ -1210,10 +1212,12 @@ class Syntax final
   void* getStoragePtr() { return getTrailingObjects<char>(); }
 
 public:
-  Syntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures = {})
+  Syntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures = {},
+         bool IsExpandable = false)
     : ValueBase(ValueKind::Syntax),
       FnPtr(FnData.CallFn),
       NumCaptures(Captures.size()),
+      IsExpandable(IsExpandable),
       StorageLen(FnData.Storage.size())
   {
     // Storage
@@ -1236,6 +1240,8 @@ public:
     return llvm::MutableArrayRef<Value>(
         getTrailingObjects<Value>(), NumCaptures);
   }
+
+  bool isExpandable() const { return IsExpandable; }
 
   void call(Context& C, ValueRefs Args) {
     return FnPtr(getStoragePtr(), C, Args);

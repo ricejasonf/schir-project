@@ -434,7 +434,7 @@ private:
     schir::FuncOp F = lookupFunction(Op.getName());
     if (!F) return {};
     auto CallFn = createClosure(Op, F);
-    Syntax* S = Context.CreateSyntax(CallFn);
+    Syntax* S = Context.CreateSyntax(CallFn, /*IsExpandable=*/true);
 
     setValue(Op.getResult(), S);
     return next(Op);
@@ -742,6 +742,10 @@ private:
       // because it will not match a literal.
       schir::EnvEntry EntryE = Context.Lookup(E);
       schir::EnvEntry EntryP = Context.Lookup(P);
+      if (Context.OpGen) {
+        Context.OpGen->RecordContextLookup(E, EntryE);
+        Context.OpGen->RecordContextLookup(P, EntryP);
+      }
       if (EntryE && EntryP && EntryE.Value == EntryP.Value)
         return next(Op);
       else if (EntryE || EntryP)
@@ -1032,6 +1036,11 @@ private:
   BlockItrTy Visit(OpGenOp Op) {
     schir::OpGen* OpGen = Context.OpGen;  // For debug only.
     schir::Value Input = getValue(Op.getInput());
+    // Return the expanded form without generating operations.
+    if (Context.OpGen && Context.OpGen->isExpandOnly()) {
+      Context.Cont(Input);
+      return BlockItrTy();
+    }
     mlir::Value Result = Context.OpGen->Visit(Input);
     schir::Value Output = schir::OpGen::fromValue(Result);
     assert(OpGen == Context.OpGen && "OpGen visit should not unwind itself");

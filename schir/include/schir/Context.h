@@ -464,14 +464,15 @@ public:
     return CreateLambda(Fn, {});
   }
 
-  Syntax* CreateSyntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures) {
+  Syntax* CreateSyntax(OpaqueFn FnData, llvm::ArrayRef<Value> Captures,
+                       bool IsExpandable = false) {
     void* Mem = Syntax::allocate(getAllocator(), FnData, Captures);
-    return new (Mem) Syntax(FnData, Captures);
+    return new (Mem) Syntax(FnData, Captures, IsExpandable);
   }
 
   template <typename F>
-  Syntax* CreateSyntax(F Fn) {
-    return CreateSyntax(createOpaqueFn(Fn), {});
+  Syntax* CreateSyntax(F Fn, bool IsExpandable = false) {
+    return CreateSyntax(createOpaqueFn(Fn), {}, IsExpandable);
   }
 
   Builtin* CreateBuiltin(ValueFn Fn) {

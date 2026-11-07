@@ -130,12 +130,6 @@ class OpGen : public ValueVisitor<OpGen, mlir::Value> {
   //                  be inserted if this is set.
   Binding* LibraryEnvProc = nullptr;
 
-  // The current syntax closure will affect how we perform lookup
-  // in LookupEnv.
-  SyntaxClosure* CurSyntaxClosure = nullptr;
-
-  struct SyntaxClosureScope;
-
   // Err - The stored error to indicate that the compiler is in an error state.
   //       (Use CheckError())
   Value Err = nullptr;
@@ -143,6 +137,20 @@ class OpGen : public ValueVisitor<OpGen, mlir::Value> {
   size_t RunSyncDepth = 0;
 
   bool IsLocalDefineAllowed = false;
+  // Indicate that a syntax function should return its expansion
+  // instead of generating it.
+  bool IsExpandOnly = false;
+
+  // Record an identifier that phase 1 of a body resolves.
+  struct BodyLookup {
+    Value Id;
+    Value Env;
+    EnvEntry Entry;
+    // Use Context::Lookup instead of LookupEnv to look it up again.
+    bool IsContextLookup = false;
+  };
+  // Collect the lookups of phase 1 of the current body (or null).
+  llvm::SmallVectorImpl<BodyLookup>* BodyLookups = nullptr;
   // Collect the captures of a local syntax while creating it (or null).
   llvm::SmallVectorImpl<Value>* LocalSyntaxCaptures = nullptr;
   schir::Symbol* ModulePrefix = nullptr;
@@ -166,8 +174,9 @@ class OpGen : public ValueVisitor<OpGen, mlir::Value> {
   };
 
   void InsertTopLevelCommandOp(SourceLocation Loc);
-  bool WalkDefineInits(Value Bindings, IdSet& LocalNames);
-  void FinishLocalDefines();
+  void createDefineInit(Binding* B);
+  bool CheckBodyDefines(EnvFrame* Frame,
+                        llvm::ArrayRef<BodyLookup> Lookups);
 
 public:
   explicit OpGen(schir::Context& C, schir::Symbol* ModulePrefix = nullptr);
@@ -236,6 +245,9 @@ public:
   bool isTopLevel() { return TopLevelOp == nullptr; }
   bool isTailPos() { return IsTailPos; }
   bool isLocalDefineAllowed();
+  bool isExpandOnly() { return IsExpandOnly; }
+  // Record a phase 1 lookup that uses Context::Lookup directly.
+  void RecordContextLookup(Value Id, EnvEntry Entry);
 
   std::string mangleModule(schir::Value Name);
   std::string mangleFunctionName(llvm::StringRef Name);
@@ -244,7 +256,7 @@ public:
   // createHelper - Facilitate creating an operation with proper source
   //                location information.
   //              - Calling this directly bypasses implicit wrapping in
-  //                a top level op as well as finalizing local defines.
+  //                a top level op.
   template <typename Op, typename ...Args>
   static Op createHelper(mlir::OpBuilder& Builder, schir::SourceLocation Loc,
                          Args&& ...args) {
@@ -257,15 +269,8 @@ public:
 
   template <typename Op, typename ...Args>
   Op create(schir::SourceLocation Loc, Args&& ...args) {
-    if (Builder.getBlock() == nullptr) {
+    if (Builder.getBlock() == nullptr)
       InsertTopLevelCommandOp(Loc);
-    } else if (IsLocalDefineAllowed) {
-      // An error may occur here, but we always want
-      // this function to return a valid operation.
-      // Just continue until the error is realized.
-      if (!CheckError())
-        FinishLocalDefines();
-    }
     return createHelper<Op>(Builder, Loc, std::forward<Args>(args)...);
   }
 
@@ -493,6 +498,9 @@ public:
 private:
   std::string mangleAnonymousId();
   mlir::Value CallSyntax(Value Operator, Pair* P);
+  Value RunSyntax(Syntax* S, Pair* P);
+  Value RunNested(Value Fn, ValueRefs Args);
+  Value ExpandSyntax(Syntax* S, Pair* P);
   mlir::Value HandleCall(Pair* P, schir::EnvEntry FnEnvEntry);
 };
 

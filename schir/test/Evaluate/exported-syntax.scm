@@ -40,6 +40,15 @@
    (write hidden)))
 (newline)
 
+;; A define after an expansion does not capture a free identifier.
+; CHECK-NEXT: ((hidden-proc 7) hidden-var)user
+((lambda ()
+   (define result (use-hidden 7))
+   (define hidden-proc 'user)
+   (write result)
+   (write hidden-proc)))
+(newline)
+
 ;; The same expansion at top level.
 ; CHECK-NEXT: topuser
 (define hidden 'user)

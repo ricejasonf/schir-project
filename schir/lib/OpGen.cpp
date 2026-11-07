@@ -36,21 +36,21 @@ using namespace schir;
 
 static ContextLocal SyntaxStack;
 
-struct OpGen::SyntaxClosureScope {
-  OpGen& O;
-  SyntaxClosure* PrevSC;
+// Set the syntax stack until the result is destroyed.
+static auto setSyntaxStack(schir::Context& C, Value Stack) {
+  Binding* SSB = SyntaxStack.getBinding(C);
+  Value PrevStack = SSB->getValue();
+  SSB->setValue(Stack);
+  return llvm::scope_exit([SSB, PrevStack] {
+      SSB->setValue(PrevStack);
+    });
+}
 
-  SyntaxClosureScope(OpGen& O, SyntaxClosure* SC)
-    : O(O),
-      PrevSC(O.CurSyntaxClosure)
-  {
-    O.CurSyntaxClosure = SC;
-  }
-
-  ~SyntaxClosureScope() {
-    O.CurSyntaxClosure = PrevSC;
-  }
-};
+// Push '(Operator . P) to the syntax stack until the result is destroyed.
+static auto pushSyntaxStack(schir::Context& C, Value Operator, Pair* P) {
+  Value Stack = SyntaxStack.getBinding(C)->getValue();
+  return setSyntaxStack(C, C.CreatePair(C.CreatePair(Operator, P), Stack));
+}
 
 // LambdaScope - RAII object that pushes an operation that is
 //               FunctionLike to the scope stack along with a
@@ -159,9 +159,6 @@ mlir::Value OpGen::GetSingleResultOrBinding(schir::Value V) {
   // Ensure we are no longer top level.
   if (!TopLevelOp)
     InsertTopLevelCommandOp(Context.getLoc());
-
-  if (IsLocalDefineAllowed)
-    FinishLocalDefines();
 
   TailPosScope TPS(*this);
   IsTailPos = false;
@@ -623,9 +620,6 @@ std::pair<schir::FuncOp, schir::EnvFrame*>
 OpGen::createLambdaFunction(Value Formals, SourceLocation Loc,
                             llvm::StringRef Name) {
   Formals = Context.UnwrapSyntaxClosure(Formals);
-  // Flush any internal definitions from containing body if any.
-  if (IsLocalDefineAllowed)
-    FinishLocalDefines();
 
   // Ensure we are no longer top level.
   if (!TopLevelOp)
@@ -676,9 +670,6 @@ mlir::Value OpGen::createLambdaBody(SourceLocation Loc,
     // If Result is null then it already
     // has a terminator.
     if (mlir::Value Result = createBody(Loc, Body)) {
-      // Flush the internal definitions if we have not done so.
-      if (IsLocalDefineAllowed)
-        FinishLocalDefines();
       Result = LocalizeValue(Result);
       ContOp::create(Builder, Result.getLoc(), Result);
     }
@@ -879,8 +870,10 @@ mlir::Value OpGen::createLocalSyntaxSpec(Pair* SyntaxSpec, Value OrigCall) {
   Value Keyword = SyntaxSpec->Car;
   if (auto* SC = dyn_cast<SyntaxClosure>(Keyword); SC && SC->Env == Scope)
     Keyword = SC->Node;
+  auto* TransformerSyntax = cast<Syntax>(Transformer);
   Value LocalSyntax = Context.CreateSyntax(
-      cast<Syntax>(Transformer)->getFnData(), Captures);
+      TransformerSyntax->getFnData(), Captures,
+      TransformerSyntax->isExpandable());
   Context.PushLocalBinding(Context.CreateBinding(Keyword, LocalSyntax));
   return createUndefined();
 }
@@ -1035,86 +1028,174 @@ mlir::Value OpGen::createSequence(SourceLocation Loc, Value Body) {
   return Visit(Rest);
 }
 
-// WalkDefineInits
-//  - The BindingOps for the local defines have
-//    been inserted by the `define` syntax. They are
-//    initialized to "undefined" and their corresponding
-//    schir::Bindings added to the EnvFrame of the lambda scope.
-//    Walk the added bindings of that EnvFrame.
-//    Collect these and insert the lazy initializers via SetOp
-//    in the lexical order that they were defined.
-bool OpGen::WalkDefineInits(Value Bindings, IdSet& LocalIds) {
-  Pair* P = dyn_cast<Pair>(Bindings);
-  if (!P) return false;
-  // Walk the defines before this.
-  if (WalkDefineInits(P->Cdr, LocalIds))
-    return true;
-
-  // Check for duplicate names.
-  Binding* B = cast<Binding>(P->Car);
-  Value Id = B->getIdentifier();
-  std::pair<uintptr_t, uintptr_t> UniqueId = Context.GetIdentifierUniqueId(Id);
-  auto [_, IsNameInserted] = LocalIds.insert(UniqueId);
-  if (!IsNameInserted) {
-    SetError("local variable has duplicate definitions", Id);
-    return true;
-  }
-
-  // Skip a local syntax keyword, which has no initializer.
-  if (isa<Syntax>(B->getValue()))
-    return false;
-
-  // Insert the binding initializer.
-  auto Undef = cast<schir::Undefined>(B->getValue());
-  Value DefineArgs = Undef.getTracer();
-  // FIXME If we restruct SyntaxClosure to wrapping Symbols
-  // then this is not needed since DefineArgs is never just an identifier.
-  // SC may be nullptr.
-  auto* SC = dyn_cast<SyntaxClosure>(Undef.getTracer());
-  SyntaxClosureScope SCScope(*this, SC);
-  if (SC)
-    DefineArgs = SC->Node;
+// Initialize the binding of a local define from its deferred syntax.
+void OpGen::createDefineInit(Binding* B) {
+  Value DefineArgs = cast<schir::Undefined>(B->getValue()).getTracer();
   SourceLocation Loc = DefineArgs.getSourceLocation();
   mlir::Value Init = VisitDefineArgs(DefineArgs);
+  if (!Init || CheckError())
+    return;
   mlir::Value BVal = LocalizeValueOrBinding(BindingTable.lookup(B), B);
   assert(BVal && isa<SchirBindingType>(BVal.getType()) &&
          "BindingTable should have an entry for local define");
-  if (!Init)
-    return true;
   Init = UnwrapBinding(Init);
   create<SetOp>(Loc, BVal, Init);
-  return CheckError();
 }
 
-void OpGen::FinishLocalDefines() {
-  if (CheckError())
-    return;
-  TailPosScope TPS(*this);
-  IsTailPos = false;
-  IsLocalDefineAllowed = false;
+// Check that the definitions of a body are unique and that none changes
+// an identifier that phase 1 resolved. Return true on error.
+bool OpGen::CheckBodyDefines(EnvFrame* Frame,
+                             llvm::ArrayRef<BodyLookup> Lookups) {
+  llvm::SmallVector<Binding*, 8> Defines;
+  for (Value B : Frame->getAddedBindings())
+    Defines.push_back(cast<Binding>(B));
+  llvm::SmallPtrSet<Binding*, 8> DefineSet(Defines.begin(), Defines.end());
   IdSet LocalIds;
-  // Get the most local EnvFrame that is a lambda scope.
-  auto* EF = dyn_cast<EnvFrame>(Context.getEnvironment());
-  while (EF && !EF->isLambdaScope())
-    EF = dyn_cast<EnvFrame>(EF->getParent());
-  assert(EF && "expecting a lambda scope env frame");
-  if (!EF)
-    return;
-  WalkDefineInits(EF->getAddedBindings(), LocalIds);
+  for (Binding* B : llvm::reverse(Defines)) {
+    Value Id = B->getIdentifier();
+    if (!LocalIds.insert(Context.GetIdentifierUniqueId(Id)).second) {
+      SetError("local variable has duplicate definitions", Id);
+      return true;
+    }
+  }
+
+  for (const BodyLookup& L : Lookups) {
+    EnvEntry Entry = L.IsContextLookup ? Context.Lookup(L.Id, L.Env)
+                                       : LookupEnv(L.Id, L.Env);
+    // Reject a lookup that now finds a define of this body it did not find.
+    auto* B = dyn_cast_or_null<Binding>(Entry.Value);
+    if (!B || !DefineSet.contains(B) || Entry.Value == L.Entry.Value)
+      continue;
+    Symbol* S = unwrapIdentifier(L.Id);
+    Value Note = Context.CreateError(B->getIdentifier().getSourceLocation(),
+                                     "defined here", Empty());
+    SetError(S->getSourceLocation(),
+             "identifier is used before its definition in the body: {}",
+             {S, Note});
+    return true;
+  }
+  return false;
 }
 
+// Expand each form of a body until its head is known, binding its
+// definitions, and then generate the deferred definitions and expressions
+// in order.
 mlir::Value OpGen::createBody(SourceLocation Loc, Value Body) {
-  // Flush any internal definitions before starting a new body.
-  if (IsLocalDefineAllowed)
-    FinishLocalDefines();
-  IsLocalDefineAllowed = true;
-  return createSequence(Loc, Body);
+  if (CheckError())
+    return mlir::Value();
+  auto* Frame = cast<EnvFrame>(Context.getEnvironment());
+
+  // Hold a deferred expression or the binding of a define with the
+  // syntax stack of the expansion that produced it.
+  struct BodyItem {
+    Value Form;
+    Value Stack;
+    Binding* Define = nullptr;
+  };
+  Value BaseStack = SyntaxStack.getBinding(Context)->getValue();
+  llvm::SmallVector<BodyItem, 8> Items;
+  llvm::SmallVector<BodyLookup, 8> Lookups;
+  {
+    llvm::SaveAndRestore IsLocalDefineAllowedRAII(IsLocalDefineAllowed, true);
+    llvm::SaveAndRestore<llvm::SmallVectorImpl<BodyLookup>*>
+      BodyLookupsRAII(BodyLookups, &Lookups);
+
+    // Take forms and their syntax stacks from the back of the work list.
+    llvm::SmallVector<std::pair<Value, Value>, 8> Forms;
+    auto pushForms = [&](Value List, Value Stack) {
+      size_t Start = Forms.size();
+      List = Context.UnwrapSyntaxClosure(List);
+      while (auto* P = dyn_cast<Pair>(List)) {
+        Forms.push_back({P->Car, Stack});
+        List = Context.UnwrapSyntaxClosure(P->Cdr);
+      }
+      std::reverse(Forms.begin() + Start, Forms.end());
+      if (!isa<Empty>(List))
+        SetError("expecting proper list in body", List);
+      return !CheckError();
+    };
+    if (!pushForms(Body, BaseStack))
+      return Error();
+
+    while (!Forms.empty()) {
+      auto [Form, Stack] = Forms.pop_back_val();
+      Form = Context.UnwrapSyntaxClosure(Form);
+      auto* P = dyn_cast<Pair>(Form);
+      Value Operator;
+      if (P && isIdentifier(P->Car)) {
+        EnvEntry Entry = LookupEnv(P->Car);
+        Operator = Context.GetSyntax(Entry).Value;
+      }
+
+      // Restore the syntax stack of the expansion for error notes.
+      auto SyntaxStackRestorer = setSyntaxStack(Context, Stack);
+      auto nextStack = [&, Stack = Stack] {
+        return Value(Context.CreatePair(Context.CreatePair(Operator, P),
+                                        Stack));
+      };
+
+      if (!Operator) {
+        Items.push_back({Form, Stack});
+      } else if (Operator == Value(SCHIR_BASE_VAR(define))) {
+        CallSyntax(Operator, P);
+        if (CheckError())
+          return Error();
+        // Take the binding that the define added.
+        Value B = Frame->getAddedBindings().car();
+        Items.push_back({Form, Stack, cast<Binding>(B)});
+      } else if (Operator == Value(SCHIR_BASE_VAR(define_syntax))) {
+        CallSyntax(Operator, P);
+      } else if (Operator == Value(SCHIR_BASE_VAR(begin))) {
+        pushForms(P->Cdr, nextStack());
+      } else if (Operator == Value(SCHIR_BASE_VAR(include))) {
+        // Splice the forms of the included file.
+        Value Parsed = ExpandSyntax(cast<Syntax>(Operator), P);
+        if (CheckError())
+          return Error();
+        pushForms(Parsed, nextStack());
+      } else if (auto* S = dyn_cast<Syntax>(Operator);
+                 S && S->isExpandable()) {
+        Forms.push_back({ExpandSyntax(S, P), nextStack()});
+      } else {
+        Items.push_back({Form, Stack});
+      }
+      if (CheckError())
+        return Error();
+    }
+  }
+
+  if (CheckBodyDefines(Frame, Lookups))
+    return Error();
+  if (Items.empty())
+    return SetError(Loc, "body must end with an expression", Body);
+  if (Items.back().Define)
+    return SetError("body must end with an expression", Items.back().Form);
+
+  // Generate an item with the syntax stack of its expansion.
+  auto visitItem = [&](BodyItem& Item) -> mlir::Value {
+    auto SyntaxStackRestorer = setSyntaxStack(Context, Item.Stack);
+    if (Item.Define) {
+      createDefineInit(Item.Define);
+      return mlir::Value();
+    }
+    return Visit(Item.Form);
+  };
+
+  {
+    TailPosScope TPS(*this);
+    IsTailPos = false;
+    for (BodyItem& Item : llvm::drop_end(Items)) {
+      visitItem(Item);
+      if (CheckError())
+        return Error();
+    }
+  }
+  // Visit the last item in the current tail position.
+  return visitItem(Items.back());
 }
 
 mlir::Value OpGen::createBinding(Binding *B, mlir::Value Init) {
   SourceLocation SymbolLoc = B->getSourceLocation();
-  // Bypass the simpler create<Op> overload to avoid triggering
-  // the finalization of the local defines.
   mlir::Value BVal = createHelper<BindingOp>(Builder, SymbolLoc, Init);
   BindingTable.insert(B, BVal);
 
@@ -1133,9 +1214,7 @@ mlir::Value OpGen::createDefine(Value Id, Value DefineArgs, Value OrigCall) {
   Binding* B = Context.CreateBinding(Id, Undefined(DefineArgs));
   // Push to the local environment.
   Context.PushLocalBinding(B);
-  mlir::Value BVal = createBinding(B, mlir::Value());
-  assert(IsLocalDefineAllowed && "define should still be allowed");
-  return BVal;
+  return createBinding(B, mlir::Value());
 }
 
 std::tuple<EnvEntry, Symbol*, String*>
@@ -1337,8 +1416,6 @@ mlir::Value OpGen::createIf(SourceLocation Loc, Value Cond, Value Then,
 // LHS can be a symbol or a binding
 mlir::Value OpGen::createSet(SourceLocation Loc, Value LHS,
                                                  Value RHS) {
-  if (IsLocalDefineAllowed)
-    FinishLocalDefines();
   TailPosScope TPS(*this);
   IsTailPos = false;
   assert((isa<Binding, Symbol, ExternName, SyntaxClosure>(LHS)) &&
@@ -1490,8 +1567,6 @@ mlir::Value OpGen::VisitBinding(Binding* B) {
 }
 
 mlir::Value OpGen::HandleCall(Pair* P, schir::EnvEntry FnEnvEntry) {
-  if (IsLocalDefineAllowed)
-    FinishLocalDefines();
   schir::SourceLocation Loc = P->getSourceLocation();
   mlir::Value Fn;
   llvm::SmallVector<mlir::Value, 16> Args;
@@ -1581,15 +1656,7 @@ mlir::Value OpGen::createContinuation(mlir::Operation* CallOp) {
 }
 
 mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
-  // Push to syntax stack where each node is '(Operator . P)
-  Binding* SSB = SyntaxStack.getBinding(Context);
-  Value StackNode = Context.CreatePair(Operator, P);
-  SSB->setValue(Context.CreatePair(StackNode, SSB->getValue()));
-  // Pop the syntax stack on scope exit.
-
-  auto SyntaxStackPopper = llvm::scope_exit([SSB] {
-      SSB->setValue(cast<Pair>(SSB->getValue())->Cdr);
-    });
+  auto SyntaxStackPopper = pushSyntaxStack(Context, Operator, P);
 
   switch (Operator.getKind()) {
     case ValueKind::BuiltinSyntax: {
@@ -1598,24 +1665,7 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
       return BS->Fn(*this, P);
     }
     case ValueKind::Syntax: {
-      schir::Context& Context = this->Context;
-      Context.setLoc(P->getSourceLocation());
-      Value Input = P;
-      Value Env = Context.getEnvironment();
-      schir::OpGen* OpGen = Context.OpGen;
-      assert(OpGen == this && "sanity check");
-      ++RunSyncDepth;
-
-      std::array<schir::Value, 2> Args{Input, Env};
-      Value Result = Context.RunSync(Operator, Args);
-      --RunSyncDepth;
-      assert(OpGen == Context.OpGen && "OpGen should not unwind itself");
-
-      if (auto ResultErr = dyn_cast_or_null<schir::Error>(Result)) {
-        // Propagate the error to this instance.
-        SetError(ResultErr);
-      }
-      return toValue(Result);
+      return toValue(RunSyntax(cast<Syntax>(Operator), P));
     }
     default: {
       llvm_unreachable("expecting syntax");
@@ -1624,39 +1674,70 @@ mlir::Value OpGen::CallSyntax(Value Operator, Pair* P) {
   }
 }
 
+// Call a syntax with the current environment as its usage environment.
+Value OpGen::RunSyntax(Syntax* S, Pair* P) {
+  Context.setLoc(P->getSourceLocation());
+  std::array<schir::Value, 2> Args{P, Context.getEnvironment()};
+  return RunNested(S, Args);
+}
+
+// Run a function in a nested loop and propagate its error.
+Value OpGen::RunNested(Value Fn, ValueRefs Args) {
+  schir::OpGen* OpGen = Context.OpGen;
+  assert(OpGen == this && "sanity check");
+  ++RunSyncDepth;
+  Value Result = Context.RunSync(Fn, Args);
+  --RunSyncDepth;
+  assert(OpGen == Context.OpGen && "OpGen should not unwind itself");
+
+  if (auto ResultErr = dyn_cast_or_null<schir::Error>(Result)) {
+    // Propagate the error to this instance.
+    SetError(ResultErr);
+  }
+  return Result;
+}
+
+// Return the form that a syntax function expands to.
+Value OpGen::ExpandSyntax(Syntax* S, Pair* P) {
+  auto SyntaxStackPopper = pushSyntaxStack(Context, S, P);
+  llvm::SaveAndRestore IsExpandOnlyRAII(IsExpandOnly, true);
+  return RunSyntax(S, P);
+}
+
 mlir::Value OpGen::SetError(schir::Error* NewErr) {
   assert((!Err || Value(NewErr) == Err) && "no squashing errors");
+  bool IsNew = !Err;
   Err = NewErr;
   Context.setLoc(Err.getSourceLocation());
-  if (RunSyncDepth == 0) {
-    Context.Raise(Err);
-  } else if (RunSyncDepth == 1) {
-    Binding* SSB = SyntaxStack.getBinding(Context);
-    if (auto* P = dyn_cast<Pair>(SSB->getValue())) {
-      // Recreate the error appending the nodes of the syntax stack as notes.
-      llvm::SmallVector<Value, 12> Irrs;
-      for (Value SyntaxStackNode : Value(P)) {
-        if (auto* P2 = dyn_cast<Pair>(SyntaxStackNode)) {
-          // Add error as irritant (which is rendered as a note.)
-          Value SyntaxSym = P2->Cdr.car();
-          Symbol* S = unwrapIdentifier(P2->Cdr.car());
-          assert(S && "expecting syntax identifier");
-          Value Note = Context.CreateError(P2->Cdr.getSourceLocation(),
-                                           "while expanding syntax: {}",
-                                           Value(S));
-          Irrs.insert(Irrs.begin(), Note);
-        }
-        Value PrevIrrs = NewErr->getIrritants();
-        Irrs.insert(Irrs.begin(), PrevIrrs.begin(), PrevIrrs.end());
-      }
-      Err = Context.CreateError(Value(NewErr).getSourceLocation(),
-                                NewErr->getMessage(),
-                                Context.CreateList(Irrs));
+  Value Stack = SyntaxStack.getBinding(Context)->getValue();
+  bool IsInExpansion = llvm::any_of(Stack, [](Value Node) {
+      auto* P = dyn_cast<Pair>(Node);
+      return P && isa<Syntax>(P->Car);
+    });
+  if (IsNew && IsInExpansion) {
+    // Recreate the error appending the nodes of the syntax stack as notes.
+    llvm::SmallVector<Value, 12> Irrs;
+    for (Value SyntaxStackNode : Stack) {
+      auto* P = dyn_cast<Pair>(SyntaxStackNode);
+      if (!P)
+        continue;
+      Symbol* S = unwrapIdentifier(P->Cdr.car());
+      assert(S && "expecting syntax identifier");
+      Value Note = Context.CreateError(P->Cdr.getSourceLocation(),
+                                       "while expanding syntax: {}",
+                                       Value(S));
+      Irrs.insert(Irrs.begin(), Note);
     }
-    Context.Yield(Err);
-  } else {
-    Context.Yield(Err);
+    Value PrevIrrs = NewErr->getIrritants();
+    Irrs.insert(Irrs.begin(), PrevIrrs.begin(), PrevIrrs.end());
+    Err = Context.CreateError(Value(NewErr).getSourceLocation(),
+                              NewErr->getMessage(),
+                              Context.CreateList(Irrs));
   }
+  if (RunSyncDepth == 0)
+    Context.Raise(Err);
+  else
+    Context.Yield(Err);
   return Error();
 }
 
@@ -1910,13 +1991,27 @@ schir::EnvEntry OpGen::LookupEnv(Value Id, Value Env) {
   if (!Env)
     Env = Context.getEnvironment();
 
+  EnvEntry Result;
   // Find a binding of the syntax closure itself in Env, and then
   // look up its node in its closed environment.
-  if (auto* SC = dyn_cast<SyntaxClosure>(Id)) {
-    if (EnvEntry Result = Context.Lookup(SC, Env))
-      return Result;
-    return LookupEnv(SC->Node, SC->Env);
+  auto* SC = dyn_cast<SyntaxClosure>(Id);
+  if (SC)
+    Result = Context.Lookup(SC, Env);
+  if (SC && !Result) {
+    llvm::SaveAndRestore<llvm::SmallVectorImpl<BodyLookup>*>
+      BodyLookupsRAII(BodyLookups, nullptr);
+    Result = LookupEnv(SC->Node, SC->Env);
+  } else if (!SC) {
+    Result = Context.Lookup(Id, Env);
   }
 
-  return Context.Lookup(Id, Env);
+  if (BodyLookups)
+    BodyLookups->push_back({Id, Env, Result});
+  return Result;
+}
+
+void OpGen::RecordContextLookup(Value Id, EnvEntry Entry) {
+  if (BodyLookups)
+    BodyLookups->push_back({Id, Context.getEnvironment(), Entry,
+                            /*IsContextLookup=*/true});
 }

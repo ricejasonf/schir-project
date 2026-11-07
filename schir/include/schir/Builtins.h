@@ -42,6 +42,10 @@ extern schir::ExternFunction compile;
 extern schir::ExternFunction eval;
 extern schir::ExternFunction op_eval;
 extern schir::ExternFunction append;
+extern schir::ExternSyntax<> begin;
+extern schir::ExternSyntax<> include;
+extern schir::ExternBuiltinSyntax define;
+extern schir::ExternBuiltinSyntax define_syntax;
 }
 
 namespace schir::builtins {

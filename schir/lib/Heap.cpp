@@ -229,7 +229,7 @@ class CopyCollector : private ValueVisitor<CopyCollector, schir::Value> {
     for (schir::Value Capture : Syntax->getCaptures())
       Captures.push_back(Visit(Capture));
     void* Mem = Syntax::allocate(getAllocator(), FnData, Captures);
-    return new (Mem) schir::Syntax(FnData, Captures);
+    return new (Mem) schir::Syntax(FnData, Captures, Syntax->isExpandable());
   }
 
   // SyntaxClosure
