@@ -1,291 +1,223 @@
-; RUN: schir-scheme --module-path=%schir_module_path %s | FileCheck %s
+; RUN: schir-scheme --mode=repl --module-path=%schir_module_path %s | FileCheck %s
 (import (schir base))
 
 ; CHECK: (1 2 "yo")
-(write (list 1 2 "yo"))(newline)
+(list 1 2 "yo")
 
 (define nums (list 1 2 3))
 ; CHECK: (1 2 3)
-(write nums)(newline)
+nums
 ; CHECK-NEXT: (0 1 2 3)
-(write (cons 0 nums))(newline)
+(cons 0 nums)
 ; CHECK-NEXT: (1 2 3)
-(write nums)(newline)
+nums
 ; CHECK-NEXT: 1
-(write (car nums))(newline)
+(car nums)
 ; CHECK-NEXT: (2 3)
-(write (cdr nums))(newline)
+(cdr nums)
 ; CHECK-NEXT: (1 2 3)
-(write (append nums))(newline)
+(append nums)
 ; CHECK-NEXT: (1 2 3)
-(write (append nums '()))(newline)
+(append nums '())
 ; CHECK-NEXT: (1 2 3)
-(write (append '() nums))(newline)
+(append '() nums)
 ; CHECK-NEXT: (4 5 6 1 2 3)
-(write (append '(4 5 6) nums))(newline)
+(append '(4 5 6) nums)
 ; CHECK-NEXT: (1 2 3 4 5 6)
-(write (append nums '(4 5 6)))(newline)
+(append nums '(4 5 6))
 ; CHECK-NEXT: (0 1 2 3 4 5 6)
-(write (append '(0) nums '(4 5 6)))(newline)
+(append '(0) nums '(4 5 6))
 ; CHECK-NEXT: (0 1 2 3 4 5 6 1 2 3)
-(write (append '(0) nums '(4 5 6) nums))(newline)
+(append '(0) nums '(4 5 6) nums)
 ; CHECK-NEXT: (1 2 3)
-(write nums)(newline)
+nums
 
 ;; List Formals
 ; CHECK-NEXT: #t
-(write
-  ((lambda args
-     (null? args))))
-(newline)
+((lambda args
+   (null? args)))
 
 ; CHECK-NEXT: (1 2 4 5 6)
-(write
-  ((lambda args
-     args)
-   1 2 4 5 6))
-(newline)
+((lambda args
+   args)
+ 1 2 4 5 6)
 
 ; CHECK-NEXT: #(1 ())
-(write
-  ((lambda (arg . args)
-     #(arg args))
-   1))
-(newline)
+((lambda (arg . args)
+   #(arg args))
+ 1)
 
 ; CHECK-NEXT: #(1 2 ())
-(write
-  ((lambda (arg1 arg2 . args)
-     #(arg1 arg2 ()))
-   1 2))
-(newline)
+((lambda (arg1 arg2 . args)
+   #(arg1 arg2 ()))
+ 1 2)
 
 ; CHECK-NEXT: #(1 (2))
-(write
-  ((lambda (arg . args)
-     #(arg args))
-   1 2))
-(newline)
+((lambda (arg . args)
+   #(arg args))
+ 1 2)
 
 ; CHECK-NEXT: (foo bar 4 5 6)
-(write
-  ((lambda (foo . bar)
-     (append foo bar))
-   '(foo bar) 4 5 6))
-(newline)
+((lambda (foo . bar)
+   (append foo bar))
+ '(foo bar) 4 5 6)
 
 ; CHECK-NEXT: (foo bar 4 5 6)
-(write
-  ((lambda (foo . bar)
-     (append foo bar))
-   '(foo bar) 4 5 6))
-(newline)
+((lambda (foo . bar)
+   (append foo bar))
+ '(foo bar) 4 5 6)
 
 ; CHECK-NEXT: (foo bar 4 5 6)
-(write
-  ((lambda (foo bar . baz)
-     (append foo (list bar) baz))
-   '(foo bar) 4 5 6))
-(newline)
+((lambda (foo bar . baz)
+   (append foo (list bar) baz))
+ '(foo bar) 4 5 6)
 
 ; CHECK-NEXT: (0 1 2 3 4)
-(write
-  (list (length '())
-        (length '(9))
-        (length '(9 42))
-        (length '(9 (foo bar) 42))
-        (length '((foo bar) 42 9 moo))))
-(newline)
+(list (length '())
+      (length '(9))
+      (length '(9 42))
+      (length '(9 (foo bar) 42))
+      (length '((foo bar) 42 9 moo)))
 
 ; CHECK-NEXT: ()
-(write
-  (make-list 0))
-(newline)
+(make-list 0)
 
 ; CHECK-NEXT: (0)
-(write
-  (make-list 1 0))
-(newline)
+(make-list 1 0)
 
 ; CHECK-NEXT: (0 0 0 0 0)
-(write
-  (make-list 5 0))
-(newline)
+(make-list 5 0)
 
 ; CHECK-NEXT: (foo bar baz)
-(write
-  (let ((List (make-list 3)))
-    (list-set! List 0 'foo)
-    (list-set! List 1 'bar)
-    (list-set! List 2 'baz)
-    List
-    ))
-(newline)
+(let ((List (make-list 3)))
+  (list-set! List 0 'foo)
+  (list-set! List 1 'bar)
+  (list-set! List 2 'baz)
+  List
+  )
 
 ; CHECK-NEXT: (foo bar 0)
-(write
-  (let ((List (make-list 3 0)))
-    (list-set! List 0 'foo)
-    (list-set! List 1 'bar)
-    List
-    ))
-(newline)
+(let ((List (make-list 3 0)))
+  (list-set! List 0 'foo)
+  (list-set! List 1 'bar)
+  List
+  )
 
 ; CHECK-NEXT: (baz bar foo)
-(write
-  (let ((List (list 'foo 'bar 'baz)))
-    (list (list-ref List 2)
-          (list-ref List 1)
-          (list-ref List 0))))
-(newline)
+(let ((List (list 'foo 'bar 'baz)))
+  (list (list-ref List 2)
+        (list-ref List 1)
+        (list-ref List 0)))
 
 ; CHECK-NEXT: ()
-(write
-  (reverse '()))
-(newline)
+(reverse '())
 
 ; CHECK-NEXT: (1)
-(write
-  (reverse '(1)))
-(newline)
+(reverse '(1))
 
 ; CHECK-NEXT: (5 4 3 2 1)
-(write
-  (reverse '(1 2 3 4 5)))
-(newline)
+(reverse '(1 2 3 4 5))
 
 ; CHECK-NEXT: (baz uhh)
-(write
-  (cadr '((foo bar) (baz uhh))))
-(newline)
+(cadr '((foo bar) (baz uhh)))
 
 ; CHECK-NEXT: (#t #f #t #f)
-(write
-  (map <
-    '(0 1 1 3)
-    '(1 2 2 7)
-    '(2 0 3 3)))
-(newline)
+(map <
+  '(0 1 1 3)
+  '(1 2 2 7)
+  '(2 0 3 3))
 
 ; CHECK-NEXT: ()
-(write
-  (map + '() '() '()))
-(newline)
+(map + '() '() '())
 
 ; CHECK-NEXT: (5)
-(write
-  (map + '(5)))
-(newline)
+(map + '(5))
 
 ; CHECK-NEXT: (7)
-(write
-  (map + '(5) '(2)))
-(newline)
+(map + '(5) '(2))
 
 ; CHECK-NEXT: (#(a b c) #(d e f) #(g h i))
-(write
-  (map vector
-    '(a d g 'oof)
-    '(b e h)
-    '(c f i)))
-(newline)
+(map vector
+  '(a d g 'oof)
+  '(b e h)
+  '(c f i))
 
 ; CHECK-NEXT: (#(a b c) #(d e f) #(g h i))
-(write
-  (map vector
-    '(a d g)
-    '(b e h 'oof)
-    '(c f i)))
-(newline)
+(map vector
+  '(a d g)
+  '(b e h 'oof)
+  '(c f i))
 
 ; CHECK-NEXT: (#(a b c) #(d e f) #(g h i))
-(write
-  (map vector
-    '(a d g)
-    '(b e h)
-    '(c f i 'oof)))
-(newline)
+(map vector
+  '(a d g)
+  '(b e h)
+  '(c f i 'oof))
 
 ; CHECK-NEXT: (#((quote ())))
-(write
-  (map vector
-    '('())))
-(newline)
+(map vector
+  '('()))
 
 ; CHECK-NEXT: #t
-(write
-  (and
-    (every number? '())
-    (every number? '(1))
-    (every number? '(1 2 3 4))))
-(newline)
+(and
+  (every number? '())
+  (every number? '(1))
+  (every number? '(1 2 3 4)))
 
 ; CHECK-NEXT: #f
-(write
-  (or
-    (every number? '(foo))
-    (every number? '(1 foo))
-    (every number? '(1 2 3 #t 4))))
-(newline)
+(or
+  (every number? '(foo))
+  (every number? '(1 foo))
+  (every number? '(1 2 3 #t 4)))
 
 ; CHECK-NEXT: #f
-(write
-  (or
-    (any number? '())
-    (any number? '(foo))
-    (any number? '(foo #t bar baz))))
-(newline)
+(or
+  (any number? '())
+  (any number? '(foo))
+  (any number? '(foo #t bar baz)))
 
 ; CHECK-NEXT: #t
-(write
-  (and
-    (any number? '(1))
-    (any number? '(foo 1))
-    (any number? '(1 foo))
-    (any number? '(1 2 3 #t 4))))
-(newline)
+(and
+  (any number? '(1))
+  (any number? '(foo 1))
+  (any number? '(1 foo))
+  (any number? '(1 2 3 #t 4)))
 
 ; CHECK-NEXT: ((a b c) (b c) #f #f ((a) c) ("b" "c")
 ; CHECK-SAME:  (101 102) (101 102))
-(write
-  (list
-    (memq 'a '(a b c))
-    (memq 'b '(a b c))
-    (memq 'a '(b c d))
-    (memq (list 'a) '(b (a) c))
-    (member (list 'a)
-            '(b (a) c))
-    (member "b"
-            '(5 "b" "c"))
-    (memq 101 '(100 101 102))
-    (memv 101 '(100 101 102))
-  ))
-(newline)
+(list
+  (memq 'a '(a b c))
+  (memq 'b '(a b c))
+  (memq 'a '(b c d))
+  (memq (list 'a) '(b (a) c))
+  (member (list 'a)
+          '(b (a) c))
+  (member "b"
+          '(5 "b" "c"))
+  (memq 101 '(100 101 102))
+  (memv 101 '(100 101 102))
+)
 
 ; CHECK: ((b 2) (a 1) (c 3) #f #f ((a)) (2 4) (5 7))
-(write
-  (let ()
-    (define e '((a 1) (b 2) (c 3)))
-    (list
-      (assq 'b e)
-      (assq 'a e)
-      (assq 'c e)
-      (assq 'd e)
-      (assq (list 'a) '(((a)) ((b)) ((c))))
-      (assoc (list 'a) '(((a)) ((b)) ((c))))
-      (assoc 2.0 '((1 1) (2 4) (3 9)) >=)
-      (assv 5 '((2 3) (5 7) (11 13)))
-      )))
-(newline)
+(let ()
+  (define e '((a 1) (b 2) (c 3)))
+  (list
+    (assq 'b e)
+    (assq 'a e)
+    (assq 'c e)
+    (assq 'd e)
+    (assq (list 'a) '(((a)) ((b)) ((c))))
+    (assoc (list 'a) '(((a)) ((b)) ((c))))
+    (assoc 2.0 '((1 1) (2 4) (3 9)) >=)
+    (assv 5 '((2 3) (5 7) (11 13)))
+    ))
 
 ; CHECK-NEXT: (1 2 3 4 (5) (6) (7) (8))
-(write
-  (list (caaar '(((1))))
-        (caadr '(0 (2)))
-        (cadar '((0 3)))
-        (caddr '(0 0 4))
-        (cdaar '(((0 5))))
-        (cdadr '(0 (0 6)))
-        (cddar '((0 0 7)))
-        (cdddr '(0 0 0 8))))
-(newline)
+(list (caaar '(((1))))
+      (caadr '(0 (2)))
+      (cadar '((0 3)))
+      (caddr '(0 0 4))
+      (cdaar '(((0 5))))
+      (cdadr '(0 (0 6)))
+      (cddar '((0 0 7)))
+      (cdddr '(0 0 0 8)))

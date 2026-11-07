@@ -227,6 +227,7 @@ public:
                     schir::Value LibraryDecls);
   void FinishLibrary();
   void VisitTopLevel(Value V);
+  void ContinueCommandResult(mlir::Value Result);
   void FinishTopLevelOp();
   void VisitTopLevelSequence(Value List);
   void SetTopLevelHandler(Value OnTopLevel) {

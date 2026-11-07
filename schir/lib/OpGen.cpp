@@ -409,13 +409,26 @@ void OpGen::VisitTopLevel(Value V) {
   Context.PushCont([](schir::Context& C, ValueRefs) {
     schir::Value V = C.getCapture(0);
     schir::OpGen* OpGen = C.OpGen;  // For debug only.
-    C.OpGen->Visit(V);
+    mlir::Value Result = C.OpGen->Visit(V);
     assert(OpGen == C.OpGen && "OpGen should not unwind itself.");
     if (C.OpGen->CheckError())
       return;
+    C.OpGen->ContinueCommandResult(Result);
     C.Cont();
   }, CaptureList{V});
   Context.Cont();
+}
+
+// Continue a command with the value of its expression.
+void OpGen::ContinueCommandResult(mlir::Value Result) {
+  if (!Result || !isa_and_nonnull<CommandOp>(TopLevelOp))
+    return;
+  mlir::Block* Block = Builder.getInsertionBlock();
+  if (!Block || (!Block->empty() &&
+                 Block->back().hasTrait<mlir::OpTrait::IsTerminator>()))
+    return;
+  Result = LocalizeValue(Result);
+  create<ContOp>(schir::SourceLocation(), Result);
 }
 
 void OpGen::FinishTopLevelOp() {

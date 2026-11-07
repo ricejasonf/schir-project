@@ -44,7 +44,8 @@ static cl::opt<ExecutionMode> InputMode(
   cl::values(
     cl::OptionEnumValue{"repl",
                         (int)ExecutionMode::repl,
-                        "read eval and print loop (not interactive yet)"},
+                        "read eval and print loop continuing after errors "
+                        "(not interactive yet)"},
     cl::OptionEnumValue{"read",
                         (int)ExecutionMode::read,
                         "just read and print"},
@@ -72,13 +73,82 @@ static cl::list<std::string> InputLoadModules(
   "load-module",
   cl::desc("Load every module in a prebuilt module file."));
 
+static void PrintError(llvm::StringRef Label, schir::Context& C,
+                       schir::Error* Error) {
+  auto SL = C.getFullSourceLocation(Error);
+  llvm::StringRef Err = Error->getMessage().getStringRef();
+  if (SL.isValid()) {
+    schir::SourceLineContext LineContext = SL.getLineContext();
+    llvm::errs() << LineContext.FileName
+                 << ':' << LineContext.LineNumber
+                 << ':' << LineContext.Column << ": "
+                 << Label << ": " << Err << '\n'
+                 << LineContext.LineRange << '\n';
+    // Display the caret pointing to the point of interest.
+    for (unsigned i = 1; i < LineContext.Column; i++) {
+      llvm::errs() << ' ';
+    }
+    llvm::errs() << "^\n";
+  } else {
+    llvm::errs() << Label << ": " << Err << "\n\n";
+  }
+}
+
+static bool HasErrors = false;
+
+// Print an uncaught exception object with its notes.
+static void ReportError(schir::Context& C, schir::Value Obj) {
+  HasErrors = true;
+  // Keep printed results ordered before the error.
+  llvm::outs().flush();
+  auto* Error = dyn_cast<schir::Error>(Obj);
+  if (Error) {
+    PrintError("error", C, Error);
+    for (schir::Value Irr : Error->getIrritants()) {
+      if (auto* Note = dyn_cast<schir::Error>(Irr))
+        PrintError("note", C, Note);
+    }
+  } else {
+    llvm::errs() << "uncaught exception of non-error object:";
+    Obj.dump();
+    llvm::errs() << "\n\n";
+  }
+}
+
+// Evaluate a command and write its results unless an error occurs.
+static void EvalAndPrint(schir::Context& C, schir::Value Val,
+                         schir::Value Env) {
+  // Capture the continuation of the command to escape to on error.
+  C.CallCC(C.CreateLambda([](schir::Context& C, schir::ValueRefs Args) {
+    schir::Value Handler = C.CreateLambda(
+      [](schir::Context& C, schir::ValueRefs Args) {
+        ReportError(C, Args.front());
+        C.Apply(C.getCapture(0), schir::Value(schir::Undefined()));
+      }, schir::CaptureList{Args[0]});
+    schir::Value Thunk = C.CreateLambda(
+      [](schir::Context& C, schir::ValueRefs) {
+        C.PushCont([](schir::Context& C, schir::ValueRefs Results) {
+          for (schir::Value Result : Results) {
+            if (isa<schir::Undefined>(Result))
+              continue;
+            schir::write(llvm::outs(), Result);
+            llvm::outs() << '\n';
+          }
+          C.Cont();
+        });
+        schir::eval(C, C.getCapture(0), C.getCapture(1));
+      }, schir::CaptureList{C.getCapture(0), C.getCapture(1)});
+    C.WithExceptionHandler(Handler, Thunk);
+  }, schir::CaptureList{Val, Env}));
+}
+
 void ProcessTopLevelExpr(schir::Context& Context, schir::ValueRefs Values) {
   assert(Values.size() == 2 && "expecting 2 arguments");
   schir::Value Val = Values[0];
   schir::Value Env = Values[1];
   switch (InputMode.getValue()) {
   case ExecutionMode::repl:
-    schir::eval(Context, Val, Env);
+    EvalAndPrint(Context, Val, Env);
     return;
   case ExecutionMode::mlir:
     schir::compile(Context, Val, Env, schir::Undefined());
@@ -113,27 +183,6 @@ void SetPrebuildModulePath(schir::SchirScheme& SchirScheme) {
   SchirScheme.SetPrebuildModulePath(AbsPath, !InputNoPrebuildModule);
 }
 
-static void PrintError(llvm::StringRef Label, schir::Context& C,
-                       schir::Error* Error) {
-  auto SL = C.getFullSourceLocation(Error);
-  llvm::StringRef Err = Error->getMessage().getStringRef();
-  if (SL.isValid()) {
-    schir::SourceLineContext LineContext = SL.getLineContext();
-    llvm::errs() << LineContext.FileName
-                 << ':' << LineContext.LineNumber
-                 << ':' << LineContext.Column << ": "
-                 << Label << ": " << Err << '\n'
-                 << LineContext.LineRange << '\n';
-    // Display the caret pointing to the point of interest.
-    for (unsigned i = 1; i < LineContext.Column; i++) {
-      llvm::errs() << ' ';
-    }
-    llvm::errs() << "^\n";
-  } else {
-    llvm::errs() << Label << ": " << Err << "\n\n";
-  }
-}
-
 int main(int argc, char const** argv) {
   // Disable LLVM IO sandboxing.
   auto SandboxDisableRAII = llvm::sys::sandbox::scopedDisable();
@@ -156,22 +205,9 @@ int main(int argc, char const** argv) {
   }
 
   // Create error handler.
-  bool HasErrors = false;
   SchirScheme.RegisterErrorHandler(
-    [&HasErrors](schir::Context& C, schir::ValueRefs Args) {
-      HasErrors = true;
-      auto* Error = dyn_cast<schir::Error>(Args.front());
-      if (Error) {
-        PrintError("error", C, Error);
-        for (schir::Value Irr : Error->getIrritants()) {
-          if (auto* Note = dyn_cast<schir::Error>(Irr))
-            PrintError("note", C, Note);
-        }
-      } else {
-        llvm::errs() << "uncaught exception of non-error object:";
-        Args.front().dump();
-        llvm::errs() << "\n\n";
-      }
+    [](schir::Context& C, schir::ValueRefs Args) {
+      ReportError(C, Args.front());
       C.Cont();
     });
 

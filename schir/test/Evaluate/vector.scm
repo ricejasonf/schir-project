@@ -1,100 +1,83 @@
-; RUN: schir-scheme --module-path=%schir_module_path %s | FileCheck %s
+; RUN: schir-scheme --mode=repl --module-path=%schir_module_path %s | FileCheck %s
 (import (schir base))
 
 (define (id x) x)
 
 ; CHECK: #()
-(write #())(newline)
+#()
 
 ; CHECK: #(5)
-(write #(5))(newline)
+#(5)
 
 ; CHECK: #(42)
-(write #((id 42)))(newline)
+#((id 42))
 
 ; CHECK: #(1 2 "yo" "moo")
-(write #(1 2 "yo" (id "moo")))(newline)
+#(1 2 "yo" (id "moo"))
 
 ; CHECK: #(#(1 2 "yo" "moo"))
-(write #(#(1 2 "yo" (id "moo"))))(newline)
+#(#(1 2 "yo" (id "moo")))
 
 ; CHECK: #()
-(write (vector))(newline)
+(vector)
 
 ; CHECK: #(5)
-(write (vector 5))(newline)
+(vector 5)
 
 ; CHECK: #(42)
-(write (vector (id 42)))(newline)
+(vector (id 42))
 
 ; CHECK: #(1 2 "yo" "moo")
-(write (vector 1 2 "yo" (id "moo")))(newline)
+(vector 1 2 "yo" (id "moo"))
 
 ; CHECK: #(#(1 2 "yo" "moo"))
-(write (vector (vector 1 2 "yo" (id "moo"))))(newline)
+(vector (vector 1 2 "yo" (id "moo")))
 
 ; CHECK-NEXT: #()
-(write
-  (make-vector 0))
-(newline)
+(make-vector 0)
 
 ; CHECK-NEXT: #(0)
-(write
-  (make-vector 1 0))
-(newline)
+(make-vector 1 0)
 
 ; CHECK-NEXT: #(0 0 0 0 0)
-(write
-  (make-vector 5 0))
-(newline)
+(make-vector 5 0)
 
 ; CHECK-NEXT: #(foo bar baz)
-(write
-  (let ((Vec (make-vector 3)))
-    (vector-set! Vec 0 'foo)
-    (vector-set! Vec 1 'bar)
-    (vector-set! Vec 2 'baz)
-    Vec
-    ))
-(newline)
+(let ((Vec (make-vector 3)))
+  (vector-set! Vec 0 'foo)
+  (vector-set! Vec 1 'bar)
+  (vector-set! Vec 2 'baz)
+  Vec
+  )
 
 ; CHECK-NEXT: #(foo bar 0)
-(write
-  (let ((Vec (make-vector 3 0)))
-    (vector-set! Vec 0 'foo)
-    (vector-set! Vec 1 'bar)
-    Vec
-    ))
-(newline)
+(let ((Vec (make-vector 3 0)))
+  (vector-set! Vec 0 'foo)
+  (vector-set! Vec 1 'bar)
+  Vec
+  )
 
-;CHECK-NEXT: #(0 1 2 3 4)
-(write
-  (vector (vector-length #())
-          (vector-length #(1))
-          (vector-length #(1 2))
-          (vector-length #(1 2 3))
-          (vector-length #(1 2 3 4))
-          ))
-(newline)
+; CHECK-NEXT: #(0 1 2 3 4)
+(vector (vector-length #())
+        (vector-length #(1))
+        (vector-length #(1 2))
+        (vector-length #(1 2 3))
+        (vector-length #(1 2 3 4))
+        )
 
-;CHECK-NEXT: (baz bar foo)
-(write
-  (let ((Vec (vector 'foo 'bar 'baz)))
-    (list (vector-ref Vec 2)
-          (vector-ref Vec 1)
-          (vector-ref Vec 0))))
-(newline)
+; CHECK-NEXT: (baz bar foo)
+(let ((Vec (vector 'foo 'bar 'baz)))
+  (list (vector-ref Vec 2)
+        (vector-ref Vec 1)
+        (vector-ref Vec 0)))
 
 ; CHECK-NEXT: ((foo bar baz) (bar baz) (bar) ())
-(write
-  (let ((Vec (vector 'foo 'bar 'baz)))
-    (list (vector->list Vec)
-          (vector->list Vec 1)
-          (vector->list Vec 1 2)
-          (vector->list (vector)))))
-(newline)
+(let ((Vec (vector 'foo 'bar 'baz)))
+  (list (vector->list Vec)
+        (vector->list Vec 1)
+        (vector->list Vec 1 2)
+        (vector->list (vector))))
 
 ; CHECK-NEXT: (#(1 2 3) #())
-(write (list (list->vector '(1 2 3))
-             (list->vector '())))
-(newline)
+(list (list->vector '(1 2 3))
+      (list->vector '()))
