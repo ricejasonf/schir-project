@@ -255,6 +255,8 @@ public:
       WriteExpr(Op);
     } else if (auto Op = V.getDefiningOp<FuncNameOp>()) {
       WriteExpr(Op);
+    } else if (auto Op = V.getDefiningOp<TagOp>()) {
+      WriteExpr(Op);
     } else {
       if (IsFwd) {
         OS << "static_cast<decltype(";
@@ -282,6 +284,12 @@ public:
   // Special function to denote that we already checked for multiple uses.
   void WriteLastUseForwardedExpr(mlir::Value V) {
     WriteExpr(V, /*IsFwd=*/true);
+  }
+
+  void WriteExpr(TagOp Op) {
+    auto LocScope = MakeLocRAII(Op.getLoc());
+    WriteCppTypename(Op, Op.getResult().getType());
+    OS << "{}";
   }
 
   void WriteExpr(ConstexprOp Op) {
@@ -474,7 +482,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<ConstructOp>(Op))    return Visit(cast<ConstructOp>(Op));
     else if (isa<ScopeOp>(Op))
       return VisitRegion(cast<ScopeOp>(Op).getBody());
-    else if (isa<ConstexprOp, LiteralOp>(Op)) return;
+    else if (isa<ConstexprOp, LiteralOp, TagOp>(Op)) return;
     else if (isa<UnitOp>(Op)) return;
     else if (isa<GetParentOp>(Op))
       return SetError("nbdl.get_parent is not resolved", Op);

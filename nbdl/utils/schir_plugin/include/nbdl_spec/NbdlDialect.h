@@ -86,6 +86,12 @@ mlir::Value lookThroughLoopArgs(mlir::Value V);
 // whose element it matches) or null if a key type is not yet inferred.
 mlir::Value lookThroughStoreCompose(mlir::Value Store, mlir::Value Key);
 
+// Indicate if Prefix may resolve to the prefix of P.
+bool isPathPrefix(PathType Prefix, PathType P);
+
+// Indicate if A may resolve to a prefix of B or vice versa.
+bool mayAliasPaths(PathType A, PathType B);
+
 // Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);
 

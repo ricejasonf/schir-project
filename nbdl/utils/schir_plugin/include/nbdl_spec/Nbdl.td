@@ -97,9 +97,12 @@ def Nbdl_Store : TypeDef<Nbdl_Dialect, "Store", []> {
 def Nbdl_Tag : TypeDef<Nbdl_Dialect, "Tag", []> {
   let mnemonic = "tag";
   let description = [{
-    An empty type that only carries information
-    at compile-time is called a tag type.
+    Represent a value of a tag type which is an empty type that only
+    carries information at compile-time (e.g. a C++ type with a default
+    constructor and no state.)
   }];
+  let parameters = (ins "mlir::TypeAttr":$type);
+  let assemblyFormat = "`<` $type `>`";
 }
 
 def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "MemberName"> {
@@ -170,6 +173,21 @@ def Nbdl_String : TypeDef<Nbdl_Dialect, "String"> {
 
     For C++ targets, this maps to std::string_view.
   }];
+}
+
+def Nbdl_Path : TypeDef<Nbdl_Dialect, "Path"> {
+  let mnemonic = "path";
+  let description = [{
+    Represent a static path to a node of the state tree of a context.
+
+    Each key is one of:
+      - a !nbdl.member_name,
+      - a !nbdl.tag whose value is the key,
+      - a nested !nbdl.path whose value at runtime is the key.
+  }];
+  let parameters = (ins OptionalArrayRefParameter<"mlir::TypeAttr">:$keys);
+  let assemblyFormat = "(`<` $keys^ `>`)?";
+  let genVerifyDecl = 1;
 }
 
 def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
@@ -306,6 +324,13 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
   }];
   let arguments = (ins StrAttr:$expr);
   let results = (outs AnyType:$result);
+}
+
+def Nbdl_TagOp : Nbdl_Op<"tag", [Pure]> {
+  let description = [{
+    Create the value of a tag type for use as a key.
+  }];
+  let results = (outs Nbdl_Tag:$result);
 }
 
 def Nbdl_MemberNameOp : Nbdl_Op<"member_name", [Pure]> {

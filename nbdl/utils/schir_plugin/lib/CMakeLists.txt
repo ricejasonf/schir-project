@@ -5,7 +5,8 @@ add_library(Nbdl MODULE Nbdl.cpp
                         Nbdl/Dialect.cpp
                         Nbdl/Passes.cpp
                         Nbdl/Lower.cpp
-                        Nbdl/CAdapter.cpp)
+                        Nbdl/CAdapter.cpp
+                        Nbdl/Path.cpp)
 target_compile_options(Nbdl PRIVATE -fno-rtti -fno-exceptions)
 add_dependencies(Nbdl NbdlOpsIncGen NbdlPassesIncGen SchirCommonIncGen)
 target_link_libraries(Nbdl PRIVATE SchirCommon)

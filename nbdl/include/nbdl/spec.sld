@@ -47,6 +47,10 @@
       (load-builtin "nbdl_spec_struct_member_types"))
     (define verify-recursive-visits
       (load-builtin "nbdl_spec_verify_recursive_visits"))
+    (define nbdl_spec_tag_type
+      (load-builtin "nbdl_spec_tag_type"))
+    (define tag-type?
+      (load-builtin "nbdl_spec_is_tag_type"))
     (define member-name-type
       (load-builtin "nbdl_spec_member_name_type"))
     (define func-name-type
@@ -72,6 +76,18 @@
         ((named-struct? T)
          (named-struct->type T (if (pair? MaybeLoc) (car MaybeLoc) #f)))
         (else T)))
+
+    ;; Create the !nbdl.tag of the type of a C++ constexpr value
+    ;; or of an mlir type.
+    (define (tag Value)
+      (nbdl_spec_tag_type
+        (if (or (symbol? Value) (string? Value))
+          (!cpp (string-append "std::remove_cvref_t<decltype("
+                               (if (symbol? Value)
+                                 (symbol->string Value)
+                                 Value)
+                               ")>"))
+          Value)))
 
     ;; Create a !nbdl.store type where string-likes are lifted to C++ types.
     (define (!nbdl.store . Alts)
@@ -421,7 +437,6 @@
     (define f32 (type "f32"))
 
     ;; Not used types
-    ; (define !nbdl.tag (type "!nbdl.tag")) ; Not used.
     ; (define !nbdl.empty (type "!nbdl.empty"))
 
     ;; Define a thunk that should receive a location and callback
@@ -489,7 +504,18 @@
         ((string? Arg)
           (build-literal Loc (string-attr Arg)
                          (!cpp 'std::string_view)))
+        ((tag-type? Arg)
+          (build-tag Loc Arg))
         (else Arg)))
+
+    ;; Create the value of a !nbdl.tag.
+    (define (build-tag Loc TagType)
+      (result
+        (create-op "nbdl.tag"
+          (loc: Loc)
+          (operands:)
+          (attributes:)
+          (result-types: TagType))))
 
     ;; Maybe lift to a LiteralOp, ConstexprOp, or MemberNameOp.
     (define (maybe-build-expr+ Loc Arg)
@@ -506,7 +532,7 @@
          (Fn Expr))
         ((expr? Expr)
          (%invoke-expr Expr Fn))
-        ((path? Expr)
+        ((path-spec? Expr)
          (%match-path-spec Expr Fn))
         ((named-fn? Expr)
          (Fn (build-func-name Expr)))
@@ -948,49 +974,43 @@
         ; Procedures pass through (via expr+).
         ((procedure? PathSpec)
          PathSpec)
-        ((and (pair? PathSpec)
-              (eqv? '%nbdl-path (car PathSpec)))
-         (let ((RootStore (cadr PathSpec))
-               (PathNodes (cddr PathSpec)))
+        ((path-spec? PathSpec)
+         (let ((RootStore (path-spec-root PathSpec))
+               (Nodes (path-spec-nodes PathSpec))
+               (Loc (%path-first-loc PathSpec)))
           (if (expr? RootStore)
             (%invoke-expr RootStore
               (lambda (Root)
-                (%match-path-root Root PathNodes Fn)))
-            (%match-path-root RootStore PathNodes Fn))))
+                (%match-path-root Root Nodes Loc Fn)))
+            (%match-path-root RootStore Nodes Loc Fn))))
         (else (error "expecting nbdl pathspec: {}" PathSpec))))
 
-    ;; Match the PathNodes of a path starting at its root.
-    (define (%match-path-root RootStore PathNodes Fn)
+    ;; Match the Nodes of a path starting at its root.
+    (define (%match-path-root RootStore Nodes Loc Fn)
       (when (and (value? RootStore)
                  (not (store-value? RootStore)))
-        (error-with-loc (source-loc PathNodes)
+        (error-with-loc Loc
                         "expecting a store as the root of a path (see lift-store)"))
       (cond
         ((and (value? RootStore)
-              (pair? PathNodes))
-          (%match-path-spec-rec RootStore PathNodes Fn))
+              (pair? Nodes))
+          (%match-path-spec-rec RootStore Nodes Fn))
         ((value? RootStore)
           (Fn RootStore))
         (else
           (error "expecting a root store object in path: {}" RootStore))))
 
-    (define (%match-path-spec-rec Store PathNodes Fn)
-      (let Loop ((Loc (source-loc PathNodes))
-                 (PathNode (car PathNodes))
-                 (Rest (cdr PathNodes))
-                 (CurStore Store))
-        (define (NextFn StoreResult)
-          (cond
-            ((pair? Rest)
-             (Loop (source-loc Rest)
-                   (car Rest)
-                   (cdr Rest)
-                   StoreResult))
-            ; Finish by match with unit-key to "unwrap" store.
-            ((null? Rest)
-             (%match-unit Loc StoreResult Fn))
-            (else (error "expecting proper list"))))
-        (%match-path-node CurStore Loc PathNode NextFn)))
+    ;; Match each of Nodes as (PathNode . Loc) starting at the store Root.
+    (define (%match-path-spec-rec Root Nodes Fn)
+      (let Loop ((CurStore Root)
+                 (Nodes Nodes))
+        (define Loc (cdar Nodes))
+        (%match-path-node CurStore Loc (caar Nodes)
+          (lambda (StoreResult)
+            (if (pair? (cdr Nodes))
+              (Loop StoreResult (cdr Nodes))
+              ; Finish by match with unit-key to "unwrap" store.
+              (%match-unit Loc StoreResult Fn))))))
 
     ;; Match a store with unit-key.
     (define (%match-unit Loc Store Fn)
@@ -1010,6 +1030,7 @@
       (and (symbol? PathNode)
            (eq? (string-ref PathNode 0) #\.)))
 
+    ;; Match the key PathNode on Store.
     (define (%match-path-node Store Loc PathNode Fn)
       (close-previous-scope)
       (let ((PathNode
@@ -1035,7 +1056,7 @@
           ((value? PathNode)
             (%match-key Loc Store PathNode Fn))
           ; Match a nested PathSpec then continue.
-          ((path? PathNode)
+          ((path-spec? PathNode)
             (%match-path-spec PathNode
               (lambda (KeyVal)
                 (%match-path-node Store Loc KeyVal Fn))))
@@ -1064,24 +1085,40 @@
                        (result-types: !nbdl.unit))))
         (build-discard Loc Result)))
 
-    (define (path? obj)
-      (and (pair? obj)
-           (eqv? (car obj) '%nbdl-path)))
+    ;; Denote a path of nodes from Root where Root is a store
+    ;; (an mlir.value or expr).
+    ;; Nodes is a list of (PathNode . Loc).
+    (define-record-type <path-spec>
+      (make-path-spec Root Nodes Loc)
+      path-spec?
+      (Root path-spec-root)
+      (Nodes path-spec-nodes)
+      (Loc path-spec-loc))
+
+    ;; Get the location of the first node of Path or of Path.
+    (define (%path-first-loc Path)
+      (if (pair? (path-spec-nodes Path))
+        (cdar (path-spec-nodes Path))
+        (path-spec-loc Path)))
+
+    ;; Create a path appending Nodes to Path which is a store or a path.
+    (define (%get Loc Path Nodes)
+      (cond
+        ((or (value? Path) (expr? Path))
+         (make-path-spec Path Nodes Loc))
+        ((path-spec? Path)
+         (make-path-spec (path-spec-root Path)
+                         (append (path-spec-nodes Path) Nodes)
+                         (path-spec-loc Path)))
+        (else (error-with-loc Loc "invalid path object: {}" Path))))
 
     ;; Create a new path appending keys to the input path.
     (define-syntax get
       (syntax-rules ()
-        ((get path key ...)
-         (cond
-          ((or (value? path) (expr? path))
-            (append (list '%nbdl-path path)
-                    (source-cons key '() (syntax-source-loc key)) ...))
-          ((path? path)
-            (append path
-                    (source-cons key '() (syntax-source-loc key)) ...))
-          (else (error "invalid path object: {}" path))
-          ))
-        ))
+        ((get Path Key ...)
+         (%get (syntax-source-loc Path)
+               Path
+               (list (cons Key (syntax-source-loc Key)) ...)))))
 
     ;; Apply a "Store" function to a list of Store operands.
     ;; - This will have a return value that is not necessarily stored.
@@ -1834,6 +1871,15 @@
   ) ; end of... begin
   (export
     define-store
+    make-path-spec
+    path-spec?
+    path-spec-root
+    path-spec-nodes
+    path-spec-loc
+    tag
+    tag-type?
+    member-name-literal?
+    member-name-type
     define-struct
     store-compose
     variant
