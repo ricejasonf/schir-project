@@ -222,6 +222,27 @@ mlir::FunctionOpInterface nbdl_spec::ReturnOp::getReturnedFunction() {
   return (*this)->getParentOfType<mlir::FunctionOpInterface>();
 }
 
+llvm::LogicalResult nbdl_spec::MemberNameOp::verify() {
+  if (getResult().getType().getName() != getName())
+    return emitOpError("expecting the result type to have the name ")
+      << getName();
+  return mlir::success();
+}
+
+llvm::LogicalResult nbdl_spec::FuncNameOp::verify() {
+  if (getResult().getType().getName() != getNameAttr())
+    return emitOpError("expecting the result type to have the name ")
+      << getNameAttr();
+  return mlir::success();
+}
+
+llvm::LogicalResult nbdl_spec::StructNameOp::verify() {
+  if (getResult().getType().getName() != getNameAttr())
+    return emitOpError("expecting the result type to have the name ")
+      << getNameAttr();
+  return mlir::success();
+}
+
 llvm::LogicalResult nbdl_spec::LiftStoreOp::verify() {
   mlir::Type ValueT = getValue().getType();
   if (llvm::isa<nbdl_spec::StoreType>(ValueT))

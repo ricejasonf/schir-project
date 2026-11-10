@@ -123,7 +123,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-LABEL: @test_infer_visit_result(
 ; // CHECK: [[MEMBER:%[0-9]+]] = "nbdl.member_name"() <{name = "get_float"}>
 ; // CHECK: "nbdl.visit"([[MEMBER]],
-; // CHECK-SAME: : (!nbdl.member_name, !nbdl.store<!nbdl.cpp<"foo::not_a_store">>)
+; // CHECK-SAME: : (!nbdl.member_name<"get_float">, !nbdl.store<!nbdl.cpp<"foo::not_a_store">>)
 ; // CHECK-SAME: -> !nbdl.cpp<"float">
 (define-match-fn test_infer_visit_result (Store Fn)
   (match (get Store)

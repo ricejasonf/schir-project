@@ -47,6 +47,14 @@
       (load-builtin "nbdl_spec_struct_member_types"))
     (define verify-recursive-visits
       (load-builtin "nbdl_spec_verify_recursive_visits"))
+    (define member-name-type
+      (load-builtin "nbdl_spec_member_name_type"))
+    (define func-name-type
+      (load-builtin "nbdl_spec_func_name_type"))
+    (define struct-name-type
+      (load-builtin "nbdl_spec_struct_name_type"))
+    (define member-name?
+      (load-builtin "nbdl_spec_is_member_name"))
 
     ;; Create a !nbdl.cpp_alias type with a C++ typename as written.
     ;; The flatten pass replaces it with a !nbdl.cpp type
@@ -406,9 +414,6 @@
                         Name))
       (%create-top-level-op Loc (%match-fn-name Name) Thunk))
 
-    (define !nbdl.member_name (type "!nbdl.member_name"))
-    (define !nbdl.func_name (type "!nbdl.func_name"))
-    (define !nbdl.struct_name (type "!nbdl.struct_name"))
     (define !nbdl.closure (type "!nbdl.closure"))
     (define !nbdl.unit (type "!nbdl.unit"))
     (define !nbdl.unknown (type "!nbdl.unknown"))
@@ -586,7 +591,7 @@
           (loc: Loc)
           (operands:)
           (attributes: ("name" (string-attr StrippedName)))
-          (result-types: !nbdl.member_name))))
+          (result-types: (member-name-type StrippedName)))))
 
     (define (build-cont ResultArg)
       (create-op "nbdl.cont"
@@ -871,14 +876,14 @@
         (else (nbdl_spec_struct_type SymName))))
 
     (define (build-struct-name Loc NamedStruct)
+      (define Name (named-struct-sym-name NamedStruct))
       (result (create-op
                 "nbdl.struct_name"
                 (loc: Loc)
                 (operands:)
                 (attributes:
-                  ("name" (flat-symbolref-attr
-                            (named-struct-sym-name NamedStruct))))
-                (result-types: !nbdl.struct_name))))
+                  ("name" (flat-symbolref-attr Name)))
+                (result-types: (struct-name-type Name)))))
 
     ;; A 'named-fn' can be used in an expr+
     ;; where FnOp is a func.func or nbdl.define_match_fn.
@@ -906,7 +911,7 @@
                 (operands:)
                 (attributes:
                   ("name" (flat-symbolref-attr Name)))
-                (result-types: !nbdl.func_name))))
+                (result-types: (func-name-type Name)))))
 
     ;; Transform each element in a list calling ParamsFn with the results.
     ;; MapFn must take a single argument and a callback.
@@ -1019,7 +1024,7 @@
           ; Member name is the only key kind where nbdl.get is required
           ; but we have to apply the identity first to unwrap the store.
           ; (Which means the member name is applied to all alternatives.)
-          ((value? !nbdl.member_name PathNode)
+          ((member-name? PathNode)
             (%match-unit Loc Store
               (lambda (MatchedStore)
                 (define MemberStore

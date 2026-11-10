@@ -107,10 +107,12 @@ def Nbdl_MemberName : TypeDef<Nbdl_Dialect, "MemberName"> {
   let description = [{
     Represent member name for use as a key to denote access
     to a member of a struct or for use as a visitor to denote
-    a member function call.
+    a member function call. The name has no leading dot.
 
     For C++ targets, this should be a valid C++ identifier.
   }];
+  let parameters = (ins StringRefParameter<>:$name);
+  let assemblyFormat = "`<` $name `>`";
 }
 
 def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
@@ -119,6 +121,8 @@ def Nbdl_FuncName : TypeDef<Nbdl_Dialect, "FuncName"> {
     Represent the type of a result of lifting the symbol
     name of a function (ie a FuncOp or DefineMatchFnOp) to a value.
   }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$name);
+  let assemblyFormat = "`<` $name `>`";
 }
 
 def Nbdl_Struct : TypeDef<Nbdl_Dialect, "Struct"> {
@@ -137,6 +141,8 @@ def Nbdl_StructName : TypeDef<Nbdl_Dialect, "StructName"> {
     Represent the type of a result of lifting the symbol
     name of a struct (ie a DefineStructOp) to a value.
   }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$name);
+  let assemblyFormat = "`<` $name `>`";
 }
 
 def Nbdl_Tuple : TypeDef<Nbdl_Dialect, "Tuple"> {
@@ -302,13 +308,14 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
   let results = (outs AnyType:$result);
 }
 
-def Nbdl_MemberNameOp : Nbdl_Op<"member_name", []> {
+def Nbdl_MemberNameOp : Nbdl_Op<"member_name", [Pure]> {
   let description = [{
     Denote a member name as a store-like value.
   }];
 
   let arguments = (ins StrAttr:$name);
   let results = (outs Nbdl_MemberName:$result);
+  let hasVerifier = 1;
 }
 
 def Nbdl_FuncNameOp : Nbdl_Op<"func_name", [Pure]> {
@@ -319,6 +326,7 @@ def Nbdl_FuncNameOp : Nbdl_Op<"func_name", [Pure]> {
 
   let arguments = (ins FlatSymbolRefAttr:$name);
   let results = (outs Nbdl_FuncName:$result);
+  let hasVerifier = 1;
 }
 
 def Nbdl_StructNameOp : Nbdl_Op<"struct_name", [Pure]> {
@@ -329,6 +337,7 @@ def Nbdl_StructNameOp : Nbdl_Op<"struct_name", [Pure]> {
 
   let arguments = (ins FlatSymbolRefAttr:$name);
   let results = (outs Nbdl_StructName:$result);
+  let hasVerifier = 1;
 }
 
 def Nbdl_StoreComposeOp : Nbdl_Op<"store_compose", []> {

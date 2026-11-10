@@ -140,7 +140,7 @@
 // Require a function passed to a recursive visit to be the same in every
 // iteration since a function is not a value that a loop can carry.
 // expected-error@* {{nbdl inference passes failed}}
-// expected-note@+13 {{recursive visit must pass the same function, member name, or closure as argument 1}}
+// expected-note@+13 {{type of loop-carried value 1 ('!nbdl.store<!nbdl.func_name<@finish_other>>') does not match the type of the loop argument ('!nbdl.store<!nbdl.func_name<@finish>>')}}
 #pragma schir_scheme
 {
 (import (nbdl spec))

@@ -497,6 +497,52 @@ void nbdl_spec_create_store_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(Result);
 }
 
+// Create a !nbdl.member_name from a string-like name without the leading dot.
+// (member-name-type name)
+void nbdl_spec_member_name_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef Name = Args[0].getStringRef();
+  if (Name.empty())
+    return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
+  C.Cont(C.CreateAny<mlir::Type>(
+      nbdl_spec::MemberNameType::get(C.MLIRContext.get(), Name)));
+}
+
+// Create a !nbdl.func_name from a string-like symbol name.
+// (func-name-type name)
+void nbdl_spec_func_name_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef SymName = Args[0].getStringRef();
+  if (SymName.empty())
+    return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
+  mlir::MLIRContext* Ctx = C.MLIRContext.get();
+  C.Cont(C.CreateAny<mlir::Type>(nbdl_spec::FuncNameType::get(
+      Ctx, mlir::FlatSymbolRefAttr::get(Ctx, SymName))));
+}
+
+// Create a !nbdl.struct_name from a string-like symbol name.
+// (struct-name-type name)
+void nbdl_spec_struct_name_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  llvm::StringRef SymName = Args[0].getStringRef();
+  if (SymName.empty())
+    return C.RaiseError("expecting nonempty string-like: {}", Args[0]);
+  mlir::MLIRContext* Ctx = C.MLIRContext.get();
+  C.Cont(C.CreateAny<mlir::Type>(nbdl_spec::StructNameType::get(
+      Ctx, mlir::FlatSymbolRefAttr::get(Ctx, SymName))));
+}
+
+// Return true if the mlir.value is a !nbdl.member_name.
+void nbdl_spec_is_member_name(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::Value V = schir::any_cast<mlir::Value>(Args.front());
+  C.Cont(schir::Bool(V && isa<nbdl_spec::MemberNameType>(V.getType())));
+}
+
 // Return true if the mlir.value is a !nbdl.store.
 void nbdl_spec_is_store(schir::Context& C, schir::ValueRefs Args) {
   if (Args.size() != 1)
