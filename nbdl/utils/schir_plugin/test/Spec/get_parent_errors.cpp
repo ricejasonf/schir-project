@@ -4,6 +4,9 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -fplugin=SchirClang.so \
 // RUN:   -DTEST_LOOP_CARRIED -fsyntax-only -Xclang -verify %s
+// RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -fplugin=SchirClang.so \
+// RUN:   -DTEST_VARIANT -fsyntax-only -Xclang -verify %s
 
 #include <nbdl/spec.hpp>
 
@@ -28,6 +31,18 @@ struct node {
 (export-cpp parent_of_root)
 (define-match-fn parent_of_root (Fn)
   (visit Fn (get-parent (lift-store 5))))
+(finalize-module)
+}
+#endif
+
+#ifdef TEST_VARIANT
+// expected-note@+6 {{unable to resolve the parent of a store}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-cpp parent_of_variant)
+(define-match-fn parent_of_variant (Fn)
+  (visit Fn (get-parent (variant (lift-store 5) (lift-store 6.0)))))
 (finalize-module)
 }
 #endif

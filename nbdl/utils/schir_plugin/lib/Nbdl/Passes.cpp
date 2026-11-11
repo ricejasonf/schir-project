@@ -1449,8 +1449,8 @@ llvm::LogicalResult checkStoreParents(mlir::Operation* Root) {
         if (V != Arg && V != Init)
           Diag.attachNote(C.getLoc()) << "the recursive visit is here";
       }
-    } else if (isa_and_nonnull<nbdl_spec::LiftStoreOp, nbdl_spec::VariantOp,
-                             nbdl_spec::StoreComposeOp>(
+    } else if (isa_and_nonnull<nbdl_spec::LiftStoreOp,
+                                nbdl_spec::StoreComposeOp>(
                  Store.getDefiningOp()))
       GetParent.emitError("root store has no parent");
     else
