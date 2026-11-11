@@ -486,6 +486,8 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<UnitOp>(Op)) return;
     else if (isa<GetParentOp>(Op))
       return SetError("nbdl.get_parent is not resolved", Op);
+    else if (isa<GetPathOp>(Op))
+      return SetError("nbdl.get_path does not map to c++", Op);
     else if (isa<EmptyOp>(Op))
       return SetError("empty type does not map to c++ "
                       "because that would be absurd", Op);

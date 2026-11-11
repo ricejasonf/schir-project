@@ -1677,6 +1677,28 @@
                     (lambda (Value)
                       (Fn (build-get-parent Loc Value)))))))))
 
+    ;; Get the static path of a store from its root as an expr.
+    ;; The inference passes resolve its type as a !nbdl.path.
+    (define-syntax get-path
+      (syntax-rules ()
+        ((get-path Store)
+         (%expr (syntax-source-loc Store)
+                (lambda (Loc Fn)
+                  (%match-expr Loc Store
+                    (lambda (Value)
+                      (Fn (build-get-path Loc Value)))))))))
+
+    ;; Create the get_path of Store.
+    (define (build-get-path Loc Store)
+      (unless (store-value? Store)
+        (error-with-loc Loc "expecting a store to get-path (see lift-store)"))
+      (result
+        (create-op "nbdl.get_path"
+                   (loc: Loc)
+                   (operands: Store)
+                   (attributes:)
+                   (result-types: !nbdl.unknown))))
+
     (define (return-aux Loc Exprs)
       (close-previous-scope)
       (%match-results
@@ -1896,6 +1918,7 @@
     define-fn
     lift-store
     get-parent
+    get-path
     return
     with-return
     register-inference-pass

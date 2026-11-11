@@ -175,6 +175,16 @@ def Nbdl_String : TypeDef<Nbdl_Dialect, "String"> {
   }];
 }
 
+def Nbdl_Match : TypeDef<Nbdl_Dialect, "Match", []> {
+  let mnemonic = "match";
+  let description = [{
+    Represent the selection of the alternative of a node of the state
+    tree by a match overload as a key of a path.
+  }];
+  let parameters = (ins "mlir::TypeAttr":$type);
+  let assemblyFormat = "`<` $type `>`";
+}
+
 def Nbdl_Path : TypeDef<Nbdl_Dialect, "Path"> {
   let mnemonic = "path";
   let description = [{
@@ -183,7 +193,8 @@ def Nbdl_Path : TypeDef<Nbdl_Dialect, "Path"> {
     Each key is one of:
       - a !nbdl.member_name,
       - a !nbdl.tag whose value is the key,
-      - a nested !nbdl.path whose value at runtime is the key.
+      - a nested !nbdl.path whose value at runtime is the key,
+      - a !nbdl.match that selects an alternative of the node.
   }];
   let parameters = (ins OptionalArrayRefParameter<"mlir::TypeAttr">:$keys);
   let assemblyFormat = "(`<` $keys^ `>`)?";
@@ -295,6 +306,19 @@ def Nbdl_GetParentOp : Nbdl_Op<"get_parent", []> {
 
   let arguments = (ins Nbdl_Store:$store);
   let results = (outs Nbdl_Store:$result);
+}
+
+def Nbdl_GetPathOp : Nbdl_Op<"get_path", []> {
+  let description = [{
+    Get the static path of a store from its root.
+    The result type is !nbdl.unknown until the inference passes resolve
+    it as the !nbdl.path of the store. The root is the result of a
+    LiftStoreOp or StoreComposeOp. A path in a match-fn is resolved
+    only after the match-fn is inlined.
+  }];
+
+  let arguments = (ins Nbdl_Store:$store);
+  let results = (outs AnyType:$result);
 }
 
 def Nbdl_NoOp : Nbdl_Op<"noop", [Terminator]> {

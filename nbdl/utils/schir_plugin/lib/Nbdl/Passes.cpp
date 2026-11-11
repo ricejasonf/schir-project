@@ -1461,6 +1461,27 @@ llvm::LogicalResult checkStoreParents(mlir::Operation* Root) {
   return llvm::failure(HasError);
 }
 
+// Set the result type of each get_path outside of a match-fn
+// to the path of its store.
+llvm::LogicalResult resolveStorePaths(mlir::Operation* Root) {
+  bool HasError = false;
+  Root->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* Op) {
+    if (isa<nbdl_spec::DefineMatchFnOp>(Op))
+      return mlir::WalkResult::skip();
+    auto GetPath = dyn_cast<nbdl_spec::GetPathOp>(Op);
+    if (!GetPath)
+      return mlir::WalkResult::advance();
+    mlir::FailureOr<nbdl_spec::PathType> Path =
+      nbdl_spec::resolveStorePath(GetPath);
+    if (llvm::failed(Path))
+      HasError = true;
+    else
+      GetPath.getResult().setType(*Path);
+    return mlir::WalkResult::advance();
+  });
+  return llvm::failure(HasError);
+}
+
 // Replace every !nbdl.cpp_alias (including nested types and attributes)
 // with the !nbdl.cpp type of its canonical typename. The flatten pass
 // does this before the patterns are applied so they may compare C++ types.
@@ -1656,7 +1677,8 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
   if (llvm::failed(finalizeLoops(Op)))
     return llvm::failure();
   if (llvm::failed(resolveStoreParents(Op)) ||
-      llvm::failed(checkStoreParents(Op)))
+      llvm::failed(checkStoreParents(Op)) ||
+      llvm::failed(resolveStorePaths(Op)))
     return llvm::failure();
 
   // It is an error to visit a return closure in another function.
