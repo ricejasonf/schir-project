@@ -93,8 +93,8 @@ bool isPathPrefix(PathType Prefix, PathType P);
 bool mayAliasPaths(PathType A, PathType B);
 
 // Get the path of the store operand of Op from its root
-// or emit an error at Op.
-mlir::FailureOr<PathType> resolveStorePath(GetPathOp Op);
+// or fail, emitting an error at Op if Diagnose is set.
+mlir::FailureOr<PathType> resolveStorePath(GetPathOp Op, bool Diagnose);
 
 // Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);

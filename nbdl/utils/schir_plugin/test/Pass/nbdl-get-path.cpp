@@ -35,6 +35,16 @@ struct keyed {
   not_a_store value;
 };
 
+// A store whose match without a key visits its value.
+struct boxed {
+  not_a_store value;
+};
+
+struct boxes {
+  not_a_store plain;
+  boxed box;
+};
+
 } // namespace foo
 } // namespace
 
@@ -48,6 +58,14 @@ struct nbdl::get_impl<foo::keyed> {
   template <typename Store>
   static constexpr decltype(auto) apply(Store&& s, foo::key_t) {
     return (std::forward<Store>(s).value);
+  }
+};
+
+template <>
+struct nbdl::match_impl<foo::boxed> {
+  template <typename Store, typename Fn>
+  static constexpr void apply(Store&& s, Fn&& fn) {
+    std::forward<Fn>(fn)(std::forward<Store>(s).value);
   }
 };
 
@@ -74,6 +92,51 @@ struct nbdl::get_impl<foo::keyed> {
   (match (get (lift-store S) '.either)
     ('int => (lambda (X) (visit Sink (get-path X))))
     ('float => (lambda (X) (visit Sink (get-path X))))
+    (else => (lambda (X) (visit Sink (get-path X))))))
+
+; // Key the overload of a keyed match of several alternatives.
+; // CHECK-LABEL: @test_get_path_keyed_match(
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">, !nbdl.path<!nbdl.member_name<"selected">>, !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">, !nbdl.path<!nbdl.member_name<"selected">>, !nbdl.match<!nbdl.cpp<"nbdl::not_in_set">>>
+(define-fn test_get_path_keyed_match ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (define Root (lift-store S))
+  (match (get Root '.names (get Root '.selected))
+    ('std::string => (lambda (X) (visit Sink (get-path X))))
+    (else => (lambda (X) (visit Sink (get-path X))))))
+
+; // Do not key a match of a single alternative that is inlined.
+; // CHECK-LABEL: @test_get_path_single_alt_inlined(
+; // CHECK-NOT: "nbdl.match"
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"plain">>
+(define-fn test_get_path_single_alt_inlined ((S : 'foo::boxes)
+                                             (Sink : 'foo::sink)) -> ()
+  (match (get (lift-store S) '.plain)
+    ('foo::not_a_store => (lambda (X) (visit Sink (get-path X))))))
+
+; // Do not key a match of a single alternative that is not inlined.
+; // CHECK-LABEL: @test_get_path_single_alt_kept(
+; // CHECK: "nbdl.match"
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"box">>
+(define-fn test_get_path_single_alt_kept ((S : 'foo::boxes)
+                                          (Sink : 'foo::sink)) -> ()
+  (match (get (lift-store S) '.box)
+    ('foo::not_a_store => (lambda (X) (visit Sink (get-path X))))))
+
+; // Drop an unreachable overload and its path.
+; // CHECK-LABEL: @test_get_path_unreachable(
+; // CHECK: "nbdl.match"
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"box">>
+; // CHECK-NOT: "nbdl.get_path"
+; // CHECK: func.func
+(define-fn test_get_path_unreachable ((S : 'foo::boxes)
+                                      (Sink : 'foo::sink)) -> ()
+  (match (get (lift-store S) '.box)
+    ('foo::not_a_store => (lambda (X) (visit Sink (get-path X))))
     (else => (lambda (X) (visit Sink (get-path X))))))
 
 ; // Key a nested path from the same root.

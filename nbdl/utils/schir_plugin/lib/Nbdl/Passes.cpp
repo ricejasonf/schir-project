@@ -1090,6 +1090,20 @@ struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
     return true;
   }
 
+  // Get the C++ typenames of a key that is a store or a C++ tag
+  // returning false if any are not C++ types.
+  static bool getKeyCppAlts(mlir::Value Key,
+                            llvm::SmallVectorImpl<llvm::StringRef>& Results) {
+    auto Tag = dyn_cast<nbdl_spec::TagType>(Key.getType());
+    if (!Tag)
+      return getCppAlts(Key, Results);
+    auto CT = dyn_cast<nbdl_spec::CppType>(Tag.getType().getValue());
+    if (!CT)
+      return false;
+    Results.push_back(CT.getCppTypename());
+    return true;
+  }
+
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
     mlir::MutableArrayRef<mlir::Region> Overloads = Op.getOverloads();
@@ -1119,7 +1133,7 @@ struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
     llvm::SmallVector<llvm::StringRef, 4> KeyAlts;
     if (Op.hasUnitKey())
       KeyAlts.push_back({});
-    else if (!getCppAlts(Op.getKey(), KeyAlts))
+    else if (!getKeyCppAlts(Op.getKey(), KeyAlts))
       return Rewriter.notifyMatchFailure(Op, "key alts not resolved");
 
     schir::SourceLocation Loc(mlir::OpaqueLoc
@@ -1157,9 +1171,18 @@ struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
       Op.emitError("clang match probe failed: " + ErrorMsg);
       return llvm::failure();
     }
-    // Leave an unreachable overload unresolved.
-    if (Alts.empty())
-      return Rewriter.notifyMatchFailure(Op, "no alternatives remain");
+    // Drop an unreachable overload since its argument would be empty.
+    if (Alts.empty()) {
+      if (Overloads.size() < 2)
+        return Rewriter.notifyMatchFailure(Op, "no alternatives remain");
+      auto NewOp = nbdl_spec::MatchOp::create(Rewriter, Op.getLoc(),
+          Op.getStore(), Op.getKey(), Overloads.size() - 1);
+      for (auto [From, To] : llvm::zip(Overloads.drop_back(),
+                                       NewOp.getOverloads()))
+        Rewriter.inlineRegionBefore(From, To, To.end());
+      Rewriter.eraseOp(Op);
+      return llvm::success();
+    }
 
     mlir::MLIRContext* Ctx = Op.getContext();
     llvm::SmallVector<mlir::TypeAttr, 4> AltAttrs;
@@ -1396,6 +1419,27 @@ struct ResolveGetParent : mlir::OpRewritePattern<nbdl_spec::GetParentOp> {
   }
 };
 
+// Set the result type of a get_path outside of a match-fn
+// to the path of its store once it resolves.
+struct ResolveGetPath : mlir::OpRewritePattern<nbdl_spec::GetPathOp> {
+  using mlir::OpRewritePattern<nbdl_spec::GetPathOp>::OpRewritePattern;
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::GetPathOp Op,
+      mlir::PatternRewriter& Rewriter) const override {
+    if (isa<nbdl_spec::PathType>(Op.getType()))
+      return Rewriter.notifyMatchFailure(Op, "path already resolved");
+    if (Op->getParentOfType<nbdl_spec::DefineMatchFnOp>())
+      return Rewriter.notifyMatchFailure(Op, "path is in a match-fn");
+    mlir::FailureOr<nbdl_spec::PathType> Path =
+      nbdl_spec::resolveStorePath(Op, /*Diagnose=*/false);
+    if (llvm::failed(Path))
+      return Rewriter.notifyMatchFailure(Op, "path is not resolved");
+    Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(*Path); });
+    return llvm::success();
+  }
+};
+
 // Resolve the parents of stores and forward matches on store_compose
 // once the loops are finalized (ie their invariant arguments are removed.)
 llvm::LogicalResult resolveStoreParents(mlir::Operation* Root) {
@@ -1462,17 +1506,17 @@ llvm::LogicalResult checkStoreParents(mlir::Operation* Root) {
 }
 
 // Set the result type of each get_path outside of a match-fn
-// to the path of its store.
+// that the flatten pass left unresolved or report why it cannot be.
 llvm::LogicalResult resolveStorePaths(mlir::Operation* Root) {
   bool HasError = false;
   Root->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* Op) {
     if (isa<nbdl_spec::DefineMatchFnOp>(Op))
       return mlir::WalkResult::skip();
     auto GetPath = dyn_cast<nbdl_spec::GetPathOp>(Op);
-    if (!GetPath)
+    if (!GetPath || isa<nbdl_spec::PathType>(GetPath.getType()))
       return mlir::WalkResult::advance();
     mlir::FailureOr<nbdl_spec::PathType> Path =
-      nbdl_spec::resolveStorePath(GetPath);
+      nbdl_spec::resolveStorePath(GetPath, /*Diagnose=*/true);
     if (llvm::failed(Path))
       HasError = true;
     else
@@ -1546,6 +1590,7 @@ public:
     PS.add<InlineMatch>(SchirClangOpt.get(), Ctx);
     PS.add<ForwardStoreComposeMatch>(Ctx);
     PS.add<ResolveGetParent>(Ctx);
+    PS.add<ResolveGetPath>(Ctx);
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
 

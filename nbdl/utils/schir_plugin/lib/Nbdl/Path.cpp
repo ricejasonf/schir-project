@@ -7,7 +7,9 @@
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <llvm/ADT/STLExtras.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <optional>
 
 using namespace nbdl_spec;
 
@@ -48,15 +50,18 @@ namespace {
 // Resolve the paths of stores for a get_path.
 class StorePathResolver {
   GetPathOp Op;
+  bool Diagnose;
 
-  // Denote a key as a resolved type or as the value of a key operand.
+  // Denote a key as a resolved type, as the value of a key operand,
+  // or as neither for a match overload that is not resolved.
   struct PendingKey {
     mlir::TypeAttr Type;
     mlir::Value Key;
   };
 
 public:
-  explicit StorePathResolver(GetPathOp Op) : Op(Op) { }
+  StorePathResolver(GetPathOp Op, bool Diagnose)
+    : Op(Op), Diagnose(Diagnose) { }
 
   // Get the root of Store and append the keys of its path to Keys
   // or return null on failure.
@@ -76,11 +81,19 @@ public:
       if (!MatchLike)
         return fail("unable to resolve the path of a store");
 
-      // Key the alternative selected by a match overload of a single type.
-      auto ST = dyn_cast<StoreType>(V.getType());
-      if (Arg && isa<MatchOp>(Owner) && ST && ST.getAlts().size() == 1)
-        Pending.push_back({mlir::TypeAttr::get(
-            MatchType::get(Ctx, ST.getAlts().front())), {}});
+      // Key the alternative selected by a match overload of a single type
+      // unless it is the only alternative.
+      if (auto Match = dyn_cast<MatchOp>(Owner); Arg && Match) {
+        auto ST = dyn_cast<StoreType>(V.getType());
+        std::optional<unsigned> NumAlts = countMatchAlts(Match);
+        if (!ST || ST.getAlts().empty() || !NumAlts) {
+          Pending.push_back({});
+        } else if (auto Alts = ST.getAlts();
+                   Alts.size() == 1 && *NumAlts > 1) {
+          Pending.push_back({mlir::TypeAttr::get(
+              MatchType::get(Ctx, Alts.front())), {}});
+        }
+      }
 
       if (mlir::Value Aliased = MatchLike.getAliasedStore(V)) {
         V = Aliased;
@@ -94,12 +107,20 @@ public:
       V = Parent;
     }
 
+    // Report an unresolved match overload only if every key resolves.
+    bool HasUnresolvedMatch = false;
     for (PendingKey& P : llvm::reverse(Pending)) {
+      if (!P.Type && !P.Key) {
+        HasUnresolvedMatch = true;
+        continue;
+      }
       mlir::TypeAttr Type = P.Type ? P.Type : resolveKey(P.Key, V);
       if (!Type)
         return {};
       Keys.push_back(Type);
     }
+    if (HasUnresolvedMatch)
+      return fail("unable to resolve the type of a match overload");
     return V;
   }
 
@@ -107,6 +128,22 @@ private:
   // Return true if V is a root store.
   static bool isRoot(mlir::Value V) {
     return isa_and_nonnull<LiftStoreOp, StoreComposeOp>(V.getDefiningOp());
+  }
+
+  // Count the alternatives of the element that Match selects from
+  // or return nothing if an overload is not resolved.
+  static std::optional<unsigned> countMatchAlts(MatchOp Match) {
+    llvm::SmallPtrSet<mlir::Attribute, 4> Alts;
+    for (mlir::Region& Overload : Match.getOverloads()) {
+      if (Overload.getNumArguments() != 1)
+        return std::nullopt;
+      auto ST = dyn_cast<StoreType>(Overload.getArgument(0).getType());
+      if (!ST || ST.getAlts().empty())
+        return std::nullopt;
+      for (mlir::TypeAttr Alt : ST.getAlts())
+        Alts.insert(Alt);
+    }
+    return Alts.size();
   }
 
   // Get the key of a get or match or null if there is none.
@@ -137,17 +174,19 @@ private:
     return {};
   }
 
-  // Emit Msg at the get_path and return null.
+  // Emit Msg at the get_path if diagnosing and return null.
   mlir::Value fail(llvm::StringRef Msg) {
-    Op.emitError(Msg);
+    if (Diagnose)
+      Op.emitError(Msg);
     return {};
   }
 };
 } // namespace
 
-mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(GetPathOp Op) {
+mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(GetPathOp Op,
+                                                       bool Diagnose) {
   llvm::SmallVector<mlir::TypeAttr, 4> Keys;
-  if (!StorePathResolver(Op).resolve(Op.getStore(), Keys))
+  if (!StorePathResolver(Op, Diagnose).resolve(Op.getStore(), Keys))
     return mlir::failure();
   return PathType::get(Op.getContext(), Keys);
 }
