@@ -1067,7 +1067,8 @@ struct InferGetType : OpRewriteSchirClang<nbdl_spec::GetOp> {
 };
 
 // Infer the type of the block argument of the last overload of a match
-// when it is the only unresolved overload (ie the catch all overload.)
+// when it is the only unresolved overload (ie the catch all overload),
+// copying the overload for each alternative it receives.
 struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
   using Base::Base;
 
@@ -1185,12 +1186,31 @@ struct InferMatchOverloadType : OpRewriteSchirClang<nbdl_spec::MatchOp> {
     }
 
     mlir::MLIRContext* Ctx = Op.getContext();
-    llvm::SmallVector<mlir::TypeAttr, 4> AltAttrs;
-    for (llvm::StringRef Alt : Alts)
-      AltAttrs.push_back(mlir::TypeAttr::get(
+    auto getAltStoreT = [&](llvm::StringRef Alt) {
+      return nbdl_spec::StoreType::get(Ctx, mlir::TypeAttr::get(
             nbdl_spec::CppType::get(Ctx, Alt)));
-    auto NewStoreT = nbdl_spec::StoreType::get(Ctx, AltAttrs);
-    Rewriter.modifyOpInPlace(Op, [&] { Arg.setType(NewStoreT); });
+    };
+    if (Alts.size() == 1) {
+      Rewriter.modifyOpInPlace(Op, [&] {
+        Arg.setType(getAltStoreT(Alts.front()));
+      });
+      return llvm::success();
+    }
+
+    // Copy the overload for each alternative in order.
+    auto NewOp = nbdl_spec::MatchOp::create(Rewriter, Op.getLoc(),
+        Op.getStore(), Op.getKey(), Overloads.size() - 1 + Alts.size());
+    mlir::Region* To = NewOp.getOverloads().begin();
+    for (mlir::Region& From : Overloads.drop_back()) {
+      Rewriter.inlineRegionBefore(From, *To, To->end());
+      ++To;
+    }
+    for (llvm::StringRef Alt : Alts) {
+      Rewriter.cloneRegionBefore(Overload, *To, To->end());
+      To->getArgument(0).setType(getAltStoreT(Alt));
+      ++To;
+    }
+    Rewriter.eraseOp(Op);
     return llvm::success();
   }
 };

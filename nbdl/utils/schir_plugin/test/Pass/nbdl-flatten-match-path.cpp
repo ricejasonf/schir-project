@@ -88,14 +88,39 @@ struct nbdl::get_impl<foo::keyed> {
                        !nbdl.match<!nbdl.cpp<\"int\">>>")
     (lambda (X) (visit Sink (get-path X)))))
 
+; // Select the alternative of a variant that the path names
+; // and copy the else for each other alternative.
+; // CHECK-LABEL: @test_match_path_catch_all(
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
+; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">>):
+; // CHECK-NEXT: "nbdl.tag"()
+; // CHECK-SAME: -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"int">>):
+; // CHECK-NEXT: "nbdl.tag"()
+; // CHECK-SAME: -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"float">>):
+; // CHECK-NEXT: "nbdl.tag"()
+; // CHECK-SAME: -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
+; // CHECK-NOT: ^bb0
+; // CHECK: func.func
+(define-fn test_match_path_catch_all ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (match-path (lift-store S)
+              (type "!nbdl.path<
+                       !nbdl.member_name<\"either\">,
+                       !nbdl.match<!nbdl.cpp_alias<\"std::string\">>>")
+    (lambda (X) (visit Sink (get-path X)))))
+
 ; // Match a nested path from the root as a key with a single copy
 ; // of the else for the match key.
 ; // CHECK-LABEL: @test_match_path_nested(
+; // CHECK: "nbdl.tag"() : () -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
+; // CHECK-NOT: "nbdl.tag"
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
 ; // CHECK-SAME: !nbdl.path<!nbdl.member_name<"selected">>,
 ; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
-; // CHECK: "nbdl.tag"() : () -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
 ; // CHECK-NOT: "nbdl.tag"
 ; // CHECK: func.func
 (define-fn test_match_path_nested ((S : 'foo::app) (Sink : 'foo::sink)) -> ()

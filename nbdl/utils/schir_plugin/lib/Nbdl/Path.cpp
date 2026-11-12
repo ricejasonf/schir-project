@@ -86,12 +86,11 @@ public:
       if (auto Match = dyn_cast<MatchOp>(Owner); Arg && Match) {
         auto ST = dyn_cast<StoreType>(V.getType());
         std::optional<unsigned> NumAlts = countMatchAlts(Match);
-        if (!ST || ST.getAlts().empty() || !NumAlts) {
+        if (!ST || ST.getAlts().size() != 1 || !NumAlts) {
           Pending.push_back({});
-        } else if (auto Alts = ST.getAlts();
-                   Alts.size() == 1 && *NumAlts > 1) {
+        } else if (*NumAlts > 1) {
           Pending.push_back({mlir::TypeAttr::get(
-              MatchType::get(Ctx, Alts.front())), {}});
+              MatchType::get(Ctx, ST.getAlts().front())), {}});
         }
       }
 
@@ -119,6 +118,7 @@ public:
         return {};
       Keys.push_back(Type);
     }
+    // TODO See if this case is possible.
     if (HasUnresolvedMatch)
       return fail("unable to resolve the type of a match overload");
     return V;

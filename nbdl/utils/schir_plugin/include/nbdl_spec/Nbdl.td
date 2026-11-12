@@ -313,11 +313,9 @@ def Nbdl_GetParentOp : Nbdl_Op<"get_parent", []> {
 
 def Nbdl_GetPathOp : Nbdl_Op<"get_path", []> {
   let description = [{
-    Get the static path of a store from its root.
-    The result type is !nbdl.unknown until the inference passes resolve
-    it as the !nbdl.path of the store. The root is the result of a
-    LiftStoreOp or StoreComposeOp. A path in a match-fn is resolved
-    only after the match-fn is inlined.
+    Get the canonically unique static path of a distinct store object from its
+    root. The result type is inferred as the !nbdl.path of the store. Roots are
+    only the result of a LiftStoreOp or StoreComposeOp.
   }];
 
   let arguments = (ins Nbdl_Store:$store);

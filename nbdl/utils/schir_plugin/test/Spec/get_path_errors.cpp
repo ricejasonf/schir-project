@@ -49,7 +49,7 @@ struct msg {
 #endif
 
 #ifdef TEST_OTHER_ROOT
-// expected-note@+7 {{expecting a member name, a tag, or a store from the same root as a path key}}
+// expected-note@+7 2 {{expecting a member name, a tag, or a store from the same root as a path key}}
 #pragma schir_scheme
 {
 (import (nbdl spec))

@@ -80,26 +80,52 @@ struct nbdl::match_impl<foo::boxed> {
 (define-fn test_get_path_member ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (visit Sink (get-path (get (lift-store S) '.plain))))
 
-; // Key each overload of a single type so that the paths are unique.
+; // Key each alternative so that the paths are unique.
 ; // CHECK-LABEL: @test_get_path_overloads(
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">, !nbdl.match<!nbdl.cpp<"int">>>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"nbdl::unresolved">>>
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">, !nbdl.match<!nbdl.cpp<"float">>>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"int">>>
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"float">>>
 (define-fn test_get_path_overloads ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (match (get (lift-store S) '.either)
     ('int => (lambda (X) (visit Sink (get-path X))))
     ('float => (lambda (X) (visit Sink (get-path X))))
     (else => (lambda (X) (visit Sink (get-path X))))))
 
+; // Split an overload of several alternatives
+; // that no path passes through.
+; // CHECK-LABEL: @test_get_path_catch_all_split(
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">>):
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"int">>):
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<
+; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"float">>):
+; // CHECK-NOT: ^bb0
+; // CHECK: func.func
+(define-fn test_get_path_catch_all_split ((S : 'foo::app)
+                                          (Sink : 'foo::sink)) -> ()
+  (match (get (lift-store S) '.either)
+    ('int => (lambda (X) (visit Sink X)))
+    (else => (lambda (X) (visit Sink X)))))
+
 ; // Key the overload of a keyed match of several alternatives.
 ; // CHECK-LABEL: @test_get_path_keyed_match(
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">, !nbdl.path<!nbdl.member_name<"selected">>, !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"nbdl::not_in_set">>>
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">, !nbdl.path<!nbdl.member_name<"selected">>, !nbdl.match<!nbdl.cpp<"nbdl::not_in_set">>>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
 (define-fn test_get_path_keyed_match ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (define Root (lift-store S))
   (match (get Root '.names (get Root '.selected))
@@ -139,10 +165,16 @@ struct nbdl::match_impl<foo::boxed> {
     ('foo::not_a_store => (lambda (X) (visit Sink (get-path X))))
     (else => (lambda (X) (visit Sink (get-path X))))))
 
-; // Key a nested path from the same root.
+; // Key a nested path from the same root and each alternative of its node.
 ; // CHECK-LABEL: @test_get_path_nested(
 ; // CHECK: "nbdl.get_path"
-; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">, !nbdl.path<!nbdl.member_name<"selected">>>
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"nbdl::not_in_set">>>
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
 (define-fn test_get_path_nested ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (match (lift-store S)
     ('foo::app =>
