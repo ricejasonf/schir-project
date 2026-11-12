@@ -1381,11 +1381,135 @@ struct ForwardStoreComposeMatch : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
 
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
+    if (nbdl_spec::getMatchPath(Op))
+      return Rewriter.notifyMatchFailure(Op, "match is a path match");
     mlir::Value Store = nbdl_spec::lookThroughStoreCompose(Op.getStore(),
                                                            Op.getKey());
     if (!Store || Store == Op.getStore())
       return Rewriter.notifyMatchFailure(Op, "match is not forwarded");
     Rewriter.modifyOpInPlace(Op, [&] { Op.getStoreMutable().assign(Store); });
+    return llvm::success();
+  }
+};
+
+// Expand a match whose key is a path into a nested match for each key
+// once its store is known to be the root of the path.
+struct ExpandMatchPath : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
+  using mlir::OpRewritePattern<nbdl_spec::MatchOp>::OpRewritePattern;
+
+  // Build the nested matches of a path match at the insertion point.
+  class Builder {
+    nbdl_spec::MatchOp Op;
+    mlir::PatternRewriter& Rewriter;
+    mlir::MLIRContext* Ctx;
+    mlir::Location Loc;
+    mlir::Value Root;
+
+  public:
+    Builder(nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter)
+      : Op(Op), Rewriter(Rewriter), Ctx(Op.getContext()),
+        Loc(Op.getLoc()), Root(Op.getStore())
+    { }
+
+    // Build the matches of the path from the root to its node.
+    void build() {
+      buildKeys(Root, nbdl_spec::getMatchPath(Op).getKeys(),
+                [&](mlir::Value Node) { buildThen(Node); });
+    }
+
+  private:
+    using Continuation = llvm::function_ref<void(mlir::Value)>;
+
+    // Match each of Keys from Store and call Cont with the node.
+    void buildKeys(mlir::Value Store, llvm::ArrayRef<mlir::TypeAttr> Keys,
+                   Continuation Cont) {
+      if (Keys.empty())
+        return Cont(Store);
+      mlir::Type Key = Keys.front().getValue();
+      auto Next = [&](mlir::Value Child) {
+        buildKeys(Child, Keys.drop_front(), Cont);
+      };
+      if (auto Name = dyn_cast<nbdl_spec::MemberNameType>(Key)) {
+        buildMatch(Store, {}, nbdl_spec::StoreType::get(Ctx),
+                   [&](mlir::Value Matched) {
+          mlir::Value KeyVal = nbdl_spec::MemberNameOp::create(
+              Rewriter, Loc, Name, Name.getName());
+          Next(nbdl_spec::GetOp::create(Rewriter, Loc,
+              nbdl_spec::StoreType::get(Ctx), Matched, KeyVal));
+        });
+      } else if (auto Tag = dyn_cast<nbdl_spec::TagType>(Key)) {
+        mlir::Value KeyVal = nbdl_spec::TagOp::create(Rewriter, Loc, Tag);
+        buildMatch(Store, KeyVal, nbdl_spec::StoreType::get(Ctx), Next);
+      } else if (auto Match = dyn_cast<nbdl_spec::MatchType>(Key)) {
+        buildMatch(Store, {}, nbdl_spec::StoreType::get(Ctx,
+                       llvm::ArrayRef<mlir::TypeAttr>(Match.getType())),
+                   Next, /*HasElse=*/true);
+      } else {
+        // Match the nested path from the root to get the key.
+        auto Nested = cast<nbdl_spec::PathType>(Key);
+        buildKeys(Root, Nested.getKeys(), [&](mlir::Value KeyStore) {
+          buildMatch(KeyStore, {}, nbdl_spec::StoreType::get(Ctx),
+                     [&](mlir::Value KeyVal) {
+            buildMatch(Store, KeyVal, nbdl_spec::StoreType::get(Ctx), Next);
+          });
+        });
+      }
+    }
+
+    // Build a match of Store with an overload of ArgT that calls Cont
+    // and optionally a catch-all overload with a copy of the else.
+    void buildMatch(mlir::Value Store, mlir::Value Key, mlir::Type ArgT,
+                    Continuation Cont, bool HasElse = false) {
+      mlir::OpBuilder::InsertionGuard Guard(Rewriter);
+      auto Match = nbdl_spec::MatchOp::create(Rewriter, Loc, Store, Key,
+                                              HasElse ? 2 : 1);
+      mlir::Block* Body = Rewriter.createBlock(&Match.getOverloads()[0], {},
+                                               {ArgT}, {Loc});
+      Cont(Body->getArgument(0));
+      if (HasElse)
+        buildElse(Match.getOverloads()[1]);
+    }
+
+    // Build a copy of the then overload that receives the node.
+    void buildThen(mlir::Value Node) {
+      mlir::Block& Then = Op.getOverloads().front().front();
+      mlir::IRMapping Mapping;
+      Mapping.map(Then.getArgument(0), Node);
+      for (mlir::Operation& ThenOp : Then)
+        Rewriter.clone(ThenOp, Mapping);
+    }
+
+    // Build a catch-all overload in Region with a copy of the else
+    // that receives the nbdl::not_matched tag.
+    void buildElse(mlir::Region& Region) {
+      Rewriter.createBlock(&Region, {}, {nbdl_spec::StoreType::get(Ctx)},
+                           {Loc});
+      auto NotMatchedT = nbdl_spec::TagType::get(Ctx, mlir::TypeAttr::get(
+          nbdl_spec::CppType::get(Ctx, "nbdl::not_matched")));
+      mlir::Block& Else = Op.getOverloads().back().front();
+      mlir::IRMapping Mapping;
+      Mapping.map(Else.getArgument(0),
+                  nbdl_spec::TagOp::create(Rewriter, Loc, NotMatchedT));
+      for (mlir::Operation& ElseOp : Else)
+        Rewriter.clone(ElseOp, Mapping);
+    }
+  };
+
+  llvm::LogicalResult matchAndRewrite(
+      nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
+    if (!nbdl_spec::getMatchPath(Op))
+      return Rewriter.notifyMatchFailure(Op, "match is not a path match");
+    if (Op->getParentOfType<nbdl_spec::DefineMatchFnOp>())
+      return Rewriter.notifyMatchFailure(Op, "path match is in a match-fn");
+    if (Op.getOverloads().size() != 2)
+      return Rewriter.notifyMatchFailure(Op,
+          "expecting a then and an else overload");
+    mlir::FailureOr<nbdl_spec::PathType> StorePath =
+      nbdl_spec::resolveStorePath(Op, Op.getStore(), /*Diagnose=*/false);
+    if (llvm::failed(StorePath) || !StorePath->getKeys().empty())
+      return Rewriter.notifyMatchFailure(Op, "store is not a known root");
+    Builder(Op, Rewriter).build();
+    Rewriter.eraseOp(Op);
     return llvm::success();
   }
 };
@@ -1432,7 +1556,7 @@ struct ResolveGetPath : mlir::OpRewritePattern<nbdl_spec::GetPathOp> {
     if (Op->getParentOfType<nbdl_spec::DefineMatchFnOp>())
       return Rewriter.notifyMatchFailure(Op, "path is in a match-fn");
     mlir::FailureOr<nbdl_spec::PathType> Path =
-      nbdl_spec::resolveStorePath(Op, /*Diagnose=*/false);
+      nbdl_spec::resolveStorePath(Op, Op.getStore(), /*Diagnose=*/false);
     if (llvm::failed(Path))
       return Rewriter.notifyMatchFailure(Op, "path is not resolved");
     Rewriter.modifyOpInPlace(Op, [&] { Op.getResult().setType(*Path); });
@@ -1505,6 +1629,26 @@ llvm::LogicalResult checkStoreParents(mlir::Operation* Root) {
   return llvm::failure(HasError);
 }
 
+// Report each path match outside of a match-fn
+// that the flatten pass did not expand.
+llvm::LogicalResult checkMatchPaths(mlir::Operation* Root) {
+  bool HasError = false;
+  Root->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* Op) {
+    if (isa<nbdl_spec::DefineMatchFnOp>(Op))
+      return mlir::WalkResult::skip();
+    auto Match = dyn_cast<nbdl_spec::MatchOp>(Op);
+    if (!Match || !nbdl_spec::getMatchPath(Match))
+      return mlir::WalkResult::advance();
+    HasError = true;
+    mlir::FailureOr<nbdl_spec::PathType> StorePath =
+      nbdl_spec::resolveStorePath(Match, Match.getStore(), /*Diagnose=*/true);
+    if (llvm::succeeded(StorePath))
+      Match.emitError("match-path expecting root store");
+    return mlir::WalkResult::advance();
+  });
+  return llvm::failure(HasError);
+}
+
 // Set the result type of each get_path outside of a match-fn
 // that the flatten pass left unresolved or report why it cannot be.
 llvm::LogicalResult resolveStorePaths(mlir::Operation* Root) {
@@ -1516,7 +1660,8 @@ llvm::LogicalResult resolveStorePaths(mlir::Operation* Root) {
     if (!GetPath || isa<nbdl_spec::PathType>(GetPath.getType()))
       return mlir::WalkResult::advance();
     mlir::FailureOr<nbdl_spec::PathType> Path =
-      nbdl_spec::resolveStorePath(GetPath, /*Diagnose=*/true);
+      nbdl_spec::resolveStorePath(GetPath, GetPath.getStore(),
+                                  /*Diagnose=*/true);
     if (llvm::failed(Path))
       HasError = true;
     else
@@ -1591,6 +1736,7 @@ public:
     PS.add<ForwardStoreComposeMatch>(Ctx);
     PS.add<ResolveGetParent>(Ctx);
     PS.add<ResolveGetPath>(Ctx);
+    PS.add<ExpandMatchPath>(Ctx, mlir::PatternBenefit(0));
     PS.add<InlineVisit>(SchirClangOpt.get(), Ctx,
                         mlir::PatternBenefit(100));
 
@@ -1723,6 +1869,7 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
     return llvm::failure();
   if (llvm::failed(resolveStoreParents(Op)) ||
       llvm::failed(checkStoreParents(Op)) ||
+      llvm::failed(checkMatchPaths(Op)) ||
       llvm::failed(resolveStorePaths(Op)))
     return llvm::failure();
 

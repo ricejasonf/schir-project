@@ -404,9 +404,10 @@ mlir::Value nbdl_spec::ConstOp::getAliasedStore(mlir::Value) {
   return getArg();
 }
 
-// Get the store whose element a keyed match descends to.
+// Get the store whose element a keyed match other than a path match
+// descends to.
 mlir::Value nbdl_spec::MatchOp::getParentStore(mlir::Value) {
-  if (hasUnitKey())
+  if (hasUnitKey() || getMatchPath(*this))
     return {};
   return lookThroughStoreCompose(getStore(), getKey());
 }

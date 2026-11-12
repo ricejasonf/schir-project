@@ -92,9 +92,14 @@ bool isPathPrefix(PathType Prefix, PathType P);
 // Indicate if A may resolve to a prefix of B or vice versa.
 bool mayAliasPaths(PathType A, PathType B);
 
-// Get the path of the store operand of Op from its root
+// Get the path of Store from its root
 // or fail, emitting an error at Op if Diagnose is set.
-mlir::FailureOr<PathType> resolveStorePath(GetPathOp Op, bool Diagnose);
+mlir::FailureOr<PathType> resolveStorePath(mlir::Operation* Op,
+                                           mlir::Value Store, bool Diagnose);
+
+// Get the path that the key of a path match selects
+// or null if Op is not a path match.
+PathType getMatchPath(MatchOp Op);
 
 // Get the FuncNameOp that defines V or null if V is not a function name.
 FuncNameOp getFuncName(mlir::Value V);

@@ -49,7 +49,7 @@ bool nbdl_spec::mayAliasPaths(PathType A, PathType B) {
 namespace {
 // Resolve the paths of stores for a get_path.
 class StorePathResolver {
-  GetPathOp Op;
+  mlir::Operation* Op;
   bool Diagnose;
 
   // Denote a key as a resolved type, as the value of a key operand,
@@ -60,14 +60,14 @@ class StorePathResolver {
   };
 
 public:
-  StorePathResolver(GetPathOp Op, bool Diagnose)
+  StorePathResolver(mlir::Operation* Op, bool Diagnose)
     : Op(Op), Diagnose(Diagnose) { }
 
   // Get the root of Store and append the keys of its path to Keys
   // or return null on failure.
   mlir::Value resolve(mlir::Value Store,
                       llvm::SmallVectorImpl<mlir::TypeAttr>& Keys) {
-    mlir::MLIRContext* Ctx = Op.getContext();
+    mlir::MLIRContext* Ctx = Op->getContext();
     // Collect keys from the store to the root.
     llvm::SmallVector<PendingKey, 4> Pending;
     mlir::Value V = Store;
@@ -167,7 +167,7 @@ private:
       if (!KeyRoot)
         return {};
       if (KeyRoot == Root)
-        return mlir::TypeAttr::get(PathType::get(Op.getContext(), Keys));
+        return mlir::TypeAttr::get(PathType::get(Op->getContext(), Keys));
     }
     fail("expecting a member name, a tag, or a store from the same root "
          "as a path key");
@@ -177,16 +177,23 @@ private:
   // Emit Msg at the get_path if diagnosing and return null.
   mlir::Value fail(llvm::StringRef Msg) {
     if (Diagnose)
-      Op.emitError(Msg);
+      Op->emitError(Msg);
     return {};
   }
 };
 } // namespace
 
-mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(GetPathOp Op,
+mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(mlir::Operation* Op,
+                                                       mlir::Value Store,
                                                        bool Diagnose) {
   llvm::SmallVector<mlir::TypeAttr, 4> Keys;
-  if (!StorePathResolver(Op, Diagnose).resolve(Op.getStore(), Keys))
+  if (!StorePathResolver(Op, Diagnose).resolve(Store, Keys))
     return mlir::failure();
-  return PathType::get(Op.getContext(), Keys);
+  return PathType::get(Op->getContext(), Keys);
+}
+
+PathType nbdl_spec::getMatchPath(MatchOp Op) {
+  if (Op.hasUnitKey())
+    return {};
+  return dyn_cast<PathType>(Op.getKey().getType());
 }

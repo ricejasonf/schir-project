@@ -51,6 +51,8 @@
       (load-builtin "nbdl_spec_tag_type"))
     (define tag-type?
       (load-builtin "nbdl_spec_is_tag_type"))
+    (define path-type?
+      (load-builtin "nbdl_spec_is_path_type"))
     (define member-name-type
       (load-builtin "nbdl_spec_member_name_type"))
     (define func-name-type
@@ -1033,6 +1035,9 @@
     ;; Match the key PathNode on Store.
     (define (%match-path-node Store Loc PathNode Fn)
       (close-previous-scope)
+      (when (path-type? PathNode)
+        (error-with-loc Loc "path tag only valid with match-path: {}"
+                        PathNode))
       (let ((PathNode
               (maybe-build-expr+ Loc PathNode)))
         (cond
@@ -1311,15 +1316,18 @@
                          (%single-expr Range)
                          Fn))))
 
+    ;; Match the store of PathSpec with the clauses
+    ;; keyed by the result of KeyThunk ('() for the unit key).
     (define-syntax match-aux
       (syntax-rules (=>)
-        ((match-aux PathSpec
+        ((match-aux PathSpec KeyThunk
           (TypeN => FnN) ...)
          (let ((PathSpecExpr PathSpec))
           (close-previous-scope)
           (%match-results (list PathSpecExpr)
-          (lambda (Store)
-            (unless (store-value? (car Store))
+          (lambda (Results)
+            (define Store (car Results))
+            (unless (store-value? Store)
               ;; Use the source location of the %expr.
               (error-with-loc (expr-loc PathSpecExpr)
                               "expecting a store to match (see lift-store)"))
@@ -1332,9 +1340,10 @@
                     ((or (symbol? T) (string? T))
                      (!nbdl.store T))
                     (else (!nbdl.store T))))
+                (define Key (KeyThunk))
                 (create-op "nbdl.match"
-                  (loc: (syntax-source-loc PathSpec))
-                  (operands: Store)
+                  (loc: (expr-loc PathSpecExpr))
+                  (operands: Store Key)
                   (attributes:)
                   (result-types:)
                   (region: "overloads" ((OverloadArg : (GetArgType TypeN)))
@@ -1366,9 +1375,39 @@
            (Type1 => Fn1)
            (TypeN => FnN) ...)
          (match-aux (%single-expr PathSpec)
+           (lambda () '())
            (Type1 => Fn1)
            (TypeN => FnN) ...))
         ))
+
+    ;; Raise an error at Loc unless Path is a !nbdl.path.
+    (define (%check-path-tag Loc Path)
+      (unless (path-type? Path)
+        (error-with-loc Loc "expecting path tag: {}" Path)))
+
+    ;; Match the value of Store for match-path rejecting a path (see get).
+    (define (%match-path-store Loc Store Fn)
+      (when (path-spec? Store)
+        (error-with-loc Loc "expecting a store"))
+      (%match-expr Loc Store Fn))
+
+    ;; Match the node at Path (a !nbdl.path) from the root
+    ;; Store, visiting ThenFn with the node or ElseFn with
+    ;; nbdl::not_matched if an alternative along the path is not the one
+    ;; that the path selects. ElseFn defaults to noop.
+    (define-syntax match-path
+      (syntax-rules ()
+        ((match-path Store Path ThenFn)
+         (match-path Store Path ThenFn noop))
+        ((match-path Store Path ThenFn ElseFn)
+         (let ((Tag Path))
+           (%check-path-tag (syntax-source-loc Path) Tag)
+           (match-aux (%expr (syntax-source-loc Store)
+                             (lambda (Loc Fn)
+                               (%match-path-store Loc Store Fn)))
+             (lambda () (build-tag (syntax-source-loc Path) Tag))
+             ("" => ThenFn)
+             ("" => ElseFn))))))
 
     ; Visit store and do nothing even if there is
     ; butterscotch in a crystal bowl on the table.
@@ -1919,6 +1958,7 @@
     lift-store
     get-parent
     get-path
+    match-path
     return
     with-return
     register-inference-pass

@@ -36,6 +36,13 @@ namespace nbdl {
   //                  (Also the default for nbdl::variant)
   //
   struct unresolved { };
+
+  //
+  //  not_matched   - The else of a path match receives this tag when
+  //                  an alternative along the path is not the one
+  //                  that the path selects.
+  //
+  struct not_matched { };
   
   // Provide a key to access elements of
   // tuple-likes and sequences by their index.

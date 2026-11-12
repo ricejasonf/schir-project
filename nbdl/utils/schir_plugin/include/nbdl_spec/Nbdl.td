@@ -282,6 +282,9 @@ def Nbdl_MatchOp : Nbdl_Op<"match", [Terminator, NoTerminator,
     also provides access to its contained element without a key
     (ie it is just unwrapped). This requires a visitor to be overloaded
     with every possible alternative.
+
+    Match with a key of type !nbdl.path expands to nested matches for each
+    key in the path or `not_matched`.
   }];
 
   let arguments = (ins Nbdl_Type:$store,
@@ -352,9 +355,9 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
 
 def Nbdl_TagOp : Nbdl_Op<"tag", [Pure]> {
   let description = [{
-    Create the value of a tag type for use as a key.
+    Create the value of a tag type or of a path for use as a key.
   }];
-  let results = (outs Nbdl_Tag:$result);
+  let results = (outs AnyTypeOf<[Nbdl_Tag, Nbdl_Path]>:$result);
 }
 
 def Nbdl_MemberNameOp : Nbdl_Op<"member_name", [Pure]> {

@@ -525,6 +525,14 @@ void nbdl_spec_is_tag_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(schir::Bool(T && isa<nbdl_spec::TagType>(T)));
 }
 
+// Return true if the object is a !nbdl.path type.
+void nbdl_spec_is_path_type(schir::Context& C, schir::ValueRefs Args) {
+  if (Args.size() != 1)
+    return C.RaiseError("invalid arity");
+  mlir::Type T = schir::any_cast<mlir::Type>(Args.front());
+  C.Cont(schir::Bool(T && isa<nbdl_spec::PathType>(T)));
+}
+
 // Get the two !nbdl.path arguments of a path comparison
 // or raise an error.
 static std::optional<std::pair<nbdl_spec::PathType, nbdl_spec::PathType>>
