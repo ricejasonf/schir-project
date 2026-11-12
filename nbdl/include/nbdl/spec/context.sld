@@ -4,14 +4,6 @@
   (import (schir base)
           (nbdl spec))
   (begin
-    (load-plugin "libNbdl.so")
-    (define %path-type
-      (load-builtin "nbdl_spec_path_type"))
-    (define path-prefix?
-      (load-builtin "nbdl_spec_is_path_prefix"))
-    (define paths-may-alias?
-      (load-builtin "nbdl_spec_paths_may_alias"))
-
     ;; Denote the root of an application's state tree
     ;; defined via define-context.
     (define-record-type <context>
@@ -102,32 +94,10 @@
            Type
            (store Type (init-args: InitArg ...))))))
 
-    ;; Get the !nbdl.path type of a path whose keys are member names,
-    ;; tags, or nested paths from the same root store.
-    (define (path-type Path)
-      (define Root (path-spec-root Path))
-      (apply %path-type
-             (map (lambda (Node)
-                    (define Key (car Node))
-                    (cond
-                      ((member-name-literal? Key)
-                       (member-name-type (string-copy (symbol->string Key) 1)))
-                      ((tag-type? Key) Key)
-                      ((and (path-spec? Key) (eq? (path-spec-root Key) Root))
-                       (path-type Key))
-                      (else
-                       (error-with-loc (cdr Node)
-                         "expecting a member name, a tag, or a nested path from the same root as a path key: {}"
-                         Key))))
-                  (path-spec-nodes Path))))
-
     ) ; end of... begin
   (export
     define-context
     define-member
-    path-type
-    path-prefix?
-    paths-may-alias?
     context?
     context-struct
     context-members

@@ -189,6 +189,8 @@ def Nbdl_Path : TypeDef<Nbdl_Dialect, "Path"> {
   let mnemonic = "path";
   let description = [{
     Represent a static path to a node of the state tree of a context.
+    If the list of keys is empty, then the path is not yet resolved.
+    The path of a root has the unit type as its only key.
 
     Each key is one of:
       - a !nbdl.member_name,
@@ -199,6 +201,13 @@ def Nbdl_Path : TypeDef<Nbdl_Dialect, "Path"> {
   let parameters = (ins OptionalArrayRefParameter<"mlir::TypeAttr">:$keys);
   let assemblyFormat = "(`<` $keys^ `>`)?";
   let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    bool isResolved() const { return !getKeys().empty(); }
+    bool isRoot() const {
+      return getKeys().size() == 1 &&
+             ::llvm::isa<UnitType>(getKeys().front().getValue());
+    }
+  }];
 }
 
 def Nbdl_Type : AnyTypeOf<[Nbdl_Store,
@@ -314,12 +323,13 @@ def Nbdl_GetParentOp : Nbdl_Op<"get_parent", []> {
 def Nbdl_GetPathOp : Nbdl_Op<"get_path", []> {
   let description = [{
     Get the canonically unique static path of a distinct store object from its
-    root. The result type is inferred as the !nbdl.path of the store. Roots are
-    only the result of a LiftStoreOp or StoreComposeOp.
+    root. The result type is the unresolved !nbdl.path until it is inferred
+    as the path of the store. Roots are only the result of a LiftStoreOp or
+    StoreComposeOp.
   }];
 
   let arguments = (ins Nbdl_Store:$store);
-  let results = (outs AnyType:$result);
+  let results = (outs Nbdl_Path:$result);
 }
 
 def Nbdl_NoOp : Nbdl_Op<"noop", [Terminator]> {
@@ -353,9 +363,9 @@ def Nbdl_ConstexprOp : Nbdl_Op<"constexpr", []> {
 
 def Nbdl_TagOp : Nbdl_Op<"tag", [Pure]> {
   let description = [{
-    Create the value of a tag type or of a path for use as a key.
+    Create the value of a tag type for use as a key.
   }];
-  let results = (outs AnyTypeOf<[Nbdl_Tag, Nbdl_Path]>:$result);
+  let results = (outs Nbdl_Tag:$result);
 }
 
 def Nbdl_MemberNameOp : Nbdl_Op<"member_name", [Pure]> {

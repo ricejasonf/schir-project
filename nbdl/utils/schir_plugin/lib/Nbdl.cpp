@@ -479,32 +479,6 @@ void nbdl_spec_struct_type(schir::Context& C, schir::ValueRefs Args) {
   C.Cont(C.CreateAny<mlir::Type>(Result));
 }
 
-// Create a !nbdl.path from mlir.type keys.
-// (path-type key ...)
-void nbdl_spec_path_type(schir::Context& C, schir::ValueRefs Args) {
-  mlir::MLIRContext* Ctx = C.MLIRContext.get();
-  llvm::SmallVector<mlir::TypeAttr, 4> Keys;
-  for (schir::Value Arg : Args) {
-    auto T = schir::any_cast<mlir::Type>(Arg);
-    if (!T)
-      return C.RaiseError("expecting mlir.type: {}", Arg);
-    Keys.push_back(mlir::TypeAttr::get(T));
-  }
-  nbdl_spec::PathType Result;
-  llvm::LogicalResult Status = mlir_helper::WithDiagnosticsHandler(
-    C, C.getLoc(),
-    [&] {
-      Result = nbdl_spec::PathType::getChecked(
-          [&] { return mlir::emitError(mlir::UnknownLoc::get(Ctx)); },
-          Ctx, llvm::ArrayRef<mlir::TypeAttr>(Keys));
-      return llvm::success(static_cast<bool>(Result));
-    },
-    "invalid path");
-  if (llvm::failed(Status))
-    return;
-  C.Cont(C.CreateAny<mlir::Type>(Result));
-}
-
 // Create a !nbdl.tag of an mlir.type.
 // (tag-type type)
 void nbdl_spec_tag_type(schir::Context& C, schir::ValueRefs Args) {
@@ -523,49 +497,6 @@ void nbdl_spec_is_tag_type(schir::Context& C, schir::ValueRefs Args) {
     return C.RaiseError("invalid arity");
   mlir::Type T = schir::any_cast<mlir::Type>(Args.front());
   C.Cont(schir::Bool(T && isa<nbdl_spec::TagType>(T)));
-}
-
-// Return true if the object is a !nbdl.path type.
-void nbdl_spec_is_path_type(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 1)
-    return C.RaiseError("invalid arity");
-  mlir::Type T = schir::any_cast<mlir::Type>(Args.front());
-  C.Cont(schir::Bool(T && isa<nbdl_spec::PathType>(T)));
-}
-
-// Get the two !nbdl.path arguments of a path comparison
-// or raise an error.
-static std::optional<std::pair<nbdl_spec::PathType, nbdl_spec::PathType>>
-getPathPair(schir::Context& C, schir::ValueRefs Args) {
-  if (Args.size() != 2) {
-    C.RaiseError("invalid arity");
-    return std::nullopt;
-  }
-  auto A = dyn_cast_or_null<nbdl_spec::PathType>(
-      schir::any_cast<mlir::Type>(Args[0]));
-  auto B = dyn_cast_or_null<nbdl_spec::PathType>(
-      schir::any_cast<mlir::Type>(Args[1]));
-  if (!A || !B) {
-    C.RaiseError("expecting !nbdl.path: {}", A ? Args[1] : Args[0]);
-    return std::nullopt;
-  }
-  return std::pair(A, B);
-}
-
-// Return true if the first path may be a prefix of the second.
-// (path-prefix? prefix path)
-void nbdl_spec_is_path_prefix(schir::Context& C, schir::ValueRefs Args) {
-  if (auto Paths = getPathPair(C, Args))
-    C.Cont(schir::Bool(nbdl_spec::isPathPrefix(Paths->first,
-                                               Paths->second)));
-}
-
-// Return true if either path may be a prefix of the other.
-// (paths-may-alias? a b)
-void nbdl_spec_paths_may_alias(schir::Context& C, schir::ValueRefs Args) {
-  if (auto Paths = getPathPair(C, Args))
-    C.Cont(schir::Bool(nbdl_spec::mayAliasPaths(Paths->first,
-                                                Paths->second)));
 }
 
 // Create a !nbdl.store<alts...> from an arbitrary set of mlir.types.

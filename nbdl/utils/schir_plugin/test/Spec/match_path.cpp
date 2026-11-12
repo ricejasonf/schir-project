@@ -41,24 +41,29 @@ struct recorder {
 
 (export-cpp match_either_int match_selected_item)
 
-; // Select the int alternative of the variant.
-(define-fn match_either_int ((S : 'foo::app) (Rec : 'foo::recorder)) -> ()
-  (match-path (lift-store S)
-              (type "!nbdl.path<
-                       !nbdl.member_name<\"either\">,
-                       !nbdl.match<!nbdl.cpp<\"int\">>>")
-    (lambda (X) (visit Rec X))
-    (lambda (X) (visit Rec X))))
+; // Select the int alternative of the variant with the path of the int
+; // alternative of another app.
+(define-fn match_either_int ((S : 'foo::app) (Proto : 'foo::app)
+                             (Rec : 'foo::recorder)) -> ()
+  (match (get (lift-store Proto) '.either)
+    ('int =>
+     (lambda (Int)
+       (match-path (lift-store S) (get-path Int)
+         (lambda (X) (visit Rec X))
+         (lambda (X) (visit Rec X)))))
+    (else => noop)))
 
 ; // Key the map with the value of a nested path.
-(define-fn match_selected_item ((S : 'foo::app) (Rec : 'foo::recorder)) -> ()
-  (match-path (lift-store S)
-              (type "!nbdl.path<
-                       !nbdl.member_name<\"items\">,
-                       !nbdl.path<!nbdl.member_name<\"selected\">>,
-                       !nbdl.match<!nbdl.cpp<\"int\">>>")
-    (lambda (X) (visit Rec X))
-    (lambda (X) (visit Rec X))))
+(define-fn match_selected_item ((S : 'foo::app) (Proto : 'foo::app)
+                                (Rec : 'foo::recorder)) -> ()
+  (define Root (lift-store Proto))
+  (match (get Root '.items (get Root '.selected))
+    ('int =>
+     (lambda (Item)
+       (match-path (lift-store S) (get-path Item)
+         (lambda (X) (visit Rec X))
+         (lambda (X) (visit Rec X)))))
+    (else => noop)))
 
 (finalize-module)
 }
@@ -67,28 +72,29 @@ struct recorder {
 } // namespace
 
 int main() {
+  foo::app const Proto{.either = 1, .items = {{1, 1}}, .selected = 1};
   {
     foo::app App{.either = 42};
     foo::result R;
-    foo::match_either_int(App, foo::recorder{&R});
+    foo::match_either_int(App, Proto, foo::recorder{&R});
     SCHIR_ASSERT(R.value == 42 && !R.not_matched);
   }
   {
     foo::app App{.either = std::string("text")};
     foo::result R;
-    foo::match_either_int(App, foo::recorder{&R});
+    foo::match_either_int(App, Proto, foo::recorder{&R});
     SCHIR_ASSERT(R.value == 0 && R.not_matched);
   }
   {
     foo::app App{.items = {{1, 10}, {2, 20}}, .selected = 2};
     foo::result R;
-    foo::match_selected_item(App, foo::recorder{&R});
+    foo::match_selected_item(App, Proto, foo::recorder{&R});
     SCHIR_ASSERT(R.value == 20 && !R.not_matched);
   }
   {
     foo::app App{.items = {{1, 10}}, .selected = 3};
     foo::result R;
-    foo::match_selected_item(App, foo::recorder{&R});
+    foo::match_selected_item(App, Proto, foo::recorder{&R});
     SCHIR_ASSERT(R.value == 0 && R.not_matched);
   }
 }

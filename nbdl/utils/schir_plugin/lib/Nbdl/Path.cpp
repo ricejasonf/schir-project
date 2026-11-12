@@ -13,16 +13,23 @@
 
 using namespace nbdl_spec;
 
-// Verify the keys of a path.
+// Verify the keys of a path, where the unit type is only valid
+// as the only key of the path of a root.
 llvm::LogicalResult
 PathType::verify(llvm::function_ref<mlir::InFlightDiagnostic()> EmitError,
                  llvm::ArrayRef<mlir::TypeAttr> Keys) {
+  if (Keys.size() == 1 && Keys.front() &&
+      isa<UnitType>(Keys.front().getValue()))
+    return mlir::success();
   for (mlir::TypeAttr Key : Keys) {
     if (!Key || !isa<MemberNameType, TagType, PathType, MatchType>(
                     Key.getValue()))
       return EmitError() << "expecting a !nbdl.member_name, a !nbdl.tag, "
                             "a nested !nbdl.path, or a !nbdl.match "
                             "as a path key: " << Key;
+    if (auto Nested = dyn_cast<PathType>(Key.getValue());
+        Nested && !Nested.isResolved())
+      return EmitError() << "expecting a resolved nested !nbdl.path";
   }
   return mlir::success();
 }
@@ -44,6 +51,14 @@ bool nbdl_spec::isPathPrefix(PathType Prefix, PathType P) {
 
 bool nbdl_spec::mayAliasPaths(PathType A, PathType B) {
   return isPathPrefix(A, B) || isPathPrefix(B, A);
+}
+
+// Get the path of Keys from a root, which is the unit key if it is empty.
+static PathType getPath(mlir::MLIRContext* Ctx,
+                        llvm::ArrayRef<mlir::TypeAttr> Keys) {
+  if (Keys.empty())
+    return PathType::get(Ctx, mlir::TypeAttr::get(UnitType::get(Ctx)));
+  return PathType::get(Ctx, Keys);
 }
 
 namespace {
@@ -167,7 +182,7 @@ private:
       if (!KeyRoot)
         return {};
       if (KeyRoot == Root)
-        return mlir::TypeAttr::get(PathType::get(Op->getContext(), Keys));
+        return mlir::TypeAttr::get(getPath(Op->getContext(), Keys));
     }
     fail("expecting a member name, a tag, or a store from the same root "
          "as a path key");
@@ -189,7 +204,7 @@ mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(mlir::Operation* Op,
   llvm::SmallVector<mlir::TypeAttr, 4> Keys;
   if (!StorePathResolver(Op, Diagnose).resolve(Store, Keys))
     return mlir::failure();
-  return PathType::get(Op->getContext(), Keys);
+  return getPath(Op->getContext(), Keys);
 }
 
 PathType nbdl_spec::getMatchPath(MatchOp Op) {

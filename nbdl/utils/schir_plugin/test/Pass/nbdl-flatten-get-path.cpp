@@ -73,6 +73,13 @@ struct nbdl::match_impl<foo::boxed> {
 {
 (import (nbdl spec))
 
+; // Give a root the unit key.
+; // CHECK-LABEL: @test_get_path_root(
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.unit>
+(define-fn test_get_path_root ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (visit Sink (get-path (lift-store S))))
+
 ; // Key a member from a lifted root.
 ; // CHECK-LABEL: @test_get_path_member(
 ; // CHECK: "nbdl.get_path"
@@ -181,6 +188,22 @@ struct nbdl::match_impl<foo::boxed> {
      (lambda (App)
        (visit Sink (get-path (get App '.names (get App '.selected))))))))
 
+(define (GetSelected Root) (get Root '.selected))
+(define (GetSelectedName Root) (get Root '.names (GetSelected Root)))
+
+; // Build a path and its nested key with procedures that extend a path.
+; // CHECK-LABEL: @test_get_path_procedures(
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"nbdl::not_in_set">>>
+; // CHECK: "nbdl.get_path"
+; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
+; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+(define-fn test_get_path_procedures ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (visit Sink (get-path (GetSelectedName (lift-store S)))))
+
 ; // Key a tag.
 ; // CHECK-LABEL: @test_get_path_tag(
 ; // CHECK: "nbdl.get_path"
@@ -191,7 +214,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // Leave the path of a parameter of a match-fn until it is inlined.
 ; // CHECK-LABEL: @test_get_path_callee(
 ; // CHECK: "nbdl.get_path"(%arg0)
-; // CHECK-SAME: -> !nbdl.unknown
+; // CHECK-SAME: -> !nbdl.path{{$}}
 (define-match-fn test_get_path_callee (X Fn)
   (visit Fn (get-path X)))
 

@@ -1433,12 +1433,19 @@ struct ExpandMatchPath : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
 
     // Build the matches of the path from the root to its node.
     void build() {
-      buildKeys(Root, nbdl_spec::getMatchPath(Op).getKeys(),
+      buildKeys(Root, getKeys(nbdl_spec::getMatchPath(Op)),
                 [&](mlir::Value Node) { buildThen(Node); });
     }
 
   private:
     using Continuation = llvm::function_ref<void(mlir::Value)>;
+
+    // Get the keys of Path from the root (none for the root itself).
+    static llvm::ArrayRef<mlir::TypeAttr> getKeys(nbdl_spec::PathType Path) {
+      if (Path.isRoot())
+        return {};
+      return Path.getKeys();
+    }
 
     // Match each of Keys from Store and call Cont with the node.
     void buildKeys(mlir::Value Store, llvm::ArrayRef<mlir::TypeAttr> Keys,
@@ -1467,7 +1474,7 @@ struct ExpandMatchPath : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
       } else {
         // Match the nested path from the root to get the key.
         auto Nested = cast<nbdl_spec::PathType>(Key);
-        buildKeys(Root, Nested.getKeys(), [&](mlir::Value KeyStore) {
+        buildKeys(Root, getKeys(Nested), [&](mlir::Value KeyStore) {
           buildMatch(KeyStore, {}, nbdl_spec::StoreType::get(Ctx),
                      [&](mlir::Value KeyVal) {
             buildMatch(Store, KeyVal, nbdl_spec::StoreType::get(Ctx), Next);
@@ -1517,8 +1524,11 @@ struct ExpandMatchPath : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
 
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::MatchOp Op, mlir::PatternRewriter& Rewriter) const override {
-    if (!nbdl_spec::getMatchPath(Op))
+    nbdl_spec::PathType Path = nbdl_spec::getMatchPath(Op);
+    if (!Path)
       return Rewriter.notifyMatchFailure(Op, "match is not a path match");
+    if (!Path.isResolved())
+      return Rewriter.notifyMatchFailure(Op, "path is not resolved");
     if (Op->getParentOfType<nbdl_spec::DefineMatchFnOp>())
       return Rewriter.notifyMatchFailure(Op, "path match is in a match-fn");
     if (Op.getOverloads().size() != 2)
@@ -1526,10 +1536,14 @@ struct ExpandMatchPath : mlir::OpRewritePattern<nbdl_spec::MatchOp> {
           "expecting a then and an else overload");
     mlir::FailureOr<nbdl_spec::PathType> StorePath =
       nbdl_spec::resolveStorePath(Op, Op.getStore(), /*Diagnose=*/false);
-    if (llvm::failed(StorePath) || !StorePath->getKeys().empty())
+    if (llvm::failed(StorePath) || !StorePath->isRoot())
       return Rewriter.notifyMatchFailure(Op, "store is not a known root");
     Builder(Op, Rewriter).build();
+    mlir::Operation* Key = Op.getKey().getDefiningOp();
     Rewriter.eraseOp(Op);
+    // Erase the get_path of the key since it does not translate to C++.
+    if (Key && Key->use_empty())
+      Rewriter.eraseOp(Key);
     return llvm::success();
   }
 };
@@ -1571,7 +1585,7 @@ struct ResolveGetPath : mlir::OpRewritePattern<nbdl_spec::GetPathOp> {
   llvm::LogicalResult matchAndRewrite(
       nbdl_spec::GetPathOp Op,
       mlir::PatternRewriter& Rewriter) const override {
-    if (isa<nbdl_spec::PathType>(Op.getType()))
+    if (Op.getType().isResolved())
       return Rewriter.notifyMatchFailure(Op, "path already resolved");
     if (Op->getParentOfType<nbdl_spec::DefineMatchFnOp>())
       return Rewriter.notifyMatchFailure(Op, "path is in a match-fn");
@@ -1677,7 +1691,7 @@ llvm::LogicalResult resolveStorePaths(mlir::Operation* Root) {
     if (isa<nbdl_spec::DefineMatchFnOp>(Op))
       return mlir::WalkResult::skip();
     auto GetPath = dyn_cast<nbdl_spec::GetPathOp>(Op);
-    if (!GetPath || isa<nbdl_spec::PathType>(GetPath.getType()))
+    if (!GetPath || GetPath.getType().isResolved())
       return mlir::WalkResult::advance();
     mlir::FailureOr<nbdl_spec::PathType> Path =
       nbdl_spec::resolveStorePath(GetPath, GetPath.getStore(),
@@ -1889,8 +1903,8 @@ llvm::LogicalResult runInferencePasses(mlir::Operation* Op,
     return llvm::failure();
   if (llvm::failed(resolveStoreParents(Op)) ||
       llvm::failed(checkStoreParents(Op)) ||
-      llvm::failed(checkMatchPaths(Op)) ||
-      llvm::failed(resolveStorePaths(Op)))
+      llvm::failed(resolveStorePaths(Op)) ||
+      llvm::failed(checkMatchPaths(Op)))
     return llvm::failure();
 
   // It is an error to visit a return closure in another function.
