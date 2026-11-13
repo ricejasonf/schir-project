@@ -39,6 +39,9 @@ llvm::LogicalResult canonicalizeCppTypes(mlir::Operation* Op,
 // Register passes that can be run via a pass pipeline string.
 void registerPasses();
 
+// Attach the ValueAccess interface to nbdl operations.
+void registerValueAccess(mlir::DialectRegistry& Registry);
+
 // The attribute that marks a function to be called from C++ via a
 // C adapter created by the nbdl-c-adapter pass. Its value is the
 // function type before lowering to LLVM.

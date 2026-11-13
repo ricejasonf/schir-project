@@ -10,6 +10,7 @@ add_lit_testsuite(check-nbdl "Running Nbdl tests"
   DEPENDS
   Nbdl
   Geomalg
+  Schlap
   schir-scheme
   schir
   SchirClang

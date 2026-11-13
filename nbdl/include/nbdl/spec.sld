@@ -2005,6 +2005,7 @@
     ;; Stuff that should be broken out as a common details lib
     top-level-op
     make-named-fn
+    named-fn-op
     write-cpp
     dump-op
     dump-nbdl-module

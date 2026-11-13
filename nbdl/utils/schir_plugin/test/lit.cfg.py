@@ -25,6 +25,7 @@ config.excludes = [
 config.substitutions.append(('%schir_module_path', config.schir_module_path))
 config.substitutions.append(('%nbdl_module_path', config.nbdl_module_path))
 config.substitutions.append(('%geomalg_module_path', config.geomalg_module_path))
+config.substitutions.append(('%schlap_module_path', config.schlap_module_path))
 
 # TODO Find SDL3 in CMake and pass its paths via lit.site.cfg.py instead
 #      of relying on the default paths here and in the tests' -lSDL3.
