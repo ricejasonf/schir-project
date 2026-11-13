@@ -38,6 +38,7 @@ include_directories(${CMAKE_SOURCE_DIR}/schir/include)
 set(SCHIR_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/schir/include)
 set(NBDL_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/nbdl/include)
 set(GEOMALG_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/geomalg/include)
+set(SCHLAP_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/schlap/include)
 set(SCHIR_PREBUILD_MODULE_PATH ${CMAKE_BINARY_DIR}/schir-modules
     CACHE PATH "Directory of prebuilt Scheme module files")
 
@@ -58,11 +59,13 @@ endif()
 add_subdirectory(common)
 add_subdirectory(schir)
 add_subdirectory(geomalg)
+add_subdirectory(schlap)
 add_subdirectory(nbdl/utils/schir_plugin)
 
 add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 # TODO Make a dynamic list of check targets.
 add_dependencies(check check-schir)
 add_dependencies(check check-geomalg)
+add_dependencies(check check-schlap)
 add_dependencies(check check-nbdl)
 add_dependencies(check SchirUnitTests)

@@ -61,4 +61,31 @@ def SchirCommon_InferableReturn : OpInterface<"InferableReturn"> {
   }];
 }
 
+def SchirCommon_ValueAccess : OpInterface<"ValueAccess"> {
+  let description = [{
+    State the value that each result or block argument of an operation is
+    read from, the operands it mutates, and the operands it uses.
+  }];
+  let cppNamespace = "schir_common";
+
+  let methods = [
+    InterfaceMethod<[{
+        Return the value that a value introduced by the operation is read
+        from or null if it is not read from a value.
+      }],
+      "::mlir::Value", "getReadFrom", (ins "::mlir::Value":$introduced),
+      "", [{ return {}; }]>,
+    InterfaceMethod<[{
+        Return true if the operation mutates the value of the operand.
+      }],
+      "bool", "isMutated", (ins "::mlir::OpOperand&":$operand),
+      "", [{ return false; }]>,
+    InterfaceMethod<[{
+        Return true if the operation uses the value of the operand.
+      }],
+      "bool", "isUsed", (ins "::mlir::OpOperand&":$operand),
+      "", [{ return true; }]>
+  ];
+}
+
 #endif // SCHIR_COMMON_INTERFACES_TD
