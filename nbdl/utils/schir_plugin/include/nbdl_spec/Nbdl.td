@@ -631,6 +631,8 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     be wrapped in a SFINAE check which only has meaning
     as the operand to a conditional.
 
+    The mut unit attribute indicates the call may mutate its arguments.
+
     If arguments are verified to be a valid mapping from
     C++ types to MLIR types, then we set the ValidCppCrossMap
     unit attribute. This means a C++ function will call, by its
@@ -640,6 +642,7 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let arguments = (ins AnyType:$fn,
                        Variadic<AnyType>:$args,
                        UnitAttr:$sfinae,
+                       UnitAttr:$mut,
                        UnitAttr:$validCppCrossMap);
   let results = (outs AnyType:$result);
   let extraClassDeclaration = [{

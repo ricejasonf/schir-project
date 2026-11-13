@@ -1190,9 +1190,13 @@
     (define (discarded-loc Obj)
       (and (discarded? Obj) (%discard-loc Obj)))
 
-    (define (build-visit MatchingResults? Sfinae? Loc Results)
+    (define (build-visit MatchingResults? Sfinae? Mut? Loc Results)
       (define SfinaeAttr
         (if Sfinae?
+          (unit-attr)
+          #f))
+      (define MutAttr
+        (if Mut?
           (unit-attr)
           #f))
       ;; The result is not a store.
@@ -1205,13 +1209,13 @@
           (create-op "nbdl.visit"
                      (loc: Loc)
                      (operands: Results)
-                     (attributes: ("sfinae" SfinaeAttr))
+                     (attributes: ("sfinae" SfinaeAttr) ("mut" MutAttr))
                      (result-types: ResultType))))
       (if MatchingResults?
         VisitResult
         (build-discard Loc VisitResult)))
 
-    (define (visit-aux-aux MatchingResults? Sfinae? Loc ParamsSpec)
+    (define (visit-aux-aux MatchingResults? Sfinae? Mut? Loc ParamsSpec)
       (close-previous-scope)
       ;; This %expr is for the whole visit expr (ie its result).
       (if MatchingResults?
@@ -1225,7 +1229,8 @@
                   ;; The result may be a value, a literal,
                   ;; or another expr.
                   (%match-expr Loc (apply Callee (cdr Results)) Fn)
-                  (Fn (build-visit MatchingResults? Sfinae? Loc Results)))))))
+                  (Fn (build-visit MatchingResults? Sfinae? Mut? Loc
+                                   Results)))))))
         (begin
           (%match-results ; Sfinae is #f
             ParamsSpec
@@ -1236,12 +1241,12 @@
                 ;; (e.g. a visit in its body is discarded.)
                 (%top-level
                   (lambda () (apply Callee (cdr Results))))
-                (build-visit MatchingResults? #f Loc Results))))
+                (build-visit MatchingResults? #f Mut? Loc Results))))
           (%make-discard Loc))))
 
     (define-syntax visit-aux
       (syntax-rules ()
-        ((visit-aux Sfinae? Callee StoreN ...)
+        ((visit-aux Sfinae? Mut? Callee StoreN ...)
          (let ()
            (define MatchingResults? matching-results?)
            (define CalleeLoc (syntax-source-loc Callee))
@@ -1249,7 +1254,7 @@
              (list
                (%single-expr+ Callee)
                (%single-expr StoreN) ...))
-           (visit-aux-aux matching-results? Sfinae? CalleeLoc ParamsSpec)
+           (visit-aux-aux matching-results? Sfinae? Mut? CalleeLoc ParamsSpec)
            ))))
 
     ;; Analogous to std::visit but it takes stores
@@ -1263,7 +1268,13 @@
     (define-syntax visit
       (syntax-rules ()
         ((visit Callee StoreN ...)
-         (visit-aux #f Callee StoreN ...))))
+         (visit-aux #f #f Callee StoreN ...))))
+
+    ;; Visit like visit and allow the callee to mutate its arguments.
+    (define-syntax visit!
+      (syntax-rules ()
+        ((visit! Callee StoreN ...)
+         (visit-aux #f #t Callee StoreN ...))))
 
     ;; Create sfinae friendly visit when used as the direct input
     ;; to match-if conditional argument. The boundaries of the
@@ -1272,7 +1283,7 @@
     (define-syntax sfinae-visit
       (syntax-rules ()
         ((sfinae-visit Callee StoreN ...)
-         (visit-aux #t Callee StoreN ...))))
+         (visit-aux #t #f Callee StoreN ...))))
 
     ;; Make a store callable (in scheme) strictly for use
     ;; with syntax that use => on procs or stores
@@ -1533,7 +1544,7 @@
                 (list (make-list ArgCount !nbdl.unknown)
                       (lambda Args
                         (visit-aux-aux
-                          matching-results? #f Loc
+                          matching-results? #f #f Loc
                           (cons (%single-expr+ Loc MatchFn)
                                 (map (lambda (Arg)
                                        (%single-expr
@@ -1956,6 +1967,7 @@
     register-lowering-pass
     match-params
     visit
+    visit!
     sfinae-visit
     noop
     export-cpp
