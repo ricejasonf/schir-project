@@ -1,39 +1,30 @@
-; RUN: schir-scheme -I=%schir_module_path %s | FileCheck %s
+; RUN: schir-scheme --mode=repl --module-path=%schir_module_path %s | FileCheck %s
 (import (schir base))
 
 ; CHECK: -1
-(write
-  (call-with-values * -))
-(newline)
+(call-with-values * -)
 
-; CHECK: nothing
+; CHECK-NEXT: nothing
 (call-with-values
   (lambda () (values))
-  (lambda () (write 'nothing)))
-(newline)
+  (lambda () 'nothing))
 
 ; CHECK-NEXT: 4
-(write
-  (call-with-values
-    (lambda () (values 4 5))
-    (lambda (a b) a)))
-(newline)
+(call-with-values
+  (lambda () (values 4 5))
+  (lambda (a b) a))
 
 ; CHECK-NEXT: 5
-(write
-  (call-with-values
-    (lambda () (values 4 5))
-    (lambda (a b) b)))
-(newline)
+(call-with-values
+  (lambda () (values 4 5))
+  (lambda (a b) b))
 
 ; CHECK-NEXT: 32
-(write
-  (call-with-values
-    (lambda () (values 1 1 2 4 8 16))
-    +))
-(newline)
+(call-with-values
+  (lambda () (values 1 1 2 4 8 16))
+  +)
 
-; CHECK-NEXT: (1 2 3 4 (5 6) (7 8 9) ())
+; CHECK-NEXT: (1 2 3 4 (5 6) () (7 8 9) ())
 ((lambda ()
   (define-values ()
       (values))
@@ -43,11 +34,10 @@
       (values 2 3))
   (define-values (u . List1)
       (values 4 5 6))
-  (define-values List2
+  (define-values (v . List2)
+      (values 4))
+  (define-values List3
       (values 7 8 9))
   (define-values EmptyList
       (values))
-  (write (list x y z u List1 List2 EmptyList))
-  (newline)
-  ))
-(newline)
+  (list x y z u List1 List2 List3 EmptyList)))

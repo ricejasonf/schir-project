@@ -28,13 +28,11 @@
     ; Placeholder implementation based on R7RS
     (define-syntax define-values
       (syntax-rules ()
-        ((define-values (var) expr)
-         (define var expr))
         ((define-values (varI ...) expr)
          (begin
            (define Hidden
              (call-with-values (lambda () expr)
-                               list))
+                               (lambda (varI ...) (list varI ...))))
            (define varI
              (let ((v (car Hidden)))
                (set! Hidden (cdr Hidden))
@@ -43,15 +41,16 @@
          (begin
            (define Hidden
              (call-with-values (lambda () expr)
-                               list))
+                               (lambda (varI ... . varN)
+                                 (list varI ... varN))))
            (define varI
              (let ((v (car Hidden)))
                (set! Hidden (cdr Hidden))
                v)) ...
            (define varN
-             (let ((v Hidden))
+             (let ((v (car Hidden)))
                (set! Hidden '())
-               (dump v)))))
+               v))))
         ((define-values varN expr)
          (define varN
            (call-with-values (lambda () expr)
