@@ -50,8 +50,19 @@ private:
   }
 };
 
-// Hold the declarations the kernel accepted in this process.
-schlap::AcceptedDecls KernelAccepted;
+// Hold the declarations the kernel accepted in a context.
+schir::ContextLocal KernelAccepted;
+
+// Return the declarations the kernel accepted in C.
+schlap::AcceptedDecls& getKernelAccepted(schir::Context& C) {
+  if (auto* Accepted =
+          schir::any_cast<schlap::AcceptedDecls>(KernelAccepted.get(C)))
+    return *Accepted;
+  auto New = std::make_shared<schlap::AcceptedDecls>();
+  schlap::AcceptedDecls& Accepted = *New;
+  KernelAccepted.set(C, C.CreateSharedAny(std::move(New)));
+  return Accepted;
+}
 }  // namespace
 
 extern "C" {
@@ -176,7 +187,7 @@ void schlap_discard_declaration(schir::Context& C, schir::ValueRefs Args) {
   if (!Op || !isa<schlap::TheoremOp, schlap::DefinitionOp,
                   schlap::AxiomOp>(Op))
     return C.RaiseError("expecting a schlap declaration: {}", Args[0]);
-  KernelAccepted.erase(Op);
+  getKernelAccepted(C).erase(Op);
   Op->erase();
   C.Cont();
 }
@@ -213,11 +224,12 @@ void schlap_check_declaration(schir::Context& C, schir::ValueRefs Args) {
     }).str();
   };
 
+  schlap::AcceptedDecls& Accepted = getKernelAccepted(C);
   llvm::StringRef Name = mlir::SymbolTable::getSymbolName(Op);
   schir::Value NameSym = C.CreateSymbol(Name);
   llvm::LogicalResult Result = schir::mlir_helper::WithDiagnosticsHandler(
       C, SourceLoc(Op->getLoc()),
-      [&] { return schlap::checkDeclaration(Op, KernelAccepted, VarName); },
+      [&] { return schlap::checkDeclaration(Op, Accepted, VarName); },
       "declaration does not check: {}", NameSym);
   if (mlir::failed(Result)) {
     Op->erase();
@@ -225,7 +237,7 @@ void schlap_check_declaration(schir::Context& C, schir::ValueRefs Args) {
   }
 
   llvm::SmallVector<schir::Value> Axioms;
-  for (auto Ref : KernelAccepted.lookup(Op)
+  for (auto Ref : Accepted.lookup(Op)
                       .getAsRange<mlir::FlatSymbolRefAttr>())
     Axioms.push_back(C.CreateSymbol(Ref.getValue()));
   C.Cont(C.CreateList(Axioms));
