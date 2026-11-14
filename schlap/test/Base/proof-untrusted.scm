@@ -48,7 +48,23 @@
                (result-types: !schlap.unknown))))
 
 ; CHECK: "declaration does not check: uses-forged"
-; CHECK-NEXT: "'forged' did not check"
+; CHECK-NEXT: "'forged' is not declared before this"
 (write-error (lambda ()
   (define-theorem uses-forged ⊥ forged)
+  #t))
+
+;; Test that changing an accepted theorem from Scheme does not change what
+;; it proves.
+(define-theorem trivial ⊤ ⊤-intro)
+
+(with-builder (lambda ()
+  (at-block-end
+    (entry-block
+      (get-region (module-lookup schlap-current-module "trivial") 0)))
+  (yield* Loc (false* Loc))))
+
+; CHECK-NEXT: "declaration does not check: uses-trivial"
+; CHECK-NEXT: "expected '⊥' but got '⊤'"
+(write-error (lambda ()
+  (define-theorem uses-trivial ⊥ trivial)
   #t))

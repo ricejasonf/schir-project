@@ -51,17 +51,17 @@ private:
 };
 
 // Hold the declarations the kernel accepted in a context.
-schir::ContextLocal KernelAccepted;
+schir::ContextLocal KernelStateLocal;
 
 // Return the declarations the kernel accepted in C.
-schlap::AcceptedDecls& getKernelAccepted(schir::Context& C) {
-  if (auto* Accepted =
-          schir::any_cast<schlap::AcceptedDecls>(KernelAccepted.get(C)))
-    return *Accepted;
-  auto New = std::make_shared<schlap::AcceptedDecls>();
-  schlap::AcceptedDecls& Accepted = *New;
-  KernelAccepted.set(C, C.CreateSharedAny(std::move(New)));
-  return Accepted;
+schlap::KernelState& getKernelState(schir::Context& C) {
+  if (auto* State =
+          schir::any_cast<schlap::KernelState>(KernelStateLocal.get(C)))
+    return *State;
+  auto New = std::make_shared<schlap::KernelState>(C.MLIRContext.get());
+  schlap::KernelState& State = *New;
+  KernelStateLocal.set(C, C.CreateSharedAny(std::move(New)));
+  return State;
 }
 }  // namespace
 
@@ -187,7 +187,6 @@ void schlap_discard_declaration(schir::Context& C, schir::ValueRefs Args) {
   if (!Op || !isa<schlap::TheoremOp, schlap::DefinitionOp,
                   schlap::AxiomOp>(Op))
     return C.RaiseError("expecting a schlap declaration: {}", Args[0]);
-  getKernelAccepted(C).erase(Op);
   Op->erase();
   C.Cont();
 }
@@ -201,10 +200,6 @@ void schlap_check_declaration(schir::Context& C, schir::ValueRefs Args) {
   if (!Op || !isa<schlap::TheoremOp, schlap::DefinitionOp,
                   schlap::AxiomOp>(Op))
     return C.RaiseError("expecting a schlap declaration: {}", Args[0]);
-  auto Module = dyn_cast_or_null<mlir::ModuleOp>(Op->getParentOp());
-  if (!Module)
-    return C.RaiseError("expecting a declaration in a module: {}", Args[0]);
-
   auto SourceLoc = [](mlir::Location Loc) {
     return schir::SourceLocation(mlir::OpaqueLoc
       ::getUnderlyingLocationOrNull<schir::SourceLocationEncoding*>(Loc));
@@ -224,12 +219,20 @@ void schlap_check_declaration(schir::Context& C, schir::ValueRefs Args) {
     }).str();
   };
 
-  schlap::AcceptedDecls& Accepted = getKernelAccepted(C);
+  schlap::KernelState& State = getKernelState(C);
   llvm::StringRef Name = mlir::SymbolTable::getSymbolName(Op);
   schir::Value NameSym = C.CreateSymbol(Name);
+  mlir::ArrayAttr AxiomRefs;
   llvm::LogicalResult Result = schir::mlir_helper::WithDiagnosticsHandler(
       C, SourceLoc(Op->getLoc()),
-      [&] { return schlap::checkDeclaration(Op, Accepted, VarName); },
+      [&] {
+        llvm::FailureOr<mlir::ArrayAttr> Refs =
+            schlap::checkDeclaration(Op, State, VarName);
+        if (mlir::failed(Refs))
+          return mlir::failure();
+        AxiomRefs = *Refs;
+        return mlir::success();
+      },
       "declaration does not check: {}", NameSym);
   if (mlir::failed(Result)) {
     Op->erase();
@@ -237,8 +240,7 @@ void schlap_check_declaration(schir::Context& C, schir::ValueRefs Args) {
   }
 
   llvm::SmallVector<schir::Value> Axioms;
-  for (auto Ref : Accepted.lookup(Op)
-                      .getAsRange<mlir::FlatSymbolRefAttr>())
+  for (auto Ref : AxiomRefs.getAsRange<mlir::FlatSymbolRefAttr>())
     Axioms.push_back(C.CreateSymbol(Ref.getValue()));
   C.Cont(C.CreateList(Axioms));
 }

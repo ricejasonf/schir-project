@@ -3,7 +3,7 @@
 
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/BuiltinOps.h>
-#include <llvm/ADT/DenseMap.h>
+#include <mlir/IR/OwningOpRef.h>
 #include <llvm/ADT/STLFunctionalExtras.h>
 #include <string>
 
@@ -11,18 +11,30 @@ namespace schlap {
 // Return the source name of the variable bound at a location or "".
 using VarNameFn = llvm::function_ref<std::string(mlir::Location)>;
 
-// Map each declaration the kernel accepted to the axioms it depends on.
-using AcceptedDecls = llvm::DenseMap<mlir::Operation*, mlir::ArrayAttr>;
-
 // Check every theorem, definition and axiom in Module whatever attributes
 // it carries.
 llvm::LogicalResult checkProofs(mlir::ModuleOp Module, VarNameFn VarName);
 
-// Check Decl against the declarations before it that are in Accepted and
-// add it to Accepted if it checks.
-llvm::LogicalResult checkDeclaration(mlir::Operation* Decl,
-                                     AcceptedDecls& Accepted,
-                                     VarNameFn VarName);
+class KernelState;
+
+// Check Decl against the declarations State accepted, add a copy of Decl to
+// State if it checks, and return the axioms Decl depends on.
+llvm::FailureOr<mlir::ArrayAttr> checkDeclaration(mlir::Operation* Decl,
+                                                  KernelState& State,
+                                                  VarNameFn VarName);
+
+// Hold copies of the declarations the kernel accepted where only the kernel
+// can reach them.
+class KernelState {
+  mlir::OwningOpRef<mlir::ModuleOp> Module;
+
+  friend llvm::FailureOr<mlir::ArrayAttr>
+  checkDeclaration(mlir::Operation* Decl, KernelState& State,
+                   VarNameFn VarName);
+
+public:
+  explicit KernelState(mlir::MLIRContext* Context);
+};
 }  // namespace schlap
 
 #endif  // SCHLAP_KERNEL_H

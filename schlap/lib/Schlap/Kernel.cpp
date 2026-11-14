@@ -461,7 +461,8 @@ class Kernel {
 
   // Map each name to its first declaration.
   llvm::StringMap<Operation*> Declared;
-  schlap::AcceptedDecls& Accepted;
+  // Map each accepted declaration to the axioms it depends on.
+  llvm::DenseMap<Operation*, mlir::ArrayAttr> Accepted;
   llvm::StringMap<schlap::DefinitionOp> Definitions;
 
   // Hold the state of the declaration being checked.
@@ -474,9 +475,8 @@ class Kernel {
   bool Quiet = false;
 
 public:
-  Kernel(mlir::ModuleOp Module, schlap::AcceptedDecls& Accepted,
-         schlap::VarNameFn VarName)
-      : Module(Module), VarName(VarName), Accepted(Accepted),
+  Kernel(mlir::ModuleOp Module, schlap::VarNameFn VarName)
+      : Module(Module), VarName(VarName),
         Unknown(schlap::UnknownType::get(Module.getContext())),
         Builder(Module.getContext()) {
     mlir::MLIRContext* Context = Module.getContext();
@@ -490,35 +490,52 @@ public:
     NormalizePatterns = std::move(Normalize);
   }
 
-  // Check every declaration, or only Selected against the accepted
-  // declarations before it.
-  LogicalResult run(Operation* Selected) {
+  // Check every declaration of the module.
+  LogicalResult run() {
     bool Failed = false;
     for (Operation& Op : *Module.getBody()) {
-      if (!isa<schlap::TheoremOp, schlap::DefinitionOp, schlap::AxiomOp>(Op))
+      if (!isDeclaration(Op))
         continue;
       llvm::StringRef Name = mlir::SymbolTable::getSymbolName(&Op);
-      bool Checking = !Selected || &Op == Selected;
       if (!Declared.try_emplace(Name, &Op).second) {
-        if (Checking) {
-          Op.emitError() << "redefinition of '" << Name << "'";
-          Failed = true;
-        }
-      } else if (!Checking) {
-        if (Accepted.contains(&Op))
-          addDefinition(&Op);
+        Op.emitError() << "redefinition of '" << Name << "'";
+        Failed = true;
       } else if (succeeded(checkDeclaration(&Op))) {
         addDefinition(&Op);
       } else {
         Failed = true;
       }
-      if (&Op == Selected)
-        break;
     }
     return mlir::failure(Failed);
   }
 
+  // Check Decl against the accepted declarations of the module, add a copy
+  // of Decl to the module if Decl checks, and return the axioms Decl
+  // depends on.
+  FailureOr<mlir::ArrayAttr> run(Operation* Decl) {
+    mlir::ArrayAttr NoAxioms = mlir::ArrayAttr::get(Decl->getContext(), {});
+    for (Operation& Op : *Module.getBody()) {
+      Declared.try_emplace(mlir::SymbolTable::getSymbolName(&Op), &Op);
+      auto Axioms = Op.getAttrOfType<mlir::ArrayAttr>("axioms");
+      Accepted[&Op] = Axioms ? Axioms : NoAxioms;
+      addDefinition(&Op);
+    }
+
+    llvm::StringRef Name = mlir::SymbolTable::getSymbolName(Decl);
+    if (!Declared.try_emplace(Name, Decl).second)
+      return Decl->emitError() << "redefinition of '" << Name << "'";
+    if (failed(checkDeclaration(Decl)))
+      return failure();
+    Module.getBody()->push_back(Decl->clone());
+    return Accepted.lookup(Decl);
+  }
+
 private:
+  // Return true if Op is a theorem, definition or axiom.
+  static bool isDeclaration(Operation& Op) {
+    return isa<schlap::TheoremOp, schlap::DefinitionOp, schlap::AxiomOp>(Op);
+  }
+
   void addDefinition(Operation* Op) {
     if (auto Definition = dyn_cast<schlap::DefinitionOp>(Op))
       Definitions[Definition.getSymName()] = Definition;
@@ -1289,13 +1306,14 @@ public:
 }  // namespace
 
 LogicalResult schlap::checkProofs(mlir::ModuleOp Module, VarNameFn VarName) {
-  AcceptedDecls Accepted;
-  return Kernel(Module, Accepted, VarName).run(nullptr);
+  return Kernel(Module, VarName).run();
 }
 
-LogicalResult schlap::checkDeclaration(Operation* Decl,
-                                       AcceptedDecls& Accepted,
-                                       VarNameFn VarName) {
-  auto Module = cast<mlir::ModuleOp>(Decl->getParentOp());
-  return Kernel(Module, Accepted, VarName).run(Decl);
+schlap::KernelState::KernelState(mlir::MLIRContext* Context)
+    : Module(mlir::ModuleOp::create(mlir::UnknownLoc::get(Context))) {}
+
+FailureOr<mlir::ArrayAttr> schlap::checkDeclaration(Operation* Decl,
+                                                   KernelState& State,
+                                                   VarNameFn VarName) {
+  return Kernel(*State.Module, VarName).run(Decl);
 }
