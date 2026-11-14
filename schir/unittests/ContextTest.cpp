@@ -9,6 +9,10 @@
 #include "schir/Context.h"
 #include "schir/Value.h"
 
+#include <mlir/IR/Dialect.h>
+#include <mlir/IR/MLIRContext.h>
+#include <mlir/Support/TypeID.h>
+
 #include <gtest/gtest.h>
 
 namespace {
@@ -236,5 +240,52 @@ TEST(ContextTest, SharedAnyLifetime) {
   GlobalVar.set(Context, schir::Bool(false));
   // TODO Run GC.
   //EXPECT_FALSE(IsAlive);
+}
+
+// Record whether an MLIR context holds the test dialect.
+bool LifetimeDialectIsAlive = false;
+
+// Define a dialect that records when its MLIR context destroys it.
+class LifetimeDialect : public mlir::Dialect {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LifetimeDialect)
+
+  explicit LifetimeDialect(mlir::MLIRContext* Context)
+    : mlir::Dialect(getDialectNamespace(), Context,
+                    mlir::TypeID::get<LifetimeDialect>()) {
+    LifetimeDialectIsAlive = true;
+  }
+
+  ~LifetimeDialect() override {
+    LifetimeDialectIsAlive = false;
+  }
+
+  static llvm::StringRef getDialectNamespace() { return "lifetime"; }
+};
+
+// Record whether the MLIR context lives when this is destroyed.
+class MLIRContextTracker {
+  bool& HadMLIRContext;
+
+public:
+  explicit MLIRContextTracker(bool& HadMLIRContext)
+    : HadMLIRContext(HadMLIRContext)
+  { }
+
+  ~MLIRContextTracker() {
+    HadMLIRContext = LifetimeDialectIsAlive;
+  }
+};
+
+TEST(ContextTest, SharedAnyOutlivedByMLIRContext) {
+  bool HadMLIRContext = false;
+  {
+    schir::Context Context;
+    Context.MLIRContext->getOrLoadDialect<LifetimeDialect>();
+    Context.CreateSharedAny(
+        std::make_shared<MLIRContextTracker>(HadMLIRContext));
+  }
+  EXPECT_FALSE(LifetimeDialectIsAlive);
+  EXPECT_TRUE(HadMLIRContext);
 }
 }

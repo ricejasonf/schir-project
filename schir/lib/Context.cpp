@@ -108,7 +108,10 @@ Context::Context()
   SCHIR_BASE_INIT(*this);
 }
 
-Context::~Context() = default;
+Context::~Context() {
+  // Destroy shared objects while the MLIR context they may refer to lives.
+  SharedPtrs.clear();
+}
 
 bool Context::CheckError() {
   return OpGen && OpGen->CheckError();
