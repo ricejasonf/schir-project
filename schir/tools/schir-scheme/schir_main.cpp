@@ -30,7 +30,7 @@ namespace cl = llvm::cl;
 
 enum class ExecutionMode {
   none,
-  repl,
+  repl_check,
   read,
   mlir,
 };
@@ -42,10 +42,10 @@ static cl::opt<std::string> InputFilename(cl::Positional,
 static cl::opt<ExecutionMode> InputMode(
   "mode", cl::desc("mode of execution"),
   cl::values(
-    cl::OptionEnumValue{"repl",
-                        (int)ExecutionMode::repl,
-                        "read eval and print loop continuing after errors "
-                        "(not interactive yet)"},
+    cl::OptionEnumValue{"repl-check",
+                        (int)ExecutionMode::repl_check,
+                        "evaluate and print each command, continue after "
+                        "errors, and exit 1 if any occurred"},
     cl::OptionEnumValue{"read",
                         (int)ExecutionMode::read,
                         "just read and print"},
@@ -147,7 +147,7 @@ void ProcessTopLevelExpr(schir::Context& Context, schir::ValueRefs Values) {
   schir::Value Val = Values[0];
   schir::Value Env = Values[1];
   switch (InputMode.getValue()) {
-  case ExecutionMode::repl:
+  case ExecutionMode::repl_check:
     EvalAndPrint(Context, Val, Env);
     return;
   case ExecutionMode::mlir:

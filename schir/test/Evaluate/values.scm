@@ -1,4 +1,4 @@
-; RUN: schir-scheme --mode=repl --module-path=%schir_module_path %s | FileCheck %s
+; RUN: schir-scheme --mode=repl-check --module-path=%schir_module_path %s | FileCheck %s
 (import (schir base))
 
 ; CHECK: -1

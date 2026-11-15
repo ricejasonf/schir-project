@@ -1,4 +1,4 @@
-; RUN: not schir-scheme --mode=repl %s 2>&1 | FileCheck %s
+; RUN: not schir-scheme --mode=repl-check %s 2>&1 | FileCheck %s
 (import (schir builtins))
 
 ; CHECK: dynamic-wind-error.scm:[[@LINE+8]]:18: error: boom
