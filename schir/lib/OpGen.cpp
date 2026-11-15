@@ -1320,7 +1320,7 @@ mlir::Value OpGen::createTopLevelDefine(Value Id, Value DefineArgs,
       mlir::Value Init = VisitDefineArgs(DefineArgs);
       if (!Init)
         return mlir::Value();
-      mlir::Value LocalV = create<LoadGlobalOp>(DefineLoc, MangledNameRef);
+      mlir::Value LocalV = createGlobal(DefineLoc, MangledNameRef);
       return create<SetOp>(DefineLoc, LocalV, Init);
     }
   }

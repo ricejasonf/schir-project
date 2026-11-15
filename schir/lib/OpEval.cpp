@@ -322,15 +322,8 @@ private:
     if (auto* B = dyn_cast<Binding>(V)) {
       setValue(Op.getResult(), B->getValue());
     } else {
-      if (!isa<SchirUnknownType>(Op.getBinding().getType())) {
-        llvm::errs() << "WOOF: ";
-        V.dump();
-        Op.getBinding().dump();
-      }
-      /*
       assert(isa<SchirUnknownType>(Op.getBinding().getType()) &&
           "bindings should be bindings");
-          */
       setValue(Op.getResult(), V);
     }
 
@@ -520,6 +513,11 @@ private:
       schir::SourceLocation Loc = getSourceLocation(Op.getLoc());
       ExternName* EN = Context.CreateExternName(Loc, Op.getName());
       Val = Undefined(EN);
+      // Bind a global whose define never ran so it can still be set.
+      if (isa<SchirBindingType>(Op.getType())) {
+        Val = Context.CreateBinding(Val);
+        Context.AddKnownAddress(Op.getName(), Val);
+      }
     }
     setValue(Op, Val);
     return next(Op);
