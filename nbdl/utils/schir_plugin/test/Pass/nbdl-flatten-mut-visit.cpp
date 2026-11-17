@@ -83,7 +83,7 @@ struct holder {
 ; // CHECK: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK-NEXT: "nbdl.visit"({{.*}}) <{mut}>
 ; // CHECK: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK-NEXT: "nbdl.visit"({{.*}}) <{mut}>
 ; // CHECK: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 ; // CHECK-NEXT: "nbdl.visit"({{.*}}) <{mut}>

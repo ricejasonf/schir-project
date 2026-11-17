@@ -97,7 +97,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"int">>>
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
-; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
 ; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"float">>>
@@ -113,7 +113,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">>):
 ; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK: ^bb0(%{{.*}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"float">>):
 ; // CHECK-NOT: ^bb0
 ; // CHECK: func.func
@@ -132,7 +132,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
 ; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
-; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 (define-fn test_get_path_keyed_match ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (define Root (lift-store S))
   (match (get Root '.names (get Root '.selected))
@@ -181,7 +181,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
 ; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
-; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 (define-fn test_get_path_nested ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (match (lift-store S)
     ('foo::app =>
@@ -200,7 +200,7 @@ struct nbdl::match_impl<foo::boxed> {
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
 ; // CHECK-SAME:   !nbdl.path<!nbdl.member_name<"selected">>,
-; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME:   !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 (define-fn test_get_path_procedures ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
   (visit Sink (get-path (GetSelectedName (lift-store S)))))
 

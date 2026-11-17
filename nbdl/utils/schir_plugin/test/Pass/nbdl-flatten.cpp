@@ -258,7 +258,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // Overload typenames are canonicalized.
 ; // CHECK-LABEL: @test_inline_match_canonical(
 ; // CHECK: [[TEXT:%[0-9]+]] = "nbdl.get"
-; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"std::basic_string<char, std::char_traits<char>, std::allocator<char> >">>
+; // CHECK-SAME: -> !nbdl.store<!nbdl.cpp<"std::{{basic_string<char, std::char_traits<char>, std::allocator<char> >|string}}">>
 ; // CHECK-NOT: "nbdl.match"
 ; // CHECK: [[VISIT0:%[0-9]+]] = "nbdl.visit"(%arg{{[0-9]+}}, [[TEXT]])
 ; // CHECK-NEXT: "nbdl.discard"([[VISIT0]])
@@ -327,7 +327,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 (define-match-fn test_infer_match_single_else_alts (Store Fn)
@@ -347,7 +347,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 (define-match-fn test_infer_match_else_alts (Store Fn)
@@ -366,7 +366,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::not_in_set">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 (define-match-fn test_infer_match_unordered_map_alts (Store Key Fn)
   (match (get Store)
     ('foo::int_to_text =>
@@ -398,7 +398,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 (define-match-fn test_infer_match_variant_holder_value_alts (Store Key Fn)
@@ -420,7 +420,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 (define-match-fn test_infer_match_strong_alias_alts (Store Fn)
@@ -439,7 +439,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"int">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"float">>):
 (define-match-fn test_infer_match_store_compose_key_alts (Store Key Fn)
@@ -459,7 +459,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<!nbdl.cpp<"nbdl::not_in_set">>):
 ; // CHECK: }, {
 ; // CHECK-NEXT: ^bb0(%arg{{[0-9]+}}: !nbdl.store<
-; // CHECK-SAME:   !nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK-SAME:   !nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 (define-match-fn test_infer_match_store_compose_parent_alts (Store Key Fn)
   (match (get Store)
     ('foo::composed =>

@@ -48,7 +48,7 @@ struct bar { };
 ; // Nbdl
 ; // CHECK: !nbdl.cpp<"foo::bar<int>">
 (check-type->cpp "!nbdl.cpp<\"::foo::bar<int>\">")
-; // CHECK-NEXT: !nbdl.cpp<"std::basic_string_view<char, std::char_traits<char> >">
+; // CHECK-NEXT: !nbdl.cpp<"std::{{basic_string_view<char, std::char_traits<char> >|string_view}}">
 (check-bijective "!nbdl.string" "::std::string_view")
 
 ; // Builtin (Depends on nbdl)

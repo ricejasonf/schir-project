@@ -107,10 +107,10 @@ struct nbdl::get_impl<foo::keyed> {
 ; // Select the alternative of a variant that the path names
 ; // and copy the else for each other alternative.
 ; // CHECK-LABEL: @test_match_path_catch_all(
-; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"std::basic_string<{{.*}}>">>):
+; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>):
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"either">,
-; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 ; // CHECK: ^bb0(%{{.*}}: !nbdl.store<!nbdl.cpp<"nbdl::unresolved">>):
 ; // CHECK-NEXT: "nbdl.tag"()
 ; // CHECK-SAME: -> !nbdl.tag<!nbdl.cpp<"nbdl::not_matched">>
@@ -139,7 +139,7 @@ struct nbdl::get_impl<foo::keyed> {
 ; // CHECK: "nbdl.get_path"
 ; // CHECK-SAME: -> !nbdl.path<!nbdl.member_name<"names">,
 ; // CHECK-SAME: !nbdl.path<!nbdl.member_name<"selected">>,
-; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::basic_string<{{.*}}>">>>
+; // CHECK-SAME: !nbdl.match<!nbdl.cpp<"std::{{basic_string<.*>|string}}">>>
 ; // CHECK-NOT: "nbdl.tag"
 ; // CHECK: func.func
 (define-fn test_match_path_nested ((S : 'foo::app) (Proto : 'foo::app)
