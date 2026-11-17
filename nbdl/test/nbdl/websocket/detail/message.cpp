@@ -6,6 +6,8 @@
 //
 
 #include <boost/asio.hpp>
+#include <boost/hana/map.hpp>
+#include <boost/hana/pair.hpp>
 #include <catch.hpp>
 #include <nbdl/catch.hpp>
 #include <nbdl/run_async.hpp>

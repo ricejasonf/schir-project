@@ -9,6 +9,7 @@
 #include <boost/hana/not_equal.hpp>
 #include <catch.hpp>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace {
@@ -42,6 +43,12 @@ namespace foo {
 {
   (import (nbdl spec))
 
+  (export-cpp
+    my_context
+    some_event_handler
+    receive_event
+    send_event)
+
   (define (ref Store)
     (visit 'std::ref Store))
 
@@ -52,11 +59,10 @@ namespace foo {
     (store-compose '.id (store 'int (init-args: Id))))
 
   (define-match-fn some_event_handler (Ctx Fn)
-    ; // FIXME Should not need .hidden_parent_ to support member name access
     (visit 'nbdl::assign
-           (get Ctx '.hidden_parent_ '.id)
+           (get Ctx '.id)
            (get Ctx html::event_data '.id))
-    (Fn (get Ctx html::event_data '.id)))
+    (visit Fn (get Ctx html::event_data '.id)))
 
   ;; // Simulate an existing use case where we decorate
   ;; // a store with an html::event_data key.
@@ -67,15 +73,18 @@ namespace foo {
       EventHandler
       (store-compose html::event_data ;; // Create local context object
                      EventData ;(ref EventData)
-                     (ref Ctx))
+                     (lift-store (ref Ctx)))
       Fn))
 
   (define-match-fn send_event (Ctx Id Fn)
     (visit receive_event
            (ref Ctx)
            (visit 'html::make_event_data Id)
-           'foo::some_event_handler
+           some_event_handler
            Fn))
+
+  (finalize-module)
+
 }
 }  // namespace foo
 }  // namespace

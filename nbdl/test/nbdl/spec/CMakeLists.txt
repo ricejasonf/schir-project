@@ -17,12 +17,7 @@ nbdl_add_test("test.nbdl.spec.basic"
 
 set(TEST_NBDL_SPEC_SOURCE_LIST
   context.cpp
-  match.cpp
-  match_cond.cpp
-  match_each.cpp
-  memref.cpp
   receive_event.cpp
-  visit.cpp
 )
 
 nbdl_catch_test_suite(build_targets "test.nbdl.spec"

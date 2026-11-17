@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.31)
-include(ExternalProject)
 
 # Toolchain stuff
 if (DEFINED SCHIR_ROOT AND NOT DEFINED Schir_DIR)
@@ -11,6 +10,7 @@ set(CMAKE_C_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang)
 set(CMAKE_CXX_COMPILER ${SCHIR_LLVM_TOOLS_DIR}/clang++)
 
 add_compile_options(-fplugin=${SCHIR_CLANG_PLUGIN_FILE}
+                    -fpass-plugin=${SCHIR_LLVM_PASS_PLUGIN_FILE}
                     -ftemplate-backtrace-limit=0
                     -Wall -Wextra)
 add_compile_definitions(-DBOOST_HANA_CONFIG_ENABLE_STRING_UDL
@@ -20,19 +20,6 @@ include_directories(${SCHIR_MODULES_DIR})
 # Nbdl project
 project(nbdl_project)
 enable_testing()
-
-# If we do not have schir-project installed on the
-# system, add the Schir plugin as an external project
-# since we need it to compile the scheme library
-# using the system compiler.
-# (Just manually build this target when doing local development.)
-ExternalProject_Add(external.schir_plugin
-  SOURCE_DIR ${CMAKE_SOURCE_DIR}/utils/schir_plugin
-  CMAKE_ARGS "-DSchir_DIR=${Schir_DIR}"
-             "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}"
-             "-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}"
-  DOWNLOAD_COMMAND ""
-  UPDATE_COMMAND   "")
 
 add_custom_target(check
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --exclude-regex "individual"
