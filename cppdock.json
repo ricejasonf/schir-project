@@ -5,6 +5,7 @@
   "platforms": {
     "main": {
       "type": "linux_x64",
+      "base_image_revision": "layers:sha256:31d96e1e2dab478ba0fead1bb1b63327951438fa8851f53a8f028fd991b41cc7",
       "build_type": "release",
       "push_tag": "ricejasonf/schir-project",
       "deps": [
