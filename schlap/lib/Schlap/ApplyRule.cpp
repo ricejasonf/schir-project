@@ -443,7 +443,9 @@ private:
         std::string Symbol = getUniqueName(ActionName);
         auto Action = schlap::ActionOp::create(B, Loc, Symbol);
         RegionBuilder R(*this, Action.getBody(), Loc);
-        Value F = R.conj(R.pcIs(P), R.nextPcIs(Target));
+        Value At = R.pcIs(P);
+        Value Next = R.nextPcIs(Target);
+        Value F = R.conj(At, Next);
         Value Effect;
         if (S.Action) {
           auto Yield = cast<schlap::YieldOp>(
@@ -467,8 +469,10 @@ private:
       RegionBuilder R(*this, Action.getBody(), FnLoc);
       llvm::SmallVector<Value> Vars(RuleVars);
       Vars.push_back(Pc);
-      R.yield(R.conj(R.pcIs(End),
-                     schlap::UnchangedOp::create(R.B, FnLoc, Unknown, Vars)));
+      Value AtEnd = R.pcIs(End);
+      Value Unchanged =
+          schlap::UnchangedOp::create(R.B, FnLoc, Unknown, Vars);
+      R.yield(R.conj(AtEnd, Unchanged));
       Actions.push_back({Symbol, FnLoc});
     }
 

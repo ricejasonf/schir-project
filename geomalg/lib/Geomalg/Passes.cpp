@@ -1933,16 +1933,18 @@ llvm::LogicalResult ExpandExp::matchAndRewrite(
   mlir::Value Phi = S.sqrt(PhiSq);
   mlir::Value Cos = S.cos(Phi);
   mlir::Value Small = S.constant(SmallAngleSq);
-  mlir::Value Sinc = S.selectLt(PhiSq, Small, S.constant(1.0f),
-                                S.div(S.sin(Phi), Phi));
+  mlir::Value One = S.constant(1.0f);
+  mlir::Value SinOverPhi = S.div(S.sin(Phi), Phi);
+  mlir::Value Sinc = S.selectLt(PhiSq, Small, One, SinOverPhi);
   mlir::Value Result;
   if (Parts.Translations.empty()) {
     Result = S.add(Cos, S.mul(Sinc, B));
   } else {
     mlir::Value Bt = createSum(Rewriter, Loc, Parts.Translations);
     mlir::Value W = OuterProdOp::create(Rewriter, Loc, Br, Bt);
-    mlir::Value Q = S.selectLt(PhiSq, Small, S.constant(0.0f),
-                               S.div(S.sub(Sinc, Cos), PhiSq));
+    mlir::Value Zero = S.constant(0.0f);
+    mlir::Value QExact = S.div(S.sub(Sinc, Cos), PhiSq);
+    mlir::Value Q = S.selectLt(PhiSq, Small, Zero, QExact);
     mlir::Value BrW = GeomProdOp::create(Rewriter, Loc, Br, W);
     std::array<mlir::Value, 3> Terms = {Cos,
                                         S.mul(Sinc, S.add(B, W)),
@@ -1989,12 +1991,18 @@ llvm::LogicalResult ExpandLog::matchAndRewrite(
   mlir::Value AbsS = HasScalar ? S.selectLt(Sc, Zero, S.neg(Sc), Sc) : Zero;
   mlir::Value AngleRatio = S.div(S.atan2(R, AbsS), R);
   mlir::Value BCoeff = AngleRatio;
-  mlir::Value PCoeff = HasScalar
-    ? S.div(S.sub(S.constant(1.0f), S.mul(AbsS, AngleRatio)), RSq)
-    : S.inv(RSq);
+  mlir::Value PCoeff;
+  if (HasScalar) {
+    mlir::Value One = S.constant(1.0f);
+    mlir::Value Angle = S.mul(AbsS, AngleRatio);
+    PCoeff = S.div(S.sub(One, Angle), RSq);
+  } else {
+    PCoeff = S.inv(RSq);
+  }
   if (HasScalar) {
     // Use the limits as r → 0 for small rotations.
-    mlir::Value Small = S.mul(S.constant(SmallAngleSq), S.mul(Sc, Sc));
+    mlir::Value SmallSq = S.constant(SmallAngleSq);
+    mlir::Value Small = S.mul(SmallSq, S.mul(Sc, Sc));
     mlir::Value Signed = S.selectLt(Sc, Zero, S.neg(AngleRatio), AngleRatio);
     BCoeff = S.selectLt(RSq, Small, S.inv(Sc), Signed);
     PCoeff = S.selectLt(RSq, Small, Zero, PCoeff);
@@ -2039,7 +2047,9 @@ llvm::LogicalResult ExpandNormalize::matchAndRewrite(
     if (!Parts.Scalars.empty()) {
       mlir::Value Sc = createSum(Rewriter, Loc, Parts.Scalars);
       mlir::Value One = S.constant(1.0f);
-      Result = S.mul(S.selectLt(Sc, S.constant(0.0f), S.neg(One), One), M);
+      mlir::Value Zero = S.constant(0.0f);
+      mlir::Value NegOne = S.neg(One);
+      Result = S.mul(S.selectLt(Sc, Zero, NegOne, One), M);
     }
     replaceOpWithNewOp<CastUnitaryOp>(Rewriter, Op, Result);
     return llvm::success();
@@ -2052,12 +2062,15 @@ llvm::LogicalResult ExpandNormalize::matchAndRewrite(
   mlir::Value InvNorm = S.inv(S.sqrt(A));
   if (!Parts.Scalars.empty()) {
     mlir::Value Sc = createSum(Rewriter, Loc, Parts.Scalars);
-    InvNorm = S.selectLt(Sc, S.constant(0.0f), S.neg(InvNorm), InvNorm);
+    mlir::Value Zero = S.constant(0.0f);
+    mlir::Value NegInvNorm = S.neg(InvNorm);
+    InvNorm = S.selectLt(Sc, Zero, NegInvNorm, InvNorm);
   }
   mlir::Value Result = S.mul(InvNorm, M);
   if (!Parts.Quadvectors.empty()) {
     mlir::Value P = GradeOp::create(Rewriter, Loc, UnknownT, NormSq, 4);
-    mlir::Value Half = S.mul(S.constant(0.5f), S.inv(A));
+    mlir::Value OneHalf = S.constant(0.5f);
+    mlir::Value Half = S.mul(OneHalf, S.inv(A));
     mlir::Value ResultP = GeomProdOp::create(Rewriter, Loc, Result, P);
     Result = S.sub(Result, S.mul(Half, ResultP));
   }
@@ -2141,7 +2154,8 @@ llvm::LogicalResult ExpandInterp::matchAndRewrite(
   }
   case InterpMethod::nlerp: {
     mlir::Value D = NormalizeOp::create(Rewriter, Loc, Delta);
-    mlir::Value Lerp = S.add(S.sub(S.constant(1.0f), T), S.mul(T, D));
+    mlir::Value OneMinusT = S.sub(S.constant(1.0f), T);
+    mlir::Value Lerp = S.add(OneMinusT, S.mul(T, D));
     Result = NormalizeOp::create(Rewriter, Loc, Lerp);
     break;
   }

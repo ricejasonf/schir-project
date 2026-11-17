@@ -39,24 +39,24 @@ schlap.rule @Invalidate {
 // CHECK-NEXT: [[BOTH:%.+]] = schlap.and [[INIT]], [[AT]]
 // CHECK-NEXT: schlap.yield [[BOTH]]
 // CHECK: schlap.action @"schlap_test.def #0 defines v0" {
-// CHECK: schlap.int 1
 // CHECK: schlap.int 0
+// CHECK: schlap.int 1
 // CHECK: schlap.unchanged [[INVALID]]
 // CHECK: schlap.action @"schlap_test.branch #1 region 0 defines v1" {
-// CHECK: schlap.int 2
 // CHECK: schlap.int 1
+// CHECK: schlap.int 2
 // CHECK: schlap.action @"schlap_test.branch #1 region 1 defines v2" {
-// CHECK: schlap.int 4
 // CHECK: schlap.int 1
+// CHECK: schlap.int 4
 // CHECK: schlap.action @"schlap_test.scope #2" {
-// CHECK: schlap.int 3
 // CHECK: schlap.int 2
+// CHECK: schlap.int 3
 // CHECK: schlap.action @"schlap_test.mutate #3 mutates v1" {
-// CHECK: [[NEXT:%.+]] = schlap.prime [[PC]]
+// CHECK: [[THREE:%.+]] = schlap.int 3
+// CHECK-NEXT: schlap.eq [[PC]], [[THREE]]
+// CHECK-NEXT: [[NEXT:%.+]] = schlap.prime [[PC]]
 // CHECK-NEXT: [[FOUR:%.+]] = schlap.int 4
 // CHECK-NEXT: schlap.eq [[NEXT]], [[FOUR]]
-// CHECK-NEXT: [[THREE:%.+]] = schlap.int 3
-// CHECK-NEXT: schlap.eq [[PC]], [[THREE]]
 // CHECK: [[PRIME:%.+]] = schlap.prime [[INVALID]]
 // CHECK-NEXT: [[V0:%.+]] = schlap.atom "v0"
 // CHECK-NEXT: [[V1:%.+]] = schlap.atom "v1"
@@ -66,8 +66,8 @@ schlap.rule @Invalidate {
 // CHECK: schlap.action @"schlap_test.use #4" {
 // CHECK: schlap.action @"func.return #5" {
 // CHECK: schlap.action @end {
-// CHECK: schlap.unchanged [[INVALID]], [[PC]]
 // CHECK: schlap.int 6
+// CHECK: schlap.unchanged [[INVALID]], [[PC]]
 // CHECK: schlap.next {
 // CHECK-COUNT-8: schlap.action_ref
 // CHECK: schlap.invariant @"use of v0 by schlap_test.branch #1" {

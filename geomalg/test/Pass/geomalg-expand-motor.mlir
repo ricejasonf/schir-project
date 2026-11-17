@@ -257,8 +257,8 @@ func.func @normalize_unit_motor(%m: !umotor2) -> !geomalg.unknown {
 // CHECK: [[E:%[0-9]+]]:4 = "geomalg.expand"
 // CHECK: [[SQRT:%[0-9]+]] = "geomalg.sqrt"
 // CHECK: [[INV:%[0-9]+]] = "geomalg.inverse"([[SQRT]])
-// CHECK: [[NEG:%[0-9]+]] = "geomalg.negate"([[INV]])
 // CHECK: [[ZERO:%[0-9]+]] = "geomalg.blade"() <{coefficient = 0.0{{.*}}}>
+// CHECK: [[NEG:%[0-9]+]] = "geomalg.negate"([[INV]])
 // CHECK: "geomalg.select_lt"([[E]]#0, [[ZERO]], [[NEG]], [[INV]])
 // CHECK-NOT: "geomalg.sqrt"
 // CHECK: geomalg.return
