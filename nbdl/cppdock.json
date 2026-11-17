@@ -54,6 +54,14 @@
       "deps": [
         [
           {
+            "name": "ricejasonf/schir-project",
+            "type": "docker",
+            "dest_dir": "/usr/local",
+            "revision": "layers:sha256:96dddbaf940c54c85985db7b92205d8898f5a31b510f7a1775bbf0cfa1cc2e5b"
+          }
+        ],
+        [
+          {
             "name": "ricejasonf/boost_header_only",
             "tag": "1_85_0",
             "type": "docker",
