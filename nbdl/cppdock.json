@@ -5,7 +5,7 @@
   "platforms": {
     "develop": {
       "type": "linux_x64",
-      "base_image_revision": "layers:sha256:31d96e1e2dab478ba0fead1bb1b63327951438fa8851f53a8f028fd991b41cc7",
+      "base_image_revision": "layers:sha256:85256c0e4687b3f1aff274ad3d47eb3cb83fc3175e6a765446551b79e8e43947",
       "deps": [
         [
           {
@@ -52,7 +52,7 @@
     },
     "web_develop": {
       "type": "emscripten",
-      "base_image_revision": "layers:sha256:868611bdcaab44fd53ea7c906e2ba37d59880e3541747ebaef281b5cce4f7f69",
+      "base_image_revision": "layers:sha256:4f74f5b5ebbb7b53f6d4d70b21584e485a6cbd8922aba38e6287d908a7ca1a79",
       "deps": [
         [
           {
@@ -94,7 +94,7 @@
     "server": {
       "description": "For building nbdl::server",
       "type": "linux_x64",
-      "base_image_revision": "layers:sha256:31d96e1e2dab478ba0fead1bb1b63327951438fa8851f53a8f028fd991b41cc7",
+      "base_image_revision": "layers:sha256:85256c0e4687b3f1aff274ad3d47eb3cb83fc3175e6a765446551b79e8e43947",
       "deps": [
         [
           {
