@@ -14,6 +14,7 @@
 #include <clang/Sema/Lookup.h>
 #include <clang/Sema/Sema.h>
 #include <functional>
+#include <ranges>
 #include <utility>
 
 #include "LexerWriter.h"

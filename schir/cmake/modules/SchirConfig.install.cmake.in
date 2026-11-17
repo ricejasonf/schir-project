@@ -2,6 +2,16 @@
 # system. It assumes that LLVM/Clang/MLIR are installed on the
 # system as well.
 
-# Don't use CMAKE_INSTALL_PREFEX because we install to /opt/install
-# and then copy to /opt/sysroot in docker builds.
-set(SCHIR_CLANG_PLUGIN_FILE SchirClang.so)
+# Find the prefix from this file's location since docker builds
+# install to /opt/install and then copy to /opt/sysroot.
+get_filename_component(SCHIR_INSTALL_PREFIX
+  "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+
+# Use the clang that SchirClang.so was built against.
+set(SCHIR_LLVM_TOOLS_DIR "@LLVM_TOOLS_BINARY_DIR@")
+
+set(SCHIR_LIB_DIR ${SCHIR_INSTALL_PREFIX}/lib)
+set(SCHIR_TOOLS_DIR ${SCHIR_INSTALL_PREFIX}/bin)
+set(SCHIR_MODULES_DIR ${SCHIR_INSTALL_PREFIX}/include)
+set(SCHIR_INCLUDE_DIRS ${SCHIR_INSTALL_PREFIX}/include)
+set(SCHIR_CLANG_PLUGIN_FILE ${SCHIR_LIB_DIR}/SchirClang.so)
