@@ -34,9 +34,30 @@ if (EMSCRIPTEN)
   set(NBDL_TEST_COMMAND "node")
 endif(EMSCRIPTEN)
 
+# Hash the installed Schir plugins into a stamp that changes with their content.
+set(schir_plugins_stamp ${CMAKE_BINARY_DIR}/schir_plugins.stamp)
+set(schir_plugins ${SCHIR_CLANG_PLUGIN_FILE}
+                  ${SCHIR_LLVM_PASS_PLUGIN_FILE}
+                  ${SCHIR_LIB_DIR}/libNbdl.so)
+add_custom_target(schir_plugins_stamp
+  COMMAND ${CMAKE_COMMAND} "-DFILES=${schir_plugins}"
+                           -DSTAMP=${schir_plugins_stamp}
+                           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HashFiles.cmake
+  BYPRODUCTS ${schir_plugins_stamp}
+  VERBATIM)
+
+# Recompile the sources of a target when the installed Schir plugins change.
+function(nbdl_depend_on_schir_plugins target)
+  add_dependencies(${target} schir_plugins_stamp)
+  get_target_property(sources ${target} SOURCES)
+  set_property(SOURCE ${sources} APPEND PROPERTY OBJECT_DEPENDS
+               ${schir_plugins_stamp})
+endfunction()
+
 function(nbdl_add_test name_)
   string(REPLACE "/" "." name ${name_})
   add_executable("${name}" EXCLUDE_FROM_ALL ${ARGN})
+  nbdl_depend_on_schir_plugins("${name}")
   add_dependencies(check "${name}")
   if (NBDL_ENABLE_MEMCHECK)
     add_test(
@@ -78,6 +99,7 @@ function(nbdl_add_dom_test name_)
     return()
   endif(NOT EMSCRIPTEN)
   add_executable("${name}" EXCLUDE_FROM_ALL ${ARGN})
+  nbdl_depend_on_schir_plugins("${name}")
   add_dependencies(check "${name}")
   add_dependencies(${name} utils.dom_test)
   get_target_property(link_flags_ ${name} LINK_FLAGS)
