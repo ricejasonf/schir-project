@@ -26,12 +26,6 @@ namespace
   using nbdl::message::action::update;
   using nbdl::message::action::delete_;
 
-  template <typename T>
-  constexpr auto decay_c(T)
-  {
-    return hana::type_c<std::decay_t<T>>;
-  }
-
   template <int i>
   struct PathKey
   {

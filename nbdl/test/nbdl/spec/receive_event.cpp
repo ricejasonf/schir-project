@@ -45,8 +45,6 @@ namespace foo {
 
   (export-cpp
     my_context
-    some_event_handler
-    receive_event
     send_event)
 
   (define (ref Store)
