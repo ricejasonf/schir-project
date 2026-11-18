@@ -48,8 +48,8 @@ that generates and injects C++ into Clang with the original library's hooks.
 Building the project requires CMake, LLVM, Clang, and MLIR.
 A release build of the required [fork of the LLVM Project](
 https://github.com/ricejasonf/llvm-project/tree/ricejasonf/parser-pragma)
-can be found on DockerHub [ricejasonf/llvm-project](
-https://hub.docker.com/repository/docker/ricejasonf/llvm-project/general).
+can be found on DockerHub [ricejasonf/llvm-project-release](
+https://hub.docker.com/r/ricejasonf/llvm-project-release).
 From this image one can copy `/opt/install` to a preferred installation
 directory. Currently, the project is only tested on Linux.
 
@@ -71,7 +71,43 @@ or
 make check-geomalg -j8
 ```
 
-If you want to build Nbdl, you may want to look at the
-[CppDock](https://github.com/ricejasonf/cppdock) project
-that handles building Docker images with the required
-depencencies.
+### Building with CppDock
+
+[CppDock](https://github.com/ricejasonf/cppdock) builds the project in a
+container image with the LLVM fork already installed, using the
+`cppdock.json` in the root of the repository:
+
+```
+cppdock dev main --target check
+```
+
+`cppdock release main` builds the `ricejasonf/schir-project` image,
+which contains the installed tools, plugins, Scheme modules, and
+CMake config. Nbdl has its own `nbdl/cppdock.json` with platforms
+that take that image as a dependency (see `nbdl/README.md`).
+
+To test Nbdl against local changes to Schir without pushing an image,
+release `main` locally and override the dependency in a git-ignored
+`nbdl/cppdock-local.json`:
+
+```json
+{
+  "platforms": {
+    "develop": {
+      "deps": [{"name": "ricejasonf/schir-project"}]
+    }
+  }
+}
+```
+
+A `cppdock-local.json` in the root can also enable assertions:
+
+```json
+{
+  "platforms": {
+    "main": {
+      "cmake_args": ["-DSCHIR_ENABLE_ASSERTIONS=ON"]
+    }
+  }
+}
+```

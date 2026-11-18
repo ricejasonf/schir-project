@@ -2,3 +2,4 @@ build/*
 test/build/*
 node_modules
 *.swp
+cppdock-local.json
