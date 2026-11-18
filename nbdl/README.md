@@ -47,7 +47,6 @@ See the `cppdock.json` file for the platforms and their dependencies:
 
 - `develop` builds for Linux x64.
 - `web_develop` builds to WebAssembly with Emscripten and runs the tests with node.
-- `server` builds `nbdl::server`. It pins old dependencies and is not tested.
 
 To build and run the tests:
 
