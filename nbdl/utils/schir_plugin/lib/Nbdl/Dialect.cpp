@@ -216,6 +216,17 @@ llvm::LogicalResult nbdl_spec::ClosureOp::verify() {
   return llvm::success();
 }
 
+llvm::LogicalResult nbdl_spec::VisitOp::verify() {
+  int32_t Prev = -1;
+  for (int32_t I : getMutArgs()) {
+    if (I <= Prev || I >= static_cast<int32_t>(getArgs().size()))
+      return emitOpError("expecting mutArgs to be increasing indices "
+                         "into args");
+    Prev = I;
+  }
+  return llvm::success();
+}
+
 // A return may be nested in the regions of match operations
 // until they are inlined by the flatten pass.
 mlir::FunctionOpInterface nbdl_spec::ReturnOp::getReturnedFunction() {

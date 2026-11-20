@@ -1190,15 +1190,25 @@
     (define (discarded-loc Obj)
       (and (discarded? Obj) (%discard-loc Obj)))
 
-    (define (build-visit MatchingResults? Sfinae? Mut? Loc Results)
+    ;; Get the array attribute of the indices of the true elements of Flags.
+    (define (%index-array-attr Flags)
+      (let loop ((Flags Flags) (I 0) (Str #f))
+        (cond
+          ((pair? Flags)
+           (loop (cdr Flags) (+ I 1)
+                 (cond
+                   ((not (car Flags)) Str)
+                   (Str (string-append Str ", " (number->string I)))
+                   (else (number->string I)))))
+          (Str (attr (string-append "array<i32: " Str ">")))
+          (else #f))))
+
+    (define (build-visit MatchingResults? Sfinae? MutFlags Loc Results)
       (define SfinaeAttr
         (if Sfinae?
           (unit-attr)
           #f))
-      (define MutAttr
-        (if Mut?
-          (unit-attr)
-          #f))
+      (define MutArgsAttr (%index-array-attr MutFlags))
       ;; The result is not a store.
       (define ResultType
         (if MatchingResults?
@@ -1209,13 +1219,13 @@
           (create-op "nbdl.visit"
                      (loc: Loc)
                      (operands: Results)
-                     (attributes: ("sfinae" SfinaeAttr) ("mut" MutAttr))
+                     (attributes: ("sfinae" SfinaeAttr) ("mutArgs" MutArgsAttr))
                      (result-types: ResultType))))
       (if MatchingResults?
         VisitResult
         (build-discard Loc VisitResult)))
 
-    (define (visit-aux-aux MatchingResults? Sfinae? Mut? Loc ParamsSpec)
+    (define (visit-aux-aux MatchingResults? Sfinae? MutFlags Loc ParamsSpec)
       (close-previous-scope)
       ;; This %expr is for the whole visit expr (ie its result).
       (if MatchingResults?
@@ -1229,7 +1239,7 @@
                   ;; The result may be a value, a literal,
                   ;; or another expr.
                   (%match-expr Loc (apply Callee (cdr Results)) Fn)
-                  (Fn (build-visit MatchingResults? Sfinae? Mut? Loc
+                  (Fn (build-visit MatchingResults? Sfinae? MutFlags Loc
                                    Results)))))))
         (begin
           (%match-results ; Sfinae is #f
@@ -1241,20 +1251,34 @@
                 ;; (e.g. a visit in its body is discarded.)
                 (%top-level
                   (lambda () (apply Callee (cdr Results))))
-                (build-visit MatchingResults? #f Mut? Loc Results))))
+                (build-visit MatchingResults? #f MutFlags Loc Results))))
           (%make-discard Loc))))
+
+    ;; Mark an operand of visit as one the callee may mutate.
+    (define-syntax mut!
+      (syntax-rules ()
+        ((mut! Store)
+         (error-with-loc (syntax-source-loc Store)
+                         "mut! is only valid as an operand of visit"))))
+
+    ;; Get a visit operand as a pair of its mutable flag and its expr.
+    (define-syntax %visit-operand
+      (syntax-rules (mut!)
+        ((%visit-operand (mut! Store))
+         (cons #t (%single-expr Store)))
+        ((%visit-operand Store)
+         (cons #f (%single-expr Store)))))
 
     (define-syntax visit-aux
       (syntax-rules ()
-        ((visit-aux Sfinae? Mut? Callee StoreN ...)
+        ((visit-aux Sfinae? Callee StoreN ...)
          (let ()
-           (define MatchingResults? matching-results?)
            (define CalleeLoc (syntax-source-loc Callee))
+           (define Operands (list (%visit-operand StoreN) ...))
            (define ParamsSpec
-             (list
-               (%single-expr+ Callee)
-               (%single-expr StoreN) ...))
-           (visit-aux-aux matching-results? Sfinae? Mut? CalleeLoc ParamsSpec)
+             (cons (%single-expr+ Callee) (map cdr Operands)))
+           (visit-aux-aux matching-results? Sfinae? (map car Operands)
+                          CalleeLoc ParamsSpec)
            ))))
 
     ;; Analogous to std::visit but it takes stores
@@ -1264,17 +1288,13 @@
     ;; to a member expression with the first argument as
     ;; the owning object.
     ;;
+    ;; Let the callee mutate an operand wrapped in mut!.
+    ;;
     ;; Return the result only if it is not discarded.
     (define-syntax visit
       (syntax-rules ()
         ((visit Callee StoreN ...)
-         (visit-aux #f #f Callee StoreN ...))))
-
-    ;; Visit like visit and allow the callee to mutate its arguments.
-    (define-syntax visit!
-      (syntax-rules ()
-        ((visit! Callee StoreN ...)
-         (visit-aux #f #t Callee StoreN ...))))
+         (visit-aux #f Callee StoreN ...))))
 
     ;; Create sfinae friendly visit when used as the direct input
     ;; to match-if conditional argument. The boundaries of the
@@ -1283,7 +1303,7 @@
     (define-syntax sfinae-visit
       (syntax-rules ()
         ((sfinae-visit Callee StoreN ...)
-         (visit-aux #t #f Callee StoreN ...))))
+         (visit-aux #t Callee StoreN ...))))
 
     ;; Make a store callable (in scheme) strictly for use
     ;; with syntax that use => on procs or stores
@@ -1544,7 +1564,7 @@
                 (list (make-list ArgCount !nbdl.unknown)
                       (lambda Args
                         (visit-aux-aux
-                          matching-results? #f #f Loc
+                          matching-results? #f '() Loc
                           (cons (%single-expr+ Loc MatchFn)
                                 (map (lambda (Arg)
                                        (%single-expr
@@ -1967,7 +1987,7 @@
     register-lowering-pass
     match-params
     visit
-    visit!
+    mut!
     sfinae-visit
     noop
     export-cpp

@@ -631,7 +631,8 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     be wrapped in a SFINAE check which only has meaning
     as the operand to a conditional.
 
-    The mut unit attribute indicates the call may mutate its arguments.
+    The mutArgs attribute lists the indices into args of the arguments
+    the call may mutate.
 
     If arguments are verified to be a valid mapping from
     C++ types to MLIR types, then we set the ValidCppCrossMap
@@ -642,9 +643,11 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   let arguments = (ins AnyType:$fn,
                        Variadic<AnyType>:$args,
                        UnitAttr:$sfinae,
-                       UnitAttr:$mut,
+                       DefaultValuedOptionalAttr<DenseI32ArrayAttr, "{}">
+                         :$mutArgs,
                        UnitAttr:$validCppCrossMap);
   let results = (outs AnyType:$result);
+  let hasVerifier = 1;
   let extraClassDeclaration = [{
     // Look up the FuncOp in the parent module if the callee
     // is a function name (possibly lifted to a store.)

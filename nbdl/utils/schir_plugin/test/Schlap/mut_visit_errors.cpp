@@ -68,7 +68,7 @@ struct sink {
     ('foo::node =>
      (lambda (Node)
        (match (get Node '.value)
-         ('int => (lambda (I) (visit! Set Node)))
+         ('int => (lambda (I) (visit Set (mut! Node))))
          (else => noop))
        (visit Sink (get Node '.count)))))
   (return))
@@ -95,7 +95,7 @@ struct sink {
     ('int =>
      (lambda (I)
        (match (get (get Root '.a) '.value)
-         ('int => (lambda (J) (visit! Set Root)))
+         ('int => (lambda (J) (visit Set (mut! Root))))
          (else => noop))
        (visit Sink I)))
     (else => noop))
@@ -133,7 +133,7 @@ struct sink {
     ('int =>
      (lambda (I)
        (match-path Root (get-path I)
-         (lambda (X) (visit! Set Root))
+         (lambda (X) (visit Set (mut! Root)))
          (lambda (X) noop))
        (visit Sink I)))
     (else => noop))

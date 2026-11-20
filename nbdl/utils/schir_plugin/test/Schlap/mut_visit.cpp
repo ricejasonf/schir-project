@@ -59,7 +59,7 @@ struct sink {
     ('int =>
      (lambda (I)
        (match (get (get (lift-store T) '.a) '.value)
-         ('int => (lambda (J) (visit! Set (lift-store T))))
+         ('int => (lambda (J) (visit Set (mut! (lift-store T)))))
          (else => noop))
        (visit Sink I)))
     (else => noop))
@@ -87,7 +87,7 @@ struct sink {
     ('int =>
      (lambda (I)
        (match (get (get Root '.a) '.value)
-         ('int => (lambda (J) (visit! Set Root)))
+         ('int => (lambda (J) (visit Set (mut! Root))))
          (else => noop))
        (match (get Root '.either)
          ('int => (lambda (K) (visit Sink K)))
@@ -103,7 +103,7 @@ struct sink {
     ('int =>
      (lambda (I)
        (match-path Root (get-path I)
-         (lambda (X) (visit! Set Root))
+         (lambda (X) (visit Set (mut! Root)))
          (lambda (X) noop))))
     (else => noop))
   (return))

@@ -22,13 +22,16 @@ struct MatchLikeAccess
   }
 };
 
-// State that a mut visit mutates its store arguments.
+// State that a visit mutates the arguments listed in mutArgs.
 struct VisitAccess
     : schir_common::ValueAccess::ExternalModel<VisitAccess, VisitOp> {
   bool isMutated(mlir::Operation* O, mlir::OpOperand& Operand) const {
     auto Visit = cast<VisitOp>(O);
-    return Visit.getMut() && &Operand != &Visit.getFnMutable() &&
-           isa<StoreType>(Operand.get().getType());
+    if (&Operand == &Visit.getFnMutable())
+      return false;
+    int32_t ArgIndex = Operand.getOperandNumber() -
+                       Visit.getArgs().getBeginOperandIndex();
+    return llvm::is_contained(Visit.getMutArgs(), ArgIndex);
   }
 };
 
