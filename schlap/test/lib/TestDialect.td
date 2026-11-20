@@ -6,6 +6,7 @@
 #define SCHLAP_TEST_DIALECT_TD
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/SymbolInterfaces.td"
 
 def SchlapTest_Dialect : Dialect {
   let name = "schlap_test";
@@ -72,6 +73,16 @@ def Test_ScopeOp : Test_Op<"scope", [NoTerminator]> {
   }];
   let regions = (region SizedRegion<1>:$body);
   let assemblyFormat = "$body attr-dict";
+}
+
+def Test_DefineOp : Test_Op<"define", [Symbol, IsolatedFromAbove,
+                                      NoTerminator]> {
+  let description = [{
+    Define a symbol with a body that is not a function.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = "$sym_name $body attr-dict";
 }
 
 #endif  // SCHLAP_TEST_DIALECT_TD

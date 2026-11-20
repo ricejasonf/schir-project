@@ -131,9 +131,8 @@ void schlap_check_rule(schir::Context& C, schir::ValueRefs Args) {
       dyn_cast<mlir::Operation>(Args[0]));
   if (!Rule)
     return C.RaiseError("expecting schlap.rule: {}", Args[0]);
-  auto Fn = dyn_cast_or_null<mlir::FunctionOpInterface>(
-      dyn_cast<mlir::Operation>(Args[1]));
-  if (!Fn || Fn.isExternal())
+  auto* Fn = dyn_cast<mlir::Operation>(Args[1]);
+  if (!Fn || !schlap::getRuleBody(Fn))
     return C.RaiseError("expecting a function with a body: {}", Args[1]);
   if (Fn->getContext() != Rule->getContext())
     return C.RaiseError("expecting a function in the context of the rule: {}",

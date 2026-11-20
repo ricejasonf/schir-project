@@ -49,17 +49,19 @@ struct Step {
 // states.
 class RuleApplier {
 public:
-  RuleApplier(schlap::RuleOp Rule, mlir::FunctionOpInterface Fn,
-              mlir::OpBuilder& Builder)
+  RuleApplier(schlap::RuleOp Rule, Operation* Fn, mlir::OpBuilder& Builder)
     : Rule(Rule), Fn(Fn), Builder(Builder),
       Unknown(schlap::UnknownType::get(Rule.getContext())) {}
 
   llvm::FailureOr<schlap::SpecOp> run() {
     if (mlir::failed(findHandlers()))
       return mlir::failure();
-    mlir::Region& Body = Fn.getFunctionBody();
+    mlir::Region* BodyRegion = schlap::getRuleBody(Fn);
+    if (!BodyRegion)
+      return Fn->emitError("expects a function with a body");
+    mlir::Region& Body = *BodyRegion;
     if (!Body.hasOneBlock())
-      return Fn.emitError("expects a function with one block");
+      return Fn->emitError("expects a function with one block");
     for (Value Arg : Body.getArguments())
       number(Arg, nullptr);
     layout(Body.front());
@@ -77,7 +79,7 @@ public:
 
 private:
   schlap::RuleOp Rule;
-  mlir::FunctionOpInterface Fn;
+  Operation* Fn;
   mlir::OpBuilder& Builder;
   mlir::Type Unknown;
   schlap::OnUseOp OnUse;
@@ -155,7 +157,7 @@ private:
       if (V != Root && getRoot(V) == Root)
         Result.push_back(V);
     };
-    for (Operation* Cur = Op; Cur && Cur != Fn.getOperation();
+    for (Operation* Cur = Op; Cur && Cur != Fn;
          Cur = Cur->getParentOp()) {
       Block* B = Cur->getBlock();
       for (Value Arg : B->getArguments())
@@ -394,7 +396,7 @@ private:
 
   // Create the specification of the steps.
   schlap::SpecOp build() {
-    mlir::Location FnLoc = Fn.getLoc();
+    mlir::Location FnLoc = Fn->getLoc();
     std::string Name = (Rule.getSymName() + "(" +
                         mlir::SymbolTable::getSymbolName(Fn).getValue() +
                         ")").str();
@@ -517,14 +519,14 @@ public:
   void runOnOperation() override {
     mlir::ModuleOp Module = getOperation();
     llvm::SmallVector<schlap::RuleOp> Rules(Module.getOps<schlap::RuleOp>());
-    llvm::SmallVector<mlir::FunctionOpInterface> Fns;
-    for (auto Fn : Module.getOps<mlir::FunctionOpInterface>())
-      if (!Fn.isExternal())
-        Fns.push_back(Fn);
+    llvm::SmallVector<Operation*> Fns;
+    for (Operation& Op : Module.getOps())
+      if (schlap::getRuleBody(&Op))
+        Fns.push_back(&Op);
     mlir::OpBuilder Builder = mlir::OpBuilder::atBlockEnd(Module.getBody());
     bool Failed = false;
     for (schlap::RuleOp Rule : Rules)
-      for (mlir::FunctionOpInterface Fn : Fns)
+      for (Operation* Fn : Fns)
         if (mlir::failed(schlap::applyRule(Rule, Fn, Builder)))
           Failed = true;
     if (Failed)
@@ -533,8 +535,17 @@ public:
 };
 }  // namespace
 
+mlir::Region* schlap::getRuleBody(Operation* Op) {
+  if (auto Fn = dyn_cast<mlir::FunctionOpInterface>(Op))
+    return Fn.isExternal() ? nullptr : &Fn.getFunctionBody();
+  if (!isa<mlir::SymbolOpInterface>(Op) || isa<mlir::ModuleOp>(Op) ||
+      isa<schlap::SchlapDialect>(Op->getDialect()) ||
+      Op->getNumRegions() != 1 || Op->getRegion(0).empty())
+    return nullptr;
+  return &Op->getRegion(0);
+}
+
 llvm::FailureOr<schlap::SpecOp>
-schlap::applyRule(RuleOp Rule, mlir::FunctionOpInterface Fn,
-                  mlir::OpBuilder& Builder) {
+schlap::applyRule(RuleOp Rule, Operation* Fn, mlir::OpBuilder& Builder) {
   return RuleApplier(Rule, Fn, Builder).run();
 }

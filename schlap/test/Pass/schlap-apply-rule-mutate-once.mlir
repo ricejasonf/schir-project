@@ -61,3 +61,14 @@ func.func @same_operation() {
   schlap_test.mutate %a, %a : i32, i32
   return
 }
+
+// Report a second mutation of an argument of a symbol that is not a
+// function.
+// expected-note@+1 {{initial state: mutated = {}, pc = 0}}
+schlap_test.define @define_twice {
+^bb0(%a: i32):
+  // expected-note@+1 {{step 1, schlap_test.mutate #0 mutates v0: mutated = {v0}, pc = 1}}
+  schlap_test.mutate %a : i32
+  // expected-error@+1 {{invariant mutation of v0 by schlap_test.mutate #1 is violated after 1 step}}
+  schlap_test.mutate %a : i32
+}

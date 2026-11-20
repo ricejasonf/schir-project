@@ -5,6 +5,8 @@
 #include <mlir/IR/DialectRegistry.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/OpImplementation.h>
+#include <mlir/Bytecode/BytecodeOpInterface.h>
+#include <mlir/IR/SymbolTable.h>
 
 #include "TestDialect.h.inc"
 

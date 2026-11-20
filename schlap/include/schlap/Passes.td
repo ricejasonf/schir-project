@@ -40,7 +40,9 @@ def ApplyRulePass : SchlapPass<"schlap-apply-rule", "mlir::ModuleOp"> {
   let summary = "Apply each rule of a module to each function of the module.";
   let description = [{
     Create a specification of the paths through each function of the module
-    for each schlap.rule of the module, at the end of the module.
+    for each schlap.rule of the module, at the end of the module. Treat
+    a symbol operation with one region as a function whose body is that
+    region.
   }];
 }
 

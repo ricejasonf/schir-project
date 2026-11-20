@@ -1,5 +1,5 @@
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
-// RUN:   -fplugin=SchirClang.so \
+// RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
 // RUN:   -fpass-plugin=SchirLLVMPass.so \
 // RUN:   %s -o %t
 // RUN: %t
@@ -26,7 +26,8 @@ using fav_games = std::unordered_map<std::string, std::string>;
 #pragma schir_scheme
 {
   (import (schir base)
-          (nbdl spec))
+          (nbdl spec)
+          (nbdl spec schlap))
 
   (export-cpp
     message_1
@@ -98,13 +99,15 @@ using fav_games = std::unordered_map<std::string, std::string>;
       (message_2 => insert-fav-game)
       (message_3 => erase-fav-game)
       (message_4 => receive-message-4))
-    (visit 'nbdl::assign
-           (get context '.last_message)
-           message)
+    (visit! 'nbdl::assign
+            (get context '.last_message)
+            message)
     (visit fn (get context '.last_message)))
 
   (finalize-module)
 
+  ; // Check the mutable visits of a match-fn.
+  (check-mut-visits apply_message)
 }
 }  // namespace my
 }  // namespace
