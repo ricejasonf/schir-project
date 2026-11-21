@@ -22,6 +22,14 @@
 // RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
 // RUN:   -DTEST_HELD_ELEMENT -fsyntax-only %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=HELD
+// RUN: not clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
+// RUN:   -DTEST_ASSIGN -fsyntax-only %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ASSIGN
+// RUN: not clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
+// RUN:   -DTEST_ASSIGN_SRC -fsyntax-only %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=SRC
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
 // RUN:   -DTEST_ENCLOSING_ARG -DTEST_UNCHECKED -fsyntax-only %s
@@ -35,6 +43,7 @@ namespace {
 namespace foo {
 
 using int_or_text = nbdl::variant<int, std::string>;
+using int_or_text_holder = nbdl::variant_holder<int, std::string>;
 
 struct node {
   int_or_text value;
@@ -45,6 +54,8 @@ struct app {
   node a;
   int_or_text either;
   std::unordered_map<int, int> items;
+  int_or_text_holder held;
+  node b;
 };
 
 // Set the variant of an app or a node to text.
@@ -70,7 +81,7 @@ struct set_count {
 (import (nbdl spec) (nbdl spec schlap))
 
 (export-cpp owned_value twin operand enclosing_arg match_path_then_use
-            held_element)
+            held_element assign_owned assign_src)
 }
 
 #ifdef TEST_OWNED
@@ -234,6 +245,52 @@ struct set_count {
 
 (run-inference-passes)
 (check-mut-visits held_element)
+}
+#endif
+
+#ifdef TEST_ASSIGN
+#pragma schir_scheme
+{
+; // Report an assign to a variant holder from its own alternative.
+; // ASSIGN: mut_visit_errors.cpp:[[@LINE+13]]:{{[0-9]+}}: error: (schir_scheme) rule MutVisit does not hold for function: ::foo::assign_owned
+; // ASSIGN: [[@LINE+7]]:{{[0-9]+}}: note: (schir_scheme) invariant mutation of v7 by nbdl.assign #10 is violated after 11 steps
+; // ASSIGN: [[@LINE+3]]:{{[0-9]+}}: note: (schir_scheme) initial state: invalid = {}, pc = 0
+; // ASSIGN: [[@LINE+4]]:{{[0-9]+}}: note: (schir_scheme) step 8, nbdl.match #7 region 0 defines v7: invalid = {}, pc = 8
+; // ASSIGN: [[@LINE+4]]:{{[0-9]+}}: note: (schir_scheme) step 11, nbdl.assign #10 mutates v9: invalid = {v5, v6, v7}, pc = 11
+(define-fn assign_owned ((S : 'foo::app)) -> ()
+  (define Root (lift-store S))
+  (match (get Root '.held 'nbdl::variant_value)
+    ('int => (lambda (I) (assign! (get Root '.held) I)))
+    (else => noop))
+  (return))
+
+(run-inference-passes)
+(check-mut-visits assign_owned)
+}
+#endif
+
+#ifdef TEST_ASSIGN_SRC
+#pragma schir_scheme
+{
+; // Report a use of a value read from the source of an assign after the
+; // assign.
+; // SRC: mut_visit_errors.cpp:[[@LINE+16]]:{{[0-9]+}}: error: (schir_scheme) rule MutVisit does not hold for function: ::foo::assign_src
+; // SRC: [[@LINE+10]]:{{[0-9]+}}: note: (schir_scheme) invariant use of v8 by nbdl.visit #16 is violated after 17 steps
+; // SRC: [[@LINE+3]]:{{[0-9]+}}: note: (schir_scheme) initial state: invalid = {}, pc = 0
+; // SRC: [[@LINE+4]]:{{[0-9]+}}: note: (schir_scheme) step 7, nbdl.match #6 region 1 defines v8: invalid = {}, pc = 8
+; // SRC: [[@LINE+6]]:{{[0-9]+}}: note: (schir_scheme) step 14, nbdl.assign #13 mutates v12: invalid = {v6, v8}, pc = 15
+(define-fn assign_src ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (define Root (lift-store S))
+  (match (get (get Root '.a) '.value)
+    ('int =>
+     (lambda (I)
+       (assign! (get Root '.b) (get Root '.a))
+       (visit Sink I)))
+    (else => noop))
+  (return))
+
+(run-inference-passes)
+(check-mut-visits assign_src)
 }
 #endif
 

@@ -3,7 +3,7 @@
 
 #include <nbdl/spec.hpp>
 
-// expected-note@* 3 {{error raised here}}
+// expected-note@* 4 {{error raised here}}
 
 // Reject mut! within a path.
 // expected-error@+6 {{mut! is only valid as an operand of visit}}
@@ -33,4 +33,14 @@
 (export-cpp child_stable_in_get)
 (define-match-fn child_stable_in_get (X Fn)
   (visit Fn (get (child-stable-mut! X) '.a)))
+}
+
+// Reject assign! as an operand of visit.
+// expected-error@+6 {{assign! has no result}}
+#pragma schir_scheme
+{
+(import (nbdl spec))
+(export-cpp assign_operand)
+(define-match-fn assign_operand (X Y Fn)
+  (visit Fn (assign! X Y)))
 }

@@ -15,6 +15,7 @@ namespace {
 namespace foo {
 
 using int_or_text = nbdl::variant<int, std::string>;
+using int_or_text_holder = nbdl::variant_holder<int, std::string>;
 
 struct node {
   int_or_text value;
@@ -25,6 +26,7 @@ struct app {
   node a;
   int_or_text either;
   std::unordered_map<int, int> items;
+  int_or_text_holder held;
 };
 
 // Set the variant of an app or a node to text and count the calls.
@@ -59,7 +61,7 @@ struct sink {
 (import (schir base) (nbdl spec) (nbdl spec impl) (nbdl spec schlap))
 
 (export-cpp other_root plain_visit read_again same_root_path use_mutated
-            sibling child_stable)
+            sibling child_stable assign_sibling)
 
 ; // Accept a use of a store of another root after a mut visit.
 (define-fn other_root ((S : 'foo::app) (T : 'foo::app)
@@ -155,6 +157,17 @@ struct sink {
     (else => noop))
   (return))
 
+; // Accept a use of a variant holder assigned from a sibling.
+(define-fn assign_sibling ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (match (lift-store S)
+    ('foo::app =>
+     (lambda (Root)
+       (assign! (get Root '.held) (get (get Root '.a) '.count))
+       (match (get Root '.held 'nbdl::variant_value)
+         ('int => (lambda (I) (visit Sink I)))
+         (else => noop)))))
+  (return))
+
 (run-inference-passes)
 
 ; // Count the states of each check.
@@ -165,14 +178,15 @@ struct sink {
 ; // CHECK-NEXT: (use_mutated 15)
 ; // CHECK-NEXT: (sibling 17)
 ; // CHECK-NEXT: (child_stable 22)
+; // CHECK-NEXT: (assign_sibling 25)
 (for-each
   (lambda (Name Fn)
     (write (list Name (check-mut-visits Fn)))
     (newline))
   '(other_root plain_visit read_again same_root_path use_mutated sibling
-    child_stable)
+    child_stable assign_sibling)
   (list other_root plain_visit read_again same_root_path use_mutated
-        sibling child_stable))
+        sibling child_stable assign_sibling))
 
 (finalize-module)
 }
@@ -225,5 +239,12 @@ int main() {
     foo::app S{.items = {{1, 10}}};
     foo::child_stable(S, foo::sink{&Sum});
     SCHIR_ASSERT(Sum == 10);
+  }
+  {
+    int Sum = 0;
+    foo::app S{.a = {.count = 5}};
+    S.held = std::string("text");
+    foo::assign_sibling(S, foo::sink{&Sum});
+    SCHIR_ASSERT(Sum == 5);
   }
 }

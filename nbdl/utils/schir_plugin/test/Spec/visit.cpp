@@ -99,9 +99,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
       (message_2 => insert-fav-game)
       (message_3 => erase-fav-game)
       (message_4 => receive-message-4))
-    (visit 'nbdl::assign
-           (mut! (get context '.last_message))
-           message)
+    (assign! (get context '.last_message) message)
     (visit fn (get context '.last_message)))
 
   (finalize-module)

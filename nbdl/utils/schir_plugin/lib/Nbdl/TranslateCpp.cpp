@@ -487,6 +487,7 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
     else if (isa<GetOp>(Op))          return Visit(cast<GetOp>(Op));
     else if (isa<DiscardOp>(Op))      return Visit(cast<DiscardOp>(Op));
     else if (isa<VisitOp>(Op))        return Visit(cast<VisitOp>(Op));
+    else if (isa<AssignOp>(Op))       return Visit(cast<AssignOp>(Op));
     else if (isa<NoOp>(Op))           return Visit(cast<NoOp>(Op));
     else if (isa<MatchIfOp>(Op))      return Visit(cast<MatchIfOp>(Op));
     else if (isa<MatchEachOp>(Op))    return Visit(cast<MatchEachOp>(Op));
@@ -780,6 +781,14 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
             WriteVisitArg(Op, Index);
           }, ", ");
     OS << ")";
+  }
+
+  // Write an assign from a temporary of the forwarded source.
+  void Visit(AssignOp Op) {
+    WriteExpr(Op.getDest());
+    OS << " = auto(";
+    WriteExpr(Op.getSrc(), /*IsFwd=*/true);
+    OS << ");\n";
   }
 
   void Visit(DiscardOp) {

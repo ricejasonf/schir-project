@@ -52,6 +52,12 @@ struct VisitAccess
   }
 };
 
+// State that an assign mutates its destination and its source.
+struct AssignAccess
+    : schir_common::ValueAccess::ExternalModel<AssignAccess, AssignOp> {
+  bool isMutated(mlir::Operation*, mlir::OpOperand&) const { return true; }
+};
+
 // Attach MatchLikeAccess to each of Ops.
 template <typename... Ops>
 void attachMatchLikeAccess(mlir::MLIRContext& Context) {
@@ -64,5 +70,6 @@ void nbdl_spec::registerValueAccess(mlir::DialectRegistry& Registry) {
     attachMatchLikeAccess<GetOp, MatchOp, MatchIfOp, MatchEachOp, ConstOp,
                           LoopOp>(*Context);
     VisitOp::attachInterface<VisitAccess>(*Context);
+    AssignOp::attachInterface<AssignAccess>(*Context);
   });
 }

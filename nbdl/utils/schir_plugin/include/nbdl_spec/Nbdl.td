@@ -663,6 +663,16 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
   }];
 }
 
+def Nbdl_AssignOp : Nbdl_Op<"assign", []> {
+  let description = [{
+    Assign the object of src to the object of dest
+    invalidating the children of both.
+  }];
+
+  let arguments = (ins AnyType:$dest, AnyType:$src);
+  let results = (outs);
+}
+
 def Nbdl_ConsumerOp : Nbdl_Op<"consumer", []> {
   let description = [{
     A consumer is an object provided with an object

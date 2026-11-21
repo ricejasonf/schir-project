@@ -1319,6 +1319,31 @@
         ((sfinae-visit Callee StoreN ...)
          (visit-aux #t Callee StoreN ...))))
 
+    ;; Assign Src to Dest with a plain C++ assignment.
+    (define (assign-aux Loc DestExpr SrcExpr)
+      (when matching-results?
+        (error-with-loc Loc "assign! has no result"))
+      (close-previous-scope)
+      (%match-results
+        (list DestExpr SrcExpr)
+        (lambda (Results)
+          (create-op "nbdl.assign"
+                     (loc: Loc)
+                     (operands: Results)
+                     (attributes:)
+                     (result-types:))
+          (build-discard-unit Loc)))
+      (%make-discard Loc))
+
+    ;; Assign the object of Src to the object of Dest, invalidating every
+    ;; store read from either.
+    (define-syntax assign!
+      (syntax-rules ()
+        ((assign! Dest Src)
+         (assign-aux (syntax-source-loc Dest)
+                     (%single-expr Dest)
+                     (%single-expr Src)))))
+
     ;; Make a store callable (in scheme) strictly for use
     ;; with syntax that use => on procs or stores
     ;; representing a visitor.
@@ -2002,6 +2027,7 @@
     match-params
     visit
     mut!
+    assign!
     sfinae-visit
     noop
     export-cpp
