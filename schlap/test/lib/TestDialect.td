@@ -26,9 +26,10 @@ def Test_DefOp : Test_Op<"def"> {
 
 def Test_ReadOp : Test_Op<"read"> {
   let description = [{
-    Read a value from the operand.
+    Read a value from the operand, as the part named by the key if there
+    is one.
   }];
-  let arguments = (ins AnyType:$from);
+  let arguments = (ins AnyType:$from, OptionalAttr<StrAttr>:$key);
   let results = (outs AnyType:$result);
   let assemblyFormat = "$from attr-dict `:` type($from) `->` type($result)";
 }

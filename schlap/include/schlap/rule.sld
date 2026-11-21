@@ -5,15 +5,15 @@
 ;; A rule is a schlap.rule operation in the Schlap module. Its body is an
 ;; ordinary Scheme body like that of define-spec: variables and init come
 ;; from (schlap base), and on-mutate and on-use state what happens when an
-;; operation of the function mutates or uses a value. In an event, root
-;; and read-from refer to the structure of the function, and require
+;; operation of the function mutates or uses a value. In an event, root,
+;; read-from and owned-by refer to the structure of the function, and require
 ;; states a formula that holds before the event.
 ;;
 ;; Import (schir base) with (except (schir base) < > + - *) beside
 ;; (schlap base) and (schlap infix).
 (define-library (schlap rule)
   (export
-    define-rule on-mutate on-use require root read-from
+    define-rule on-mutate on-use require root read-from owned-by
     check-rule check-rule*)
   (import (except (schir base) < > + - *)
           (schir mlir)
@@ -104,6 +104,13 @@
       (syntax-rules ()
         ((_ R)
          (%create-val "schlap.read_from" (syntax-source-loc) R))))
+
+    ;; Take the set of the values that V may own, as a part of its object,
+    ;; and are defined before the event.
+    (define-syntax owned-by
+      (syntax-rules ()
+        ((_ V)
+         (%create-val "schlap.owned_by" (syntax-source-loc) V))))
 
     ;; Check Rule on the function Fn and return the number of distinct
     ;; states. The option is 'state-limit N.

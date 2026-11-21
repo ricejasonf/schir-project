@@ -150,11 +150,13 @@ private:
     return V;
   }
 
-  // Return the values read from Root that are defined before Op.
-  llvm::SmallVector<Value> getReadFrom(Value Root, Operation* Op) {
+  // Return the values defined before Op in an enclosing block for which
+  // Pred holds.
+  llvm::SmallVector<Value>
+  getDefinedBefore(Operation* Op, llvm::function_ref<bool(Value)> Pred) {
     llvm::SmallVector<Value> Result;
     auto Add = [&](Value V) {
-      if (V != Root && getRoot(V) == Root)
+      if (Pred(V))
         Result.push_back(V);
     };
     for (Operation* Cur = Op; Cur && Cur != Fn;
@@ -170,6 +172,22 @@ private:
       return ValueIds.lookup(A) < ValueIds.lookup(B);
     });
     return Result;
+  }
+
+  // Return the values read from Root that are defined before Op.
+  llvm::SmallVector<Value> getReadFrom(Value Root, Operation* Op) {
+    return getDefinedBefore(Op, [&](Value V) {
+      return V != Root && getRoot(V) == Root;
+    });
+  }
+
+  // Return the values that Owner may own that are defined before Op.
+  llvm::SmallVector<Value> getOwnedBy(Value Owner, Operation* Op) {
+    return getDefinedBefore(Op, [&](Value V) {
+      auto Access = dyn_cast_if_present<schir_common::ValueAccess>(
+          schir_common::getIntroducingOp(V));
+      return Access && Access.mayOwn(Owner, V);
+    });
   }
 
   // Return the events of an operation: its uses and then its mutations.
@@ -365,10 +383,10 @@ private:
     void yield(Value F) { schlap::YieldOp::create(B, Loc, F); }
   };
 
-  // Replace each root and read_from of a region with a constant.
+  // Replace each root, read_from and owned_by of a region with a constant.
   void resolveConstants(mlir::Region& Region, Operation* Context) {
     Region.walk<mlir::WalkOrder::PostOrder>([&](Operation* Op) {
-      if (!isa<schlap::RootOp, schlap::ReadFromOp>(Op))
+      if (!isa<schlap::RootOp, schlap::ReadFromOp, schlap::OwnedByOp>(Op))
         return;
       auto Atom = Op->getOperand(0).getDefiningOp<schlap::AtomOp>();
       Value V = Atom ? ValuesByName.lookup(Atom.getName()) : Value();
@@ -384,7 +402,8 @@ private:
                                         getValueName(getRoot(V)));
       } else {
         llvm::SmallVector<Value> Elements;
-        for (Value X : getReadFrom(V, Context))
+        for (Value X : isa<schlap::ReadFromOp>(Op) ? getReadFrom(V, Context)
+                                                   : getOwnedBy(V, Context))
           Elements.push_back(schlap::AtomOp::create(B, Op->getLoc(), Unknown,
                                                     getValueName(X)));
         Result = schlap::SetOfOp::create(B, Op->getLoc(), Unknown, Elements);

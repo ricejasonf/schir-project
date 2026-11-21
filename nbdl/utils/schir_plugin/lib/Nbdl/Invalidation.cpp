@@ -10,7 +10,8 @@ using namespace nbdl_spec;
 
 namespace {
 // State that a store introduced by a MatchLike operation is read from the
-// store it is a view of or else from its parent.
+// store it is a view of or else from its parent, and that it may be owned
+// by the stores whose paths it extends.
 template <typename Op>
 struct MatchLikeAccess
     : schir_common::ValueAccess::ExternalModel<MatchLikeAccess<Op>, Op> {
@@ -19,6 +20,10 @@ struct MatchLikeAccess
     if (mlir::Value Aliased = MatchLike.getAliasedStore(Store))
       return Aliased;
     return MatchLike.getParentStore(Store);
+  }
+
+  bool mayOwn(mlir::Operation* O, mlir::Value Owner, mlir::Value Store) const {
+    return mayOwnStore(O, Owner, Store);
   }
 };
 

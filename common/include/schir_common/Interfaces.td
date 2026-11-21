@@ -64,7 +64,8 @@ def SchirCommon_InferableReturn : OpInterface<"InferableReturn"> {
 def SchirCommon_ValueAccess : OpInterface<"ValueAccess"> {
   let description = [{
     State the value that each result or block argument of an operation is
-    read from, the operands it mutates, and the operands it uses.
+    read from, the values that may own it, the operands it mutates,
+    and the operands it uses.
   }];
   let cppNamespace = "schir_common";
 
@@ -75,6 +76,14 @@ def SchirCommon_ValueAccess : OpInterface<"ValueAccess"> {
       }],
       "::mlir::Value", "getReadFrom", (ins "::mlir::Value":$introduced),
       "", [{ return {}; }]>,
+    InterfaceMethod<[{
+        Return true if Owner may own a value introduced by the operation,
+        directly or through others, as a part of its object and not the
+        whole of it.
+      }],
+      "bool", "mayOwn",
+      (ins "::mlir::Value":$owner, "::mlir::Value":$introduced), "",
+      [{ return ::schir_common::isReadFrom(introduced, owner); }]>,
     InterfaceMethod<[{
         Return true if the operation mutates the value of the operand.
       }],

@@ -57,6 +57,21 @@
 (write Invalidate)
 (newline)
 
+; Take the values that a mutated value may own.
+; CHECK-LABEL: schlap.rule @InvalidateOwned {
+; CHECK: schlap.on_mutate {
+; CHECK-NEXT: ^bb0([[V:%.+]]: !schlap.unknown):
+; CHECK-NEXT: [[PRIME:%.+]] = schlap.prime
+; CHECK-NEXT: [[OWNED:%.+]] = schlap.owned_by [[V]]
+; CHECK-NEXT: schlap.union {{%.+}}, [[OWNED]]
+(define-rule InvalidateOwned
+  (variables invalid)
+  (init {invalid = ∅})
+  (on-mutate (v)
+    {(′ invalid) = {invalid ∪ (owned-by v)}}))
+(write InvalidateOwned)
+(newline)
+
 ; Require each value to be used at most once.
 (define-rule UseOnce
   (variables used)

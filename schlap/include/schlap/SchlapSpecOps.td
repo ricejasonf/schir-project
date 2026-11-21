@@ -170,6 +170,18 @@ def Schlap_ReadFromOp : Schlap_Op<"read_from", [Pure]> {
   }];
 }
 
+def Schlap_OwnedByOp : Schlap_Op<"owned_by", [Pure]> {
+  let description = [{
+    Take the set of the values of the function that a value may own, as a
+    part of its object, and are defined before the event.
+  }];
+  let arguments = (ins AnyType:$value);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $value attr-dict `:` custom<OpTypes>(type($value), type($result))
+  }];
+}
+
 // Values
 
 def Schlap_IteOp : Schlap_Op<"ite", [Pure]> {

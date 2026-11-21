@@ -4,6 +4,7 @@
 // Implement the !nbdl.path type and its static comparisons.
 //
 #include <nbdl_spec/NbdlDialect.h>
+#include <schir_common/Interfaces.h>
 #include <mlir/IR/BuiltinAttributes.h>
 #include <mlir/IR/Diagnostics.h>
 #include <llvm/ADT/STLExtras.h>
@@ -40,13 +41,19 @@ static bool mayEqualPathKeys(mlir::TypeAttr A, mlir::TypeAttr B) {
                     isa<PathType>(B.getValue()));
 }
 
-bool nbdl_spec::isPathPrefix(PathType Prefix, PathType P) {
-  if (Prefix.getKeys().size() > P.getKeys().size())
+// Return true if Prefix may resolve to a prefix of Keys.
+static bool isKeyPrefix(llvm::ArrayRef<mlir::TypeAttr> Prefix,
+                        llvm::ArrayRef<mlir::TypeAttr> Keys) {
+  if (Prefix.size() > Keys.size())
     return false;
-  for (auto [A, B] : llvm::zip(Prefix.getKeys(), P.getKeys()))
+  for (auto [A, B] : llvm::zip(Prefix, Keys))
     if (!mayEqualPathKeys(A, B))
       return false;
   return true;
+}
+
+bool nbdl_spec::isPathPrefix(PathType Prefix, PathType P) {
+  return isKeyPrefix(Prefix.getKeys(), P.getKeys());
 }
 
 bool nbdl_spec::mayAliasPaths(PathType A, PathType B) {
@@ -199,12 +206,36 @@ private:
 } // namespace
 
 mlir::FailureOr<PathType> nbdl_spec::resolveStorePath(mlir::Operation* Op,
-                                                       mlir::Value Store,
-                                                       bool Diagnose) {
+                                                      mlir::Value Store,
+                                                      bool Diagnose) {
   llvm::SmallVector<mlir::TypeAttr, 4> Keys;
   if (!StorePathResolver(Op, Diagnose).resolve(Store, Keys))
     return mlir::failure();
   return getPath(Op->getContext(), Keys);
+}
+
+// Return true if the root stores may be the same object.
+static bool mayEqualRoots(mlir::Value A, mlir::Value B) {
+  if (A == B)
+    return true;
+  auto LiftA = A.getDefiningOp<LiftStoreOp>();
+  auto LiftB = B.getDefiningOp<LiftStoreOp>();
+  return LiftA && LiftB && LiftA.getValue() == LiftB.getValue();
+}
+
+bool nbdl_spec::mayOwnStore(mlir::Operation* Op, mlir::Value Owner,
+                            mlir::Value Store) {
+  llvm::SmallVector<mlir::TypeAttr, 4> OwnerKeys, Keys;
+  auto Resolver = StorePathResolver(Op, false);
+  mlir::Value OwnerRoot = Resolver.resolve(Owner, OwnerKeys);
+  mlir::Value Root = Resolver.resolve(Store, Keys);
+  if (OwnerRoot && Root)
+    return mayEqualRoots(OwnerRoot, Root) &&
+           OwnerKeys.size() < Keys.size() && isKeyPrefix(OwnerKeys, Keys);
+  // Fall back to every value read from the same root but Owner itself.
+  return Store != Owner &&
+         mayEqualRoots(schir_common::getReadFromRoot(Owner),
+                       schir_common::getReadFromRoot(Store));
 }
 
 PathType nbdl_spec::getMatchPath(MatchOp Op) {

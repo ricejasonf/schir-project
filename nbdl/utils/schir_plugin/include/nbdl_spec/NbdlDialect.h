@@ -100,6 +100,10 @@ bool mayAliasPaths(PathType A, PathType B);
 mlir::FailureOr<PathType> resolveStorePath(mlir::Operation* Op,
                                            mlir::Value Store, bool Diagnose);
 
+// Indicate if Owner may own Store as a part of its object, by their paths
+// from a root, or by their roots if a path does not resolve.
+bool mayOwnStore(mlir::Operation* Op, mlir::Value Owner, mlir::Value Store);
+
 // Get the path that the key of a path match selects
 // or null if Op is not a path match.
 PathType getMatchPath(MatchOp Op);
