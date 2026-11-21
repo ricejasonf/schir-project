@@ -22,12 +22,6 @@ namespace nbdl
   {
     using T = std::unordered_map<MapArgs...>;
 
-    template <typename Store, typename Fn>
-    static constexpr void apply(Store&& s, Fn&& fn)
-    {
-      std::forward<Fn>(fn)(std::forward<Store>(s));
-    }
-
     template <typename Store, typename Key, typename Fn>
     static constexpr void apply(Store&& s, Key&& k, Fn&& fn)
     {
