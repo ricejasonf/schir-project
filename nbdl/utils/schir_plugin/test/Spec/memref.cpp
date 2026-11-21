@@ -99,8 +99,8 @@ namespace foo {
 (define-match-fn sum_vector (Src Dest)
   (match-params ((Src : 'std::vector<int32_t> Src)
                  (Dest : 'std::vector<int32_t> Dest))
-    (visit sum_i32 (visit 'nbdl::bind_memref Src)
-                   (visit 'nbdl::bind_memref Dest))))
+    (visit sum_i32 (visit 'nbdl::bind_memref (mut! Src))
+                   (visit 'nbdl::bind_memref (mut! Dest)))))
 
 (write-nbdl-module (finalize-module))
 } // schir_scheme

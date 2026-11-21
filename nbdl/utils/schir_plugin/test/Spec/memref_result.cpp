@@ -142,9 +142,9 @@ namespace foo {
   (match-params ((Src : 'std::vector<int32_t> Src)
                  (Count : 'int32_t Count)
                  (Dest : 'std::vector<int32_t> Dest))
-    (visit sum_tail (visit 'nbdl::bind_memref Src)
+    (visit sum_tail (visit 'nbdl::bind_memref (mut! Src))
                     Count
-                    (visit 'nbdl::bind_memref Dest))))
+                    (visit 'nbdl::bind_memref (mut! Dest)))))
 
 (write-nbdl-module (finalize-module))
 } // schir_scheme

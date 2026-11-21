@@ -73,7 +73,7 @@ using fav_games = std::unordered_map<std::string, std::string>;
     (define sum (get context '.sum))
     (define (receive-message-1 Message1)
       (visit 'nbdl::apply_action
-             sum
+             (mut! sum)
              (visit '|std::plus<int>{}|
                     sum
                     (get Message1 '.value))))
@@ -81,16 +81,16 @@ using fav_games = std::unordered_map<std::string, std::string>;
       (match (get context '.message_4_count)
         (else => (lambda (count)
           (visit 'nbdl::assign
-                 count ; // raw mlir.value as argument to visit
+                 (mut! count) ; // raw mlir.value as argument to visit
                  (visit '|std::plus<size_t>{}| count 1))))))
     (define (insert-fav-game msg)
       (visit '.insert
-             (get context '.fav_games)
+             (mut! (get context '.fav_games))
              (get msg '.name)
              (get msg '.fav_game)))
     (define (erase-fav-game msg)
       (visit '.erase
-             (get context '.fav_games)
+             (mut! (get context '.fav_games))
              (get msg '.name)))
     ; // Note that message here might not be a variant
       // depending on how apply_message is called.

@@ -64,11 +64,11 @@ namespace foo {
         (get member 'boost::hana::second))
       (match-cond
         ((>= weight 42)
-         (visit '.append result-val str))
+         (visit '.append (mut! result-val) str))
         (else (visit 'nbdl::noop))
         ))
 
-    (visit '.clear result-val)
+    (visit '.clear (mut! result-val))
     (my-concat (get context '.val1))
     (my-concat (get context '.val2))
     (my-concat (get context '.val3))

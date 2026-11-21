@@ -14,19 +14,19 @@
 
 namespace my {
 struct foo {
-  void get_void() { }
+  void get_void() const { }
 };
 
 struct bar {
-  int get_five() {
+  int get_five() const {
     return 5;
   }
 
-  int get_five_plus(int x) {
+  int get_five_plus(int x) const {
     return 5 + x;
   }
 
-  std::optional<int> maybe_five(int x) {
+  std::optional<int> maybe_five(int x) const {
     if (x == 5)
       return {5};
     else

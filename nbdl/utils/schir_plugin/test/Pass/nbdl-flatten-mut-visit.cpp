@@ -38,12 +38,12 @@ struct holder {
 
 (write-nbdl-module)
 
-; // Translate a visit and a mut visit to the same C++.
+; // Write an unmarked operand as const and a mut! operand as is.
 ; // CHECK-LABEL: inline void test_cpp_visit(auto&& arg_0, auto&& arg_1) {
 ; // CHECK-NEXT: ::nbdl::match(arg_0, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_2) {
 ; // CHECK-NEXT: auto&& get_3 = arg_2.count;
 ; // CHECK-NEXT: ::nbdl::match(get_3, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_4) {
-; // CHECK-NEXT: arg_1(arg_4);
+; // CHECK-NEXT: arg_1(::std::as_const(arg_4));
 ; // CHECK-LABEL: inline void test_cpp_visit_mut(auto&& arg_0, auto&& arg_1) {
 ; // CHECK-NEXT: ::nbdl::match(arg_0, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_2) {
 ; // CHECK-NEXT: auto&& get_3 = arg_2.count;

@@ -56,7 +56,7 @@ namespace foo {
     send_event)
 
   (define (ref Store)
-    (visit 'std::ref Store))
+    (visit 'std::ref (mut! Store)))
 
   (define html::event_data 'html::event_data)
 
@@ -66,7 +66,7 @@ namespace foo {
 
   (define-match-fn some_event_handler (Ctx Fn)
     (visit 'nbdl::assign
-           (get Ctx '.id)
+           (mut! (get Ctx '.id))
            (get Ctx html::event_data '.id))
     (visit Fn (get Ctx html::event_data '.id)))
 

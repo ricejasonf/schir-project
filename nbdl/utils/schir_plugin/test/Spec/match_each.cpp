@@ -42,7 +42,7 @@ using arr_vec = std::array<std::vector<int>, 3>;
               (match-each SubList
                 (lambda (X)
                   (visit '.push_back
-                         (get Context '.receiver)
+                         (mut! (get Context '.receiver))
                          X)
                   (visit Fn 42)))))))))
 

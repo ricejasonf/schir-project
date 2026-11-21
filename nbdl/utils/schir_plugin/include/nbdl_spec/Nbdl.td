@@ -632,7 +632,7 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     as the operand to a conditional.
 
     The mutArgs attribute lists the indices into args of the arguments
-    the call may mutate.
+    the call may mutate. The other arguments are passed as const.
 
     If arguments are verified to be a valid mapping from
     C++ types to MLIR types, then we set the ValidCppCrossMap

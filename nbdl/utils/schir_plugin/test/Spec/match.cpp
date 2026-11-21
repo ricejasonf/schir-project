@@ -69,7 +69,7 @@ using my_variant = nbdl::variant_holder<nbdl::unresolved, int, std::string>;
 
   ; // get nested pair
   (define-match-fn match_2 (store fn)
-    (visit fn (get store '.boo '.second)))
+    (visit fn (mut! (get store '.boo '.second))))
 
   ; // match variant alternative with overloaded fn.
   ; // equivalent to (get store 'my_var unit)

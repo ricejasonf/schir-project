@@ -14,6 +14,7 @@
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/ScopedHashTable.h>
 #include <llvm/ADT/ScopeExit.h>
+#include <llvm/ADT/Sequence.h>
 #include <llvm/ADT/SmallString.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/Twine.h>
@@ -241,8 +242,20 @@ public:
   static constexpr
   auto  IsConstantLike = [](mlir::Value V) -> bool {
     V = StripStoreCasts(V);
-    return isa_and_nonnull<LiteralOp, ConstexprOp, ConstOp>(V.getDefiningOp());
+    return isa_and_nonnull<LiteralOp, ConstexprOp, ConstOp, TagOp,
+                           FuncNameOp>(V.getDefiningOp());
   };
+
+  // Write a visit argument as const unless the visit may mutate it.
+  void WriteVisitArg(VisitOp Op, unsigned Index) {
+    mlir::Value V = Op.getArgs()[Index];
+    if (IsConstantLike(V) || llvm::is_contained(Op.getMutArgs(),
+                                        static_cast<int32_t>(Index)))
+      return WriteExpr(V);
+    OS << "::std::as_const(";
+    WriteExpr(V);
+    OS << ")";
+  }
 
   void WriteExpr(mlir::Value V, bool IsFwd = false) {
     if (StripStoreCasts(V) != V) {
@@ -745,19 +758,20 @@ class FuncWriter : public NbdlSpecWriter<FuncWriter> {
 
   void WriteVisitExprBare(VisitOp Op) {
     mlir::Value Fn = Op.getFn();
-    mlir::OperandRange Args = Op.getArgs();
+    unsigned NumArgs = Op.getArgs().size();
+    unsigned FirstArg = 0;
     if (auto MemberNameOp = Fn.getDefiningOp<nbdl_spec::MemberNameOp>()) {
-      assert(!Args.empty() && "member call should have at least one argument");
-      WriteExpr(Args.front());
+      assert(NumArgs > 0 && "member call should have at least one argument");
+      WriteVisitArg(Op, 0);
       OS << '.' << MemberNameOp.getName();
-      Args = Args.drop_front();
+      FirstArg = 1;
     } else {
       WriteExpr(Op.getFn());
     }
     OS << '(';
-    llvm::interleave(Args, OS,
-          [&](mlir::Value V) {
-            WriteExpr(V);
+    llvm::interleave(llvm::seq(FirstArg, NumArgs), OS,
+          [&](unsigned Index) {
+            WriteVisitArg(Op, Index);
           }, ", ");
     OS << ")";
   }
@@ -1307,7 +1321,7 @@ writeVisitExpr(nbdl_spec::VisitOp Op, llvm::raw_ostream& OS) {
       T = ST.getAlts().front().getValue();
     if (auto CT = dyn_cast<CppType>(T))
       Writer.SetLocalVal(Writer.StripStoreCasts(Arg),
-          "::nbdl::detail::declval<" + CT.getCppTypename() + ">()");
+          "::nbdl::detail::declval<" + CT.getCppTypename() + "&>()");
   }
 
   Writer.WriteVisitExpr(Op);
