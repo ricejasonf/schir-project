@@ -10,13 +10,18 @@
           (schlap rule)
           (only (nbdl spec) named-fn-op))
   (begin
+    ;; Assume that the stores form a rooted tree, that a mutation
+    ;; invalidates only the values below the mutated store, and that
+    ;; distinct arguments are distinct roots.
     (define-rule MutVisit
       (variables invalid)
       (init {invalid = ∅})
 
-      ;; Invalidate every value read from the root of a mutated value.
+      ;; Require a mutated value to be valid and invalidate the values it
+      ;; may own.
       (on-mutate (v)
-        {(′ invalid) = {invalid ∪ (read-from (root v))}})
+        (require {v ∉ invalid})
+        {(′ invalid) = {invalid ∪ (owned-by v)}})
 
       ;; Require a used value to be valid.
       (on-use (v)

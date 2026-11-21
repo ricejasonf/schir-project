@@ -24,19 +24,24 @@ struct app {
   int_or_text either;
 };
 
-// Set the variant of an app to text and count the calls.
+// Set the variant of an app or a node to text and count the calls.
 struct set_text {
   int* calls;
   void operator()(app& A) const {
     A.either = std::string("text");
     ++*calls;
   }
+  void operator()(node& N) const {
+    N.value = std::string("text");
+    ++*calls;
+  }
 };
 
-// Count the calls without changing the app.
+// Count the calls without changing the app or the node.
 struct peek {
   int* calls;
   void operator()(app const&) const { ++*calls; }
+  void operator()(node const&) const { ++*calls; }
 };
 
 // Add up the ints it is given.
@@ -50,7 +55,8 @@ struct sink {
 {
 (import (schir base) (nbdl spec) (nbdl spec schlap))
 
-(export-cpp other_root plain_visit read_again same_root_path)
+(export-cpp other_root plain_visit read_again same_root_path use_mutated
+            sibling)
 
 ; // Accept a use of a store of another root after a mut visit.
 (define-fn other_root ((S : 'foo::app) (T : 'foo::app)
@@ -108,19 +114,48 @@ struct sink {
     (else => noop))
   (return))
 
+; // Accept a use of a mut visited store and of its root after the visit.
+(define-fn use_mutated ((S : 'foo::app) (Set : 'foo::set_text)
+                        (Peek : 'foo::peek)) -> ()
+  (match (lift-store S)
+    ('foo::app =>
+     (lambda (Root)
+       (match (get Root '.a)
+         ('foo::node =>
+          (lambda (Node)
+            (visit Set (mut! Node))
+            (visit Peek Node)
+            (visit Peek Root)))))))
+  (return))
+
+; // Accept a use of a value read from a sibling of a mut visited store.
+(define-fn sibling ((S : 'foo::app) (Set : 'foo::set_text)
+                    (Sink : 'foo::sink)) -> ()
+  (define Root (lift-store S))
+  (match (get Root '.either)
+    ('int =>
+     (lambda (I)
+       (visit Set (mut! (get Root '.a)))
+       (visit Sink I)))
+    (else => noop))
+  (return))
+
 (run-inference-passes)
 
 ; // Count the states of each check.
-; // CHECK: (other_root 23)
+; // CHECK: (other_root 28)
 ; // CHECK-NEXT: (plain_visit 21)
-; // CHECK-NEXT: (read_again 35)
-; // CHECK-NEXT: (same_root_path 16)
+; // CHECK-NEXT: (read_again 36)
+; // CHECK-NEXT: (same_root_path 17)
+; // CHECK-NEXT: (use_mutated 15)
+; // CHECK-NEXT: (sibling 17)
 (for-each
   (lambda (Name Fn)
     (write (list Name (check-mut-visits Fn)))
     (newline))
-  '(other_root plain_visit read_again same_root_path)
-  (list other_root plain_visit read_again same_root_path))
+  '(other_root plain_visit read_again same_root_path use_mutated sibling)
+  (list other_root plain_visit read_again same_root_path use_mutated
+        sibling))
 
 (finalize-module)
 }
@@ -155,5 +190,17 @@ int main() {
     foo::same_root_path(foo::app{.either = std::string("text")},
                         foo::set_text{&Calls});
     SCHIR_ASSERT(Calls == 1);
+  }
+  {
+    int SetCalls = 0, PeekCalls = 0;
+    foo::app S{.a = {.value = 2}};
+    foo::use_mutated(S, foo::set_text{&SetCalls}, foo::peek{&PeekCalls});
+    SCHIR_ASSERT(SetCalls == 1 && PeekCalls == 2);
+  }
+  {
+    int Calls = 0, Sum = 0;
+    foo::app S{.a = {.value = 2}, .either = 3};
+    foo::sibling(S, foo::set_text{&Calls}, foo::sink{&Sum});
+    SCHIR_ASSERT(Calls == 1 && Sum == 3);
   }
 }

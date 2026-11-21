@@ -190,17 +190,17 @@ private:
     });
   }
 
-  // Return the events of an operation: its uses and then its mutations.
+  // Return the events of an operation: its mutations and then its uses.
   llvm::SmallVector<Event> getEvents(Operation* Op) {
     llvm::SmallVector<Event> Events;
     auto Access = dyn_cast<schir_common::ValueAccess>(Op);
-    for (mlir::OpOperand& Operand : Op->getOpOperands())
-      if (OnUse && (!Access || Access.isUsed(Operand)))
-        Events.push_back({false, Operand.get(), OnUse});
     if (Access && OnMutate)
       for (mlir::OpOperand& Operand : Op->getOpOperands())
         if (Access.isMutated(Operand))
           Events.push_back({true, Operand.get(), OnMutate});
+    for (mlir::OpOperand& Operand : Op->getOpOperands())
+      if (OnUse && (!Access || Access.isUsed(Operand)))
+        Events.push_back({false, Operand.get(), OnUse});
     return Events;
   }
 

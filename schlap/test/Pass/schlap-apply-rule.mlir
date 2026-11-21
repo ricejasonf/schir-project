@@ -27,7 +27,8 @@ schlap.rule @Invalidate {
 }
 
 // Create one action per step, one per region of a branch, a step for a
-// mutation, and one invariant per use.
+// mutation followed by one for the uses of the same operation, and one
+// invariant per use.
 // CHECK-LABEL: schlap.spec @"Invalidate(f)" {
 // CHECK-NEXT: [[INVALID:%.+]] = schlap.variable "invalid"
 // CHECK-NEXT: [[PC:%.+]] = schlap.variable "pc"
@@ -47,7 +48,7 @@ schlap.rule @Invalidate {
 // CHECK: schlap.int 2
 // CHECK: schlap.action @"schlap_test.branch #1 region 1 defines v2" {
 // CHECK: schlap.int 1
-// CHECK: schlap.int 4
+// CHECK: schlap.int 5
 // CHECK: schlap.action @"schlap_test.scope #2" {
 // CHECK: schlap.int 2
 // CHECK: schlap.int 3
@@ -63,13 +64,17 @@ schlap.rule @Invalidate {
 // CHECK-NEXT: [[READ:%.+]] = schlap.set_of [[V1]] :
 // CHECK-NEXT: [[UNION:%.+]] = schlap.union [[INVALID]], [[READ]]
 // CHECK-NEXT: schlap.eq [[PRIME]], [[UNION]]
+// CHECK: schlap.action @"schlap_test.mutate #3" {
+// CHECK: schlap.int 4
+// CHECK: schlap.int 5
+// CHECK: schlap.unchanged [[INVALID]]
 // CHECK: schlap.action @"schlap_test.use #4" {
 // CHECK: schlap.action @"func.return #5" {
 // CHECK: schlap.action @end {
-// CHECK: schlap.int 6
+// CHECK: schlap.int 7
 // CHECK: schlap.unchanged [[INVALID]], [[PC]]
 // CHECK: schlap.next {
-// CHECK-COUNT-8: schlap.action_ref
+// CHECK-COUNT-9: schlap.action_ref
 // CHECK: schlap.invariant @"use of v0 by schlap_test.branch #1" {
 // CHECK-NEXT: [[V0:%.+]] = schlap.atom "v0"
 // CHECK-NEXT: [[NOT:%.+]] = schlap.not_member [[V0]], [[INVALID]]
@@ -77,6 +82,7 @@ schlap.rule @Invalidate {
 // CHECK-NEXT: [[AT:%.+]] = schlap.eq [[PC]], [[ONE]]
 // CHECK-NEXT: schlap.implies [[AT]], [[NOT]]
 // CHECK: schlap.invariant @"use of v1 by schlap_test.mutate #3" {
+// CHECK: schlap.int 4
 // CHECK: schlap.invariant @"use of v0 by schlap_test.use #4" {
 // CHECK-NOT: schlap.invariant
 func.func @f() {

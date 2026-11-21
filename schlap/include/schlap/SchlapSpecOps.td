@@ -110,7 +110,8 @@ def Schlap_RuleOp : Schlap_Op<"rule", [IsolatedFromAbove, Symbol,
     Define a rule about the IR of a function as a specification with a
     hole: its variables and initial condition, and what happens at each
     kind of event (schlap.on_mutate, schlap.on_use). The pass
-    schlap-apply-rule fills the hole with the operations of a function.
+    schlap-apply-rule fills the hole with the operations of a function,
+    and the events of an operation are its mutations and then its uses.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name);
   let regions = (region SizedRegion<1>:$body);
