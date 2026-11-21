@@ -60,11 +60,16 @@ struct BranchAccess
   }
 };
 
-// State that a mutate mutates each operand.
+// State that a mutate mutates each operand, leaving the values it owns
+// valid if it is stable.
 struct MutateAccess
     : schir_common::ValueAccess::ExternalModel<MutateAccess,
                                                schlap_test::MutateOp> {
   bool isMutated(mlir::Operation*, mlir::OpOperand&) const { return true; }
+
+  bool isChildStable(mlir::Operation* Op, mlir::OpOperand&) const {
+    return cast<schlap_test::MutateOp>(Op).getStable();
+  }
 };
 
 // State that a forget uses no operand.

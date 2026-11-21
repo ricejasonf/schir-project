@@ -27,6 +27,7 @@ namespace {
 struct Event {
   bool IsMutation = false;
   Value V;
+  mlir::OpOperand* Operand = nullptr;
   // Hold the schlap.on_use or schlap.on_mutate of the rule.
   Operation* Handler = nullptr;
 };
@@ -197,10 +198,10 @@ private:
     if (Access && OnMutate)
       for (mlir::OpOperand& Operand : Op->getOpOperands())
         if (Access.isMutated(Operand))
-          Events.push_back({true, Operand.get(), OnMutate});
+          Events.push_back({true, Operand.get(), &Operand, OnMutate});
     for (mlir::OpOperand& Operand : Op->getOpOperands())
       if (OnUse && (!Access || Access.isUsed(Operand)))
-        Events.push_back({false, Operand.get(), OnUse});
+        Events.push_back({false, Operand.get(), &Operand, OnUse});
     return Events;
   }
 
@@ -383,10 +384,19 @@ private:
     void yield(Value F) { schlap::YieldOp::create(B, Loc, F); }
   };
 
-  // Replace each root, read_from and owned_by of a region with a constant.
-  void resolveConstants(mlir::Region& Region, Operation* Context) {
+  // Return true if E is a mutation that leaves the values it owns valid.
+  static bool isChildStable(Event const& E, Operation* Op) {
+    auto Access = dyn_cast<schir_common::ValueAccess>(Op);
+    return E.IsMutation && Access && Access.isChildStable(*E.Operand);
+  }
+
+  // Replace each root, read_from, owned_by and child_stable of a region of
+  // the event E with a constant.
+  void resolveConstants(mlir::Region& Region, Operation* Context,
+                        Event const& E) {
     Region.walk<mlir::WalkOrder::PostOrder>([&](Operation* Op) {
-      if (!isa<schlap::RootOp, schlap::ReadFromOp, schlap::OwnedByOp>(Op))
+      if (!isa<schlap::RootOp, schlap::ReadFromOp, schlap::OwnedByOp,
+               schlap::ChildStableOp>(Op))
         return;
       auto Atom = Op->getOperand(0).getDefiningOp<schlap::AtomOp>();
       Value V = Atom ? ValuesByName.lookup(Atom.getName()) : Value();
@@ -397,7 +407,17 @@ private:
       }
       mlir::OpBuilder B(Op);
       Value Result;
-      if (isa<schlap::RootOp>(Op)) {
+      if (isa<schlap::ChildStableOp>(Op)) {
+        if (V != E.V) {
+          Op->emitError("expects the value of the event");
+          Failed = true;
+          return;
+        }
+        if (isChildStable(E, Context))
+          Result = schlap::TrueOp::create(B, Op->getLoc(), Unknown);
+        else
+          Result = schlap::FalseOp::create(B, Op->getLoc(), Unknown);
+      } else if (isa<schlap::RootOp>(Op)) {
         Result = schlap::AtomOp::create(B, Op->getLoc(), Unknown,
                                         getValueName(getRoot(V)));
       } else {
@@ -478,7 +498,8 @@ private:
         if (Effect)
           F = R.conj(F, Effect);
         R.yield(F);
-        resolveConstants(Action.getBody(), S.Op);
+        if (S.Action)
+          resolveConstants(Action.getBody(), S.Op, *S.Action);
         Actions.push_back({Symbol, Loc});
       }
     }
@@ -520,7 +541,7 @@ private:
         RegionBuilder R(*this, Invariant.getBody(), Loc);
         Value Cond = R.cloneForEvent(Require.getCond(), E);
         R.yield(schlap::ImpliesOp::create(R.B, Loc, Unknown, R.pcIs(P), Cond));
-        resolveConstants(Invariant.getBody(), S.Op);
+        resolveConstants(Invariant.getBody(), S.Op, E);
       }
     }
     return Spec;

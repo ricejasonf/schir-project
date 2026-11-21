@@ -72,6 +72,25 @@
 (write InvalidateOwned)
 (newline)
 
+; Leave the values that a mutated value owns valid if the mutation is
+; child-stable.
+; CHECK-LABEL: schlap.rule @InvalidateUnstable {
+; CHECK: schlap.on_mutate {
+; CHECK-NEXT: ^bb0([[V:%.+]]: !schlap.unknown):
+; CHECK-NEXT: [[PRIME:%.+]] = schlap.prime
+; CHECK-NEXT: [[STABLE:%.+]] = schlap.child_stable [[V]]
+; CHECK-NEXT: [[OWNED:%.+]] = schlap.owned_by [[V]]
+; CHECK-NEXT: [[EMPTY:%.+]] = schlap.empty_set
+; CHECK-NEXT: [[ITE:%.+]] = schlap.ite [[STABLE]], [[EMPTY]], [[OWNED]]
+; CHECK-NEXT: schlap.union {{%.+}}, [[ITE]]
+(define-rule InvalidateUnstable
+  (variables invalid)
+  (init {invalid = ∅})
+  (on-mutate (v)
+    {(′ invalid) = {invalid ∪ (ite (child-stable v) ∅ (owned-by v))}}))
+(write InvalidateUnstable)
+(newline)
+
 ; Require each value to be used at most once.
 (define-rule UseOnce
   (variables used)

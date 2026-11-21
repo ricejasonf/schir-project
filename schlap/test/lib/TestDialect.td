@@ -36,9 +36,10 @@ def Test_ReadOp : Test_Op<"read"> {
 
 def Test_MutateOp : Test_Op<"mutate"> {
   let description = [{
-    Mutate the operands.
+    Mutate the operands, leaving the values they own valid if stable is
+    set.
   }];
-  let arguments = (ins Variadic<AnyType>:$values);
+  let arguments = (ins Variadic<AnyType>:$values, UnitAttr:$stable);
   let assemblyFormat = "($values^ `:` type($values))? attr-dict";
 }
 

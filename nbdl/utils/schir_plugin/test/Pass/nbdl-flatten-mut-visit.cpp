@@ -19,9 +19,9 @@ struct holder {
 
 #pragma schir_scheme
 {
-(import (nbdl spec))
+(import (nbdl spec) (nbdl spec impl))
 
-(export-cpp test_cpp_visit test_cpp_visit_mut)
+(export-cpp test_cpp_visit test_cpp_visit_mut test_cpp_visit_child_stable)
 
 ; // Create a visit with the mutArgs attribute.
 ; // CHECK-LABEL: @test_visit_mut(
@@ -36,6 +36,13 @@ struct holder {
 (define-match-fn test_visit_mut_args (X Y Z Fn)
   (visit Fn X (mut! Y) (mut! Z)))
 
+; // List the index of each child-stable-mut! operand apart.
+; // CHECK-LABEL: @test_visit_child_stable_args(
+; // CHECK: "nbdl.visit"(%arg3, %arg0, %arg1, %arg2)
+; // CHECK-SAME: <{childStableMutArgs = array<i32: 2>, mutArgs = array<i32: 0>}>
+(define-match-fn test_visit_child_stable_args (X Y Z Fn)
+  (visit Fn (mut! X) Y (child-stable-mut! Z)))
+
 (write-nbdl-module)
 
 ; // Write an unmarked operand as const and a mut! operand as is.
@@ -49,15 +56,24 @@ struct holder {
 ; // CHECK-NEXT: auto&& get_3 = arg_2.count;
 ; // CHECK-NEXT: ::nbdl::match(get_3, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_4) {
 ; // CHECK-NEXT: arg_1(arg_4);
+; // CHECK-LABEL: inline void test_cpp_visit_child_stable(auto&& arg_0, auto&& arg_1) {
+; // CHECK-NEXT: ::nbdl::match(arg_0, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_2) {
+; // CHECK-NEXT: auto&& get_3 = arg_2.count;
+; // CHECK-NEXT: ::nbdl::match(get_3, [&]({{\[\[}}maybe_unused{{\]\]}} auto&& arg_4) {
+; // CHECK-NEXT: arg_1(arg_4);
 (define-match-fn test_cpp_visit (Store Fn)
   (visit Fn (get Store '.count)))
 
 (define-match-fn test_cpp_visit_mut (Store Fn)
   (visit Fn (mut! (get Store '.count))))
 
+(define-match-fn test_cpp_visit_child_stable (Store Fn)
+  (visit Fn (child-stable-mut! (get Store '.count))))
+
 (run-inference-passes)
 (write-cpp "::test_cpp_visit")
 (write-cpp "::test_cpp_visit_mut")
+(write-cpp "::test_cpp_visit_child_stable")
 
 ; // Keep the attribute of a visit inlined from a match-fn.
 ; // CHECK-LABEL: @test_visit_mut_inlined(

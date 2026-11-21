@@ -6,14 +6,15 @@
 ;; ordinary Scheme body like that of define-spec: variables and init come
 ;; from (schlap base), and on-mutate and on-use state what happens when an
 ;; operation of the function mutates or uses a value. In an event, root,
-;; read-from and owned-by refer to the structure of the function, and require
-;; states a formula that holds before the event.
+;; read-from, owned-by and child-stable refer to the structure of the
+;; function, and require states a formula that holds before the event.
 ;;
 ;; Import (schir base) with (except (schir base) < > + - *) beside
 ;; (schlap base) and (schlap infix).
 (define-library (schlap rule)
   (export
     define-rule on-mutate on-use require root read-from owned-by
+    child-stable
     check-rule check-rule*)
   (import (except (schir base) < > + - *)
           (schir mlir)
@@ -111,6 +112,13 @@
       (syntax-rules ()
         ((_ V)
          (%create-val "schlap.owned_by" (syntax-source-loc) V))))
+
+    ;; State that the event of V is a mutation that leaves each value V
+    ;; owns valid.
+    (define-syntax child-stable
+      (syntax-rules ()
+        ((_ V)
+         (%create-val "schlap.child_stable" (syntax-source-loc) V))))
 
     ;; Check Rule on the function Fn and return the number of distinct
     ;; states. The option is 'state-limit N.

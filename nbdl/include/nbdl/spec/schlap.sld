@@ -18,10 +18,10 @@
       (init {invalid = ∅})
 
       ;; Require a mutated value to be valid and invalidate the values it
-      ;; may own.
+      ;; may own unless the mutation is child-stable.
       (on-mutate (v)
         (require {v ∉ invalid})
-        {(′ invalid) = {invalid ∪ (owned-by v)}})
+        {(′ invalid) = {invalid ∪ (ite (child-stable v) ∅ (owned-by v))}})
 
       ;; Require a used value to be valid.
       (on-use (v)

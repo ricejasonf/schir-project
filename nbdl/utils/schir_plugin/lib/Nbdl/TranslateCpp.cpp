@@ -246,11 +246,17 @@ public:
                            FuncNameOp>(V.getDefiningOp());
   };
 
+  // Return true if the visit may mutate the argument at ArgIndex.
+  static bool IsMutableArg(VisitOp Op, unsigned ArgIndex) {
+    auto I = static_cast<int32_t>(ArgIndex);
+    return llvm::is_contained(Op.getMutArgs(), I) ||
+           llvm::is_contained(Op.getChildStableMutArgs(), I);
+  }
+
   // Write a visit argument as const unless the visit may mutate it.
   void WriteVisitArg(VisitOp Op, unsigned Index) {
     mlir::Value V = Op.getArgs()[Index];
-    if (IsConstantLike(V) || llvm::is_contained(Op.getMutArgs(),
-                                        static_cast<int32_t>(Index)))
+    if (IsConstantLike(V) || IsMutableArg(Op, Index))
       return WriteExpr(V);
     OS << "::std::as_const(";
     WriteExpr(V);

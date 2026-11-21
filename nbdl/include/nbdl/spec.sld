@@ -5,7 +5,8 @@
           (schir mlir)
           (schir mlir all-passes)
           (schir llvm pass)
-          (schir clang))
+          (schir clang)
+          (nbdl spec impl))
   (begin
     ;; Note that the %match functions in this implementation
     ;; use a CPS style where callbacks can be called multiple
@@ -1203,12 +1204,18 @@
           (Str (attr (string-append "array<i32: " Str ">")))
           (else #f))))
 
-    (define (build-visit MatchingResults? Sfinae? MutFlags Loc Results)
+    ;; Get the array attribute of the indices of the elements of MutKinds
+    ;; that are Kind.
+    (define (%mut-args-attr MutKinds Kind)
+      (%index-array-attr (map (lambda (K) (eq? K Kind)) MutKinds)))
+
+    (define (build-visit MatchingResults? Sfinae? MutKinds Loc Results)
       (define SfinaeAttr
         (if Sfinae?
           (unit-attr)
           #f))
-      (define MutArgsAttr (%index-array-attr MutFlags))
+      (define MutArgsAttr (%mut-args-attr MutKinds 'mut))
+      (define ChildStableMutArgsAttr (%mut-args-attr MutKinds 'child-stable))
       ;; The result is not a store.
       (define ResultType
         (if MatchingResults?
@@ -1219,13 +1226,16 @@
           (create-op "nbdl.visit"
                      (loc: Loc)
                      (operands: Results)
-                     (attributes: ("sfinae" SfinaeAttr) ("mutArgs" MutArgsAttr))
+                     (attributes: ("sfinae" SfinaeAttr)
+                                  ("mutArgs" MutArgsAttr)
+                                  ("childStableMutArgs"
+                                   ChildStableMutArgsAttr))
                      (result-types: ResultType))))
       (if MatchingResults?
         VisitResult
         (build-discard Loc VisitResult)))
 
-    (define (visit-aux-aux MatchingResults? Sfinae? MutFlags Loc ParamsSpec)
+    (define (visit-aux-aux MatchingResults? Sfinae? MutKinds Loc ParamsSpec)
       (close-previous-scope)
       ;; This %expr is for the whole visit expr (ie its result).
       (if MatchingResults?
@@ -1239,7 +1249,7 @@
                   ;; The result may be a value, a literal,
                   ;; or another expr.
                   (%match-expr Loc (apply Callee (cdr Results)) Fn)
-                  (Fn (build-visit MatchingResults? Sfinae? MutFlags Loc
+                  (Fn (build-visit MatchingResults? Sfinae? MutKinds Loc
                                    Results)))))))
         (begin
           (%match-results ; Sfinae is #f
@@ -1251,7 +1261,7 @@
                 ;; (e.g. a visit in its body is discarded.)
                 (%top-level
                   (lambda () (apply Callee (cdr Results))))
-                (build-visit MatchingResults? #f MutFlags Loc Results))))
+                (build-visit MatchingResults? #f MutKinds Loc Results))))
           (%make-discard Loc))))
 
     ;; Mark an operand of visit as one the callee may mutate.
@@ -1261,11 +1271,14 @@
          (error-with-loc (syntax-source-loc Store)
                          "mut! is only valid as an operand of visit"))))
 
-    ;; Get a visit operand as a pair of its mutable flag and its expr.
+    ;; Get a visit operand as a pair of its kind of mutation (mut,
+    ;; child-stable or #f) and its expr.
     (define-syntax %visit-operand
-      (syntax-rules (mut!)
+      (syntax-rules (mut! child-stable-mut!)
         ((%visit-operand (mut! Store))
-         (cons #t (%single-expr Store)))
+         (cons 'mut (%single-expr Store)))
+        ((%visit-operand (child-stable-mut! Store))
+         (cons 'child-stable (%single-expr Store)))
         ((%visit-operand Store)
          (cons #f (%single-expr Store)))))
 
@@ -1288,7 +1301,8 @@
     ;; to a member expression with the first argument as
     ;; the owning object.
     ;;
-    ;; Let the callee mutate an operand wrapped in mut!.
+    ;; Let the callee mutate an operand wrapped in mut! or, from
+    ;; (nbdl spec impl), child-stable-mut!.
     ;;
     ;; Return the result only if it is not discarded.
     (define-syntax visit

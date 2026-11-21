@@ -27,16 +27,28 @@ struct MatchLikeAccess
   }
 };
 
-// State that a visit mutates the arguments listed in mutArgs.
+// Get the index into the args of a visit of an operand or -1 for the callee.
+int32_t getVisitArgIndex(VisitOp Visit, mlir::OpOperand& Operand) {
+  if (&Operand == &Visit.getFnMutable())
+    return -1;
+  return Operand.getOperandNumber() - Visit.getArgs().getBeginOperandIndex();
+}
+
+// State that a visit mutates the arguments listed in mutArgs and
+// childStableMutArgs, leaving the stores read from the latter valid.
 struct VisitAccess
     : schir_common::ValueAccess::ExternalModel<VisitAccess, VisitOp> {
   bool isMutated(mlir::Operation* O, mlir::OpOperand& Operand) const {
     auto Visit = cast<VisitOp>(O);
-    if (&Operand == &Visit.getFnMutable())
-      return false;
-    int32_t ArgIndex = Operand.getOperandNumber() -
-                       Visit.getArgs().getBeginOperandIndex();
-    return llvm::is_contained(Visit.getMutArgs(), ArgIndex);
+    int32_t ArgIndex = getVisitArgIndex(Visit, Operand);
+    return llvm::is_contained(Visit.getMutArgs(), ArgIndex) ||
+           llvm::is_contained(Visit.getChildStableMutArgs(), ArgIndex);
+  }
+
+  bool isChildStable(mlir::Operation* O, mlir::OpOperand& Operand) const {
+    auto Visit = cast<VisitOp>(O);
+    return llvm::is_contained(Visit.getChildStableMutArgs(),
+                              getVisitArgIndex(Visit, Operand));
   }
 };
 

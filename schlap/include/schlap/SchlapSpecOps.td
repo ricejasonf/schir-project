@@ -183,6 +183,18 @@ def Schlap_OwnedByOp : Schlap_Op<"owned_by", [Pure]> {
   }];
 }
 
+def Schlap_ChildStableOp : Schlap_Op<"child_stable", [Pure]> {
+  let description = [{
+    State that the event of the value is a mutation that leaves each value
+    it owns valid. The value must be the value of the event.
+  }];
+  let arguments = (ins AnyType:$value);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $value attr-dict `:` custom<OpTypes>(type($value), type($result))
+  }];
+}
+
 // Values
 
 def Schlap_IteOp : Schlap_Op<"ite", [Pure]> {

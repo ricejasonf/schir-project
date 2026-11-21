@@ -64,8 +64,9 @@ def SchirCommon_InferableReturn : OpInterface<"InferableReturn"> {
 def SchirCommon_ValueAccess : OpInterface<"ValueAccess"> {
   let description = [{
     State the value that each result or block argument of an operation is
-    read from, the values that may own it, the operands it mutates,
-    and the operands it uses.
+    read from, the values that may own it, the operands it mutates and
+    whether those mutations leave the values they own valid, and the
+    operands it uses.
   }];
   let cppNamespace = "schir_common";
 
@@ -88,6 +89,12 @@ def SchirCommon_ValueAccess : OpInterface<"ValueAccess"> {
         Return true if the operation mutates the value of the operand.
       }],
       "bool", "isMutated", (ins "::mlir::OpOperand&":$operand),
+      "", [{ return false; }]>,
+    InterfaceMethod<[{
+        Return true if a mutation of the operand by the operation leaves
+        each value it owns valid.
+      }],
+      "bool", "isChildStable", (ins "::mlir::OpOperand&":$operand),
       "", [{ return false; }]>,
     InterfaceMethod<[{
         Return true if the operation uses the value of the operand.

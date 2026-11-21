@@ -18,12 +18,18 @@
 // RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
 // RUN:   -DTEST_MATCH_PATH -fsyntax-only %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=PATH
+// RUN: not clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
+// RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
+// RUN:   -DTEST_HELD_ELEMENT -fsyntax-only %s 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=HELD
 // RUN: clang++ -std=c++26 -I %schir_module_path -I %nbdl_module_path \
 // RUN:   -I %schlap_module_path -fplugin=SchirClang.so \
 // RUN:   -DTEST_ENCLOSING_ARG -DTEST_UNCHECKED -fsyntax-only %s
 
+#include <nbdl/ext/std/unordered_map.hpp>
 #include <nbdl/spec.hpp>
 #include <string>
+#include <unordered_map>
 
 namespace {
 namespace foo {
@@ -38,6 +44,7 @@ struct node {
 struct app {
   node a;
   int_or_text either;
+  std::unordered_map<int, int> items;
 };
 
 // Set the variant of an app or a node to text.
@@ -62,7 +69,8 @@ struct set_count {
 {
 (import (nbdl spec) (nbdl spec schlap))
 
-(export-cpp owned_value twin operand enclosing_arg match_path_then_use)
+(export-cpp owned_value twin operand enclosing_arg match_path_then_use
+            held_element)
 }
 
 #ifdef TEST_OWNED
@@ -201,6 +209,31 @@ struct set_count {
 
 (run-inference-passes)
 (check-mut-visits match_path_then_use)
+}
+#endif
+
+#ifdef TEST_HELD_ELEMENT
+#pragma schir_scheme
+{
+; // Report a use of a held element of a map after a mut visit that inserts
+; // into the map.
+; // HELD: mut_visit_errors.cpp:[[@LINE+16]]:{{[0-9]+}}: error: (schir_scheme) rule MutVisit does not hold for function: ::foo::held_element
+; // HELD: [[@LINE+10]]:{{[0-9]+}}: note: (schir_scheme) invariant use of v8 by nbdl.visit #16 is violated after 17 steps
+; // HELD: [[@LINE+3]]:{{[0-9]+}}: note: (schir_scheme) initial state: invalid = {}, pc = 0
+; // HELD: [[@LINE+4]]:{{[0-9]+}}: note: (schir_scheme) step 8, nbdl.match #7 region 0 defines v8: invalid = {}, pc = 8
+; // HELD: [[@LINE+6]]:{{[0-9]+}}: note: (schir_scheme) step 15, nbdl.visit #14 mutates v11: invalid = {v6, v7, v8}, pc = 15
+(define-fn held_element ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (define Root (lift-store S))
+  (match (get Root '.items 1)
+    ('int =>
+     (lambda (Item)
+       (visit '.emplace (mut! (get Root '.items)) 2 20)
+       (visit Sink Item)))
+    (else => noop))
+  (return))
+
+(run-inference-passes)
+(check-mut-visits held_element)
 }
 #endif
 

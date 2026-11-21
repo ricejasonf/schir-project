@@ -217,13 +217,25 @@ llvm::LogicalResult nbdl_spec::ClosureOp::verify() {
 }
 
 llvm::LogicalResult nbdl_spec::VisitOp::verify() {
-  int32_t Prev = -1;
-  for (int32_t I : getMutArgs()) {
-    if (I <= Prev || I >= static_cast<int32_t>(getArgs().size()))
-      return emitOpError("expecting mutArgs to be increasing indices "
-                         "into args");
-    Prev = I;
-  }
+  auto VerifyIndices = [&](llvm::ArrayRef<int32_t> Indices,
+                           llvm::StringRef Name) -> llvm::LogicalResult {
+    int32_t Prev = -1;
+    for (int32_t I : Indices) {
+      if (I <= Prev || I >= static_cast<int32_t>(getArgs().size()))
+        return emitOpError("expecting ")
+               << Name << " to be increasing indices into args";
+      Prev = I;
+    }
+    return llvm::success();
+  };
+  if (llvm::failed(VerifyIndices(getMutArgs(), "mutArgs")) ||
+      llvm::failed(VerifyIndices(getChildStableMutArgs(),
+                                 "childStableMutArgs")))
+    return llvm::failure();
+  for (int32_t I : getChildStableMutArgs())
+    if (llvm::is_contained(getMutArgs(), I))
+      return emitOpError("expecting mutArgs and childStableMutArgs to be "
+                         "disjoint");
   return llvm::success();
 }
 

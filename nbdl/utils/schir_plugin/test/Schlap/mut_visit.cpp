@@ -5,9 +5,11 @@
 // RUN: FileCheck %s < %t.out
 // RUN: %t
 
+#include <nbdl/ext/std/unordered_map.hpp>
 #include <nbdl/spec.hpp>
 #include <schir/SCHIR_ASSERT.h>
 #include <string>
+#include <unordered_map>
 
 namespace {
 namespace foo {
@@ -22,6 +24,7 @@ struct node {
 struct app {
   node a;
   int_or_text either;
+  std::unordered_map<int, int> items;
 };
 
 // Set the variant of an app or a node to text and count the calls.
@@ -53,10 +56,10 @@ struct sink {
 
 #pragma schir_scheme
 {
-(import (schir base) (nbdl spec) (nbdl spec schlap))
+(import (schir base) (nbdl spec) (nbdl spec impl) (nbdl spec schlap))
 
 (export-cpp other_root plain_visit read_again same_root_path use_mutated
-            sibling)
+            sibling child_stable)
 
 ; // Accept a use of a store of another root after a mut visit.
 (define-fn other_root ((S : 'foo::app) (T : 'foo::app)
@@ -140,6 +143,18 @@ struct sink {
     (else => noop))
   (return))
 
+; // Accept a use of a held element of a map after a child-stable insert
+; // into the map.
+(define-fn child_stable ((S : 'foo::app) (Sink : 'foo::sink)) -> ()
+  (define Root (lift-store S))
+  (match (get Root '.items 1)
+    ('int =>
+     (lambda (Item)
+       (visit '.emplace (child-stable-mut! (get Root '.items)) 2 20)
+       (visit Sink Item)))
+    (else => noop))
+  (return))
+
 (run-inference-passes)
 
 ; // Count the states of each check.
@@ -149,13 +164,15 @@ struct sink {
 ; // CHECK-NEXT: (same_root_path 17)
 ; // CHECK-NEXT: (use_mutated 15)
 ; // CHECK-NEXT: (sibling 17)
+; // CHECK-NEXT: (child_stable 22)
 (for-each
   (lambda (Name Fn)
     (write (list Name (check-mut-visits Fn)))
     (newline))
-  '(other_root plain_visit read_again same_root_path use_mutated sibling)
+  '(other_root plain_visit read_again same_root_path use_mutated sibling
+    child_stable)
   (list other_root plain_visit read_again same_root_path use_mutated
-        sibling))
+        sibling child_stable))
 
 (finalize-module)
 }
@@ -202,5 +219,11 @@ int main() {
     foo::app S{.a = {.value = 2}, .either = 3};
     foo::sibling(S, foo::set_text{&Calls}, foo::sink{&Sum});
     SCHIR_ASSERT(Calls == 1 && Sum == 3);
+  }
+  {
+    int Sum = 0;
+    foo::app S{.items = {{1, 10}}};
+    foo::child_stable(S, foo::sink{&Sum});
+    SCHIR_ASSERT(Sum == 10);
   }
 }

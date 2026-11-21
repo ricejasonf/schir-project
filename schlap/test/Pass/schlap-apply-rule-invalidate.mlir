@@ -2,8 +2,8 @@
 // RUN:   -schlap-infer-types -schlap-normalize-actions \
 // RUN:   -schlap-check="report-states=true"
 
-// Invalidate the values that a mutated value may own and require a mutated
-// or used value to be valid.
+// Invalidate the values that a mutated value may own unless the mutation is
+// child-stable, and require a mutated or used value to be valid.
 schlap.rule @Invalidate {
   %invalid = schlap.variable "invalid" : !schlap.unknown
   schlap.init {
@@ -16,10 +16,13 @@ schlap.rule @Invalidate {
     %0 = schlap.not_member %v, %invalid : !schlap.unknown
     schlap.require %0 : !schlap.unknown
     %1 = schlap.owned_by %v : !schlap.unknown
-    %2 = schlap.union %invalid, %1 : !schlap.unknown
-    %3 = schlap.prime %invalid : !schlap.unknown
-    %4 = schlap.eq %3, %2 : !schlap.unknown
-    schlap.yield %4 : !schlap.unknown
+    %2 = schlap.child_stable %v : !schlap.unknown
+    %3 = schlap.empty_set : !schlap.unknown
+    %4 = schlap.ite %2, %3, %1 : !schlap.unknown
+    %5 = schlap.union %invalid, %4 : !schlap.unknown
+    %6 = schlap.prime %invalid : !schlap.unknown
+    %7 = schlap.eq %6, %5 : !schlap.unknown
+    schlap.yield %7 : !schlap.unknown
   }
   schlap.on_use {
   ^bb0(%v: !schlap.unknown):
@@ -100,6 +103,32 @@ func.func @same_operation() {
   // expected-note@+2 {{step 3, schlap_test.mutate #2 mutates v0: invalid = {v1}, pc = 3}}
   // expected-error@+1 {{invariant mutation of v1 by schlap_test.mutate #2 is violated after 3 steps}}
   schlap_test.mutate %a, %b : i32, i32
+  return
+}
+
+// Accept a use of a value read from a value after a child-stable mutation
+// of the value.
+// expected-remark@+1 {{spec Invalidate(child_stable) has 7 distinct states and depth 6}}
+func.func @child_stable() {
+  %a = schlap_test.def : i32
+  %b = schlap_test.read %a {key = "x"} : i32 -> i32
+  schlap_test.mutate %a : i32 {stable}
+  schlap_test.use %b : i32
+  return
+}
+
+// Report a child-stable mutation of a value invalidated by a mutation.
+// expected-note@+1 {{initial state: invalid = {}, pc = 0}}
+func.func @child_stable_invalid() {
+  // expected-note@+1 {{step 1, schlap_test.def #0 defines v0: invalid = {}, pc = 1}}
+  %a = schlap_test.def : i32
+  // expected-note@+1 {{step 2, schlap_test.read #1 defines v1: invalid = {}, pc = 2}}
+  %b = schlap_test.read %a {key = "x"} : i32 -> i32
+  // expected-note@+2 {{step 3, schlap_test.mutate #2 mutates v0: invalid = {v1}, pc = 3}}
+  // expected-note@+1 {{step 4, schlap_test.mutate #2: invalid = {v1}, pc = 4}}
+  schlap_test.mutate %a : i32
+  // expected-error@+1 {{invariant mutation of v1 by schlap_test.mutate #3 is violated after 4 steps}}
+  schlap_test.mutate %b : i32 {stable}
   return
 }
 

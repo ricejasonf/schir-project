@@ -631,8 +631,10 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
     be wrapped in a SFINAE check which only has meaning
     as the operand to a conditional.
 
-    The mutArgs attribute lists the indices into args of the arguments
-    the call may mutate. The other arguments are passed as const.
+    By default arguments are passed as const. Arguments are passed as mutable
+    if they appear in the mutArgs or childStableMutArgs attribute lists. Child
+    stores of an argument are considered invalidated when they appear in
+    mutArgs.
 
     If arguments are verified to be a valid mapping from
     C++ types to MLIR types, then we set the ValidCppCrossMap
@@ -645,6 +647,8 @@ def Nbdl_VisitOp : Nbdl_Op<"visit", []> {
                        UnitAttr:$sfinae,
                        DefaultValuedOptionalAttr<DenseI32ArrayAttr, "{}">
                          :$mutArgs,
+                       DefaultValuedOptionalAttr<DenseI32ArrayAttr, "{}">
+                         :$childStableMutArgs,
                        UnitAttr:$validCppCrossMap);
   let results = (outs AnyType:$result);
   let hasVerifier = 1;
