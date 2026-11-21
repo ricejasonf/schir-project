@@ -1194,14 +1194,22 @@ public:
     if (!ContOp)
       return;
 
-    OS << "explicit " << DropNamespacePrefix(Op.getSymName());
+    llvm::StringRef Name = DropNamespacePrefix(Op.getSymName());
+    OS << "explicit " << Name;
     OS << '(';
     llvm::interleaveComma(Op.getBody().getArguments(), OS,
         [&](mlir::BlockArgument const& Arg) {
           OS << "auto&& ";
           PrintLocalVal(Arg);
         });
-    OS << ") \n: ";
+    OS << ")";
+    // Do not let a single parameter hide the copy and move constructors.
+    if (Op.getBody().getNumArguments() == 1) {
+      OS << " requires (!";
+      PrintSameAsConstraint(Op.getBody().getArgument(0), Name);
+      OS << ")";
+    }
+    OS << " \n: ";
 
     llvm::interleaveComma(Members, OS,
         [&](mlir::Value M) {
